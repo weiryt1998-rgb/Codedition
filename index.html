@@ -13,16 +13,25 @@
 </head>
 <body>
 
+<!-- ambient background layers -->
+<div class="aurora" aria-hidden="true">
+  <span class="aurora-blob b1"></span>
+  <span class="aurora-blob b2"></span>
+  <span class="aurora-blob b3"></span>
+</div>
+
 <!-- ===================== APP SHELL ===================== -->
 <div id="app" class="app-shell">
 
-  <!-- Sidebar -->
+  <!-- ===== Sidebar ===== -->
   <aside class="sidebar" id="sidebar">
     <div class="brand">
       <span class="brand-seal" aria-hidden="true">
-        <svg viewBox="0 0 100 100" width="30" height="30">
+        <svg viewBox="0 0 100 100" width="34" height="34">
           <circle cx="50" cy="50" r="46" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="5 4"/>
-          <path d="M50 28 L60 48 L50 43 L40 48 Z" fill="currentColor"/>
+          <circle cx="50" cy="50" r="35" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".5"/>
+          <path d="M50 26 L62 50 L50 44 L38 50 Z" fill="currentColor" stroke="none"/>
+          <path d="M36 62h28" stroke="currentColor" stroke-width="3"/>
         </svg>
       </span>
       <div class="brand-text">
@@ -32,42 +41,86 @@
     </div>
 
     <nav class="nav">
+      <p class="nav-section">เมนูหลัก</p>
+
       <button class="nav-item is-active" data-view="dashboard">
-        <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
-        แดชบอร์ด
+        <span class="nav-ico">
+          <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+        </span>
+        <span class="nav-label">แดชบอร์ด</span>
       </button>
+
       <button class="nav-item" data-view="documents">
-        <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm8 1.5V8h4.5L14 3.5z"/></svg>
-        เอกสารทั้งหมด
+        <span class="nav-ico">
+          <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm8 1.5V8h4.5L14 3.5z"/></svg>
+        </span>
+        <span class="nav-label">เอกสารทั้งหมด</span>
+        <span class="nav-badge mono" id="navCountDocs">0</span>
       </button>
+
       <button class="nav-item" data-view="categories">
-        <svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>
-        หมวดหมู่
+        <span class="nav-ico">
+          <svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>
+        </span>
+        <span class="nav-label">หมวดหมู่</span>
+        <span class="nav-badge mono" id="navCountCats">0</span>
       </button>
+
+      <p class="nav-section">การจัดการ</p>
+
       <button class="nav-item" data-view="trash">
-        <svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7zm3-4h6l1 2H8l1-2z"/></svg>
-        รายการที่ลบ
+        <span class="nav-ico">
+          <svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7zm3-4h6l1 2H8l1-2z"/></svg>
+        </span>
+        <span class="nav-label">รายการที่ลบ</span>
+        <span class="nav-badge mono" id="navCountTrash">0</span>
       </button>
     </nav>
+
+    <div class="side-foot">
+      <div class="storage-card">
+        <div class="storage-head">
+          <span>พื้นที่ไฟล์แนบ</span>
+          <span class="mono" id="storageText">0 KB</span>
+        </div>
+        <div class="meter"><span id="storageBar" style="width:0%"></span></div>
+        <p class="storage-note">จัดเก็บบน Firestore · จำกัด 700KB ต่อไฟล์</p>
+      </div>
+      <div class="side-status">
+        <span class="dot-live" id="connDot"></span>
+        <span id="connText">กำลังเชื่อมต่อ…</span>
+      </div>
+    </div>
   </aside>
 
   <div class="scrim" id="scrim"></div>
 
-  <!-- Main -->
+  <!-- ===== Main ===== -->
   <div class="main">
     <header class="topbar">
       <button class="icon-btn" id="menuToggle" aria-label="เมนู">
         <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
 
+      <div class="topbar-title">
+        <span class="crumb">ระบบเอกสารราชการ</span>
+        <h1 id="pageTitle">แดชบอร์ด</h1>
+      </div>
+
       <div class="search-wrap">
         <svg viewBox="0 0 24 24" class="search-icon"><path d="M21 21l-4.35-4.35m1.35-5.15a7 7 0 1 1-14 0 7 7 0 0 1 14 0z"/></svg>
         <input type="search" id="globalSearch" placeholder="ค้นหาเอกสาร เลขที่หนังสือ หน่วยงาน...">
+        <kbd class="search-kbd">Ctrl K</kbd>
       </div>
 
       <div class="topbar-actions">
-        <button class="icon-btn" id="themeToggle" aria-label="สลับโหมดสี" title="สลับโหมดสี">
-          <svg viewBox="0 0 24 24" id="themeIconSun"><path d="M12 4V2m0 20v-2M4 12H2m20 0h-2M5.64 5.64L4.22 4.22m15.56 15.56l-1.42-1.42M5.64 18.36L4.22 19.78M18.36 5.64l1.42-1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z"/></svg>
+        <button class="btn btn-primary btn-sm hide-sm" data-open="addDocBtn">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          เพิ่มเอกสาร
+        </button>
+        <button class="icon-btn theme-btn" id="themeToggle" aria-label="สลับโหมดสี" title="สลับโหมดสี">
+          <svg viewBox="0 0 24 24" class="ico-sun"><path d="M12 4V2m0 20v-2M4 12H2m20 0h-2M5.64 5.64L4.22 4.22m15.56 15.56l-1.42-1.42M5.64 18.36L4.22 19.78M18.36 5.64l1.42-1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z"/></svg>
+          <svg viewBox="0 0 24 24" class="ico-moon"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
         </button>
       </div>
     </header>
@@ -76,66 +129,103 @@
 
       <!-- ===== DASHBOARD VIEW ===== -->
       <section id="view-dashboard" class="view is-active">
-        <div class="view-head">
-          <h2>ภาพรวมระบบ</h2>
-          <p>สรุปสถานะเอกสารราชการทั้งหมดในระบบ</p>
+
+        <div class="hero">
+          <div class="hero-copy">
+            <span class="pill">ภาพรวมระบบ</span>
+            <h2>ศูนย์กลางเอกสารราชการของคุณ</h2>
+            <p>จัดเก็บ ค้นหา และติดตามสถานะหนังสือราชการได้จากที่เดียว พร้อมสำรองข้อมูลแบบเรียลไทม์</p>
+            <div class="hero-actions">
+              <button class="btn btn-primary" data-open="addDocBtn">
+                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                เพิ่มเอกสารใหม่
+              </button>
+              <button class="btn btn-ghost" data-view-link="documents">เปิดคลังเอกสาร</button>
+            </div>
+          </div>
+          <div class="hero-art" aria-hidden="true">
+            <svg viewBox="0 0 200 200">
+              <circle cx="100" cy="100" r="88" fill="none" stroke="currentColor" stroke-width="1" opacity=".25"/>
+              <circle cx="100" cy="100" r="66" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="6 6" opacity=".45"/>
+              <circle cx="100" cy="100" r="44" fill="none" stroke="currentColor" stroke-width="2" opacity=".7"/>
+              <path d="M100 66 L118 104 L100 94 L82 104 Z" fill="currentColor"/>
+              <path d="M78 124h44" stroke="currentColor" stroke-width="4"/>
+            </svg>
+          </div>
         </div>
 
         <div class="stat-grid">
-          <div class="stat-card">
-            <div class="stat-icon icon-blue">
-              <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/></svg>
+          <article class="stat-card" data-tone="blue">
+            <div class="stat-top">
+              <span class="stat-icon">
+                <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/></svg>
+              </span>
+              <span class="stat-chip" id="chipTotal">ทั้งระบบ</span>
             </div>
-            <div class="stat-body">
-              <span class="stat-label">เอกสารทั้งหมด</span>
-              <span class="stat-value mono" id="statTotal">0</span>
+            <span class="stat-value mono" id="statTotal">0</span>
+            <span class="stat-label">เอกสารทั้งหมด</span>
+            <div class="meter"><span id="meterTotal" style="width:100%"></span></div>
+          </article>
+
+          <article class="stat-card" data-tone="green">
+            <div class="stat-top">
+              <span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span>
+              <span class="stat-chip" id="chipApproved">0%</span>
             </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon icon-green">
-              <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+            <span class="stat-value mono" id="statApproved">0</span>
+            <span class="stat-label">อนุมัติแล้ว</span>
+            <div class="meter"><span id="meterApproved" style="width:0%"></span></div>
+          </article>
+
+          <article class="stat-card" data-tone="gold">
+            <div class="stat-top">
+              <span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 3M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/></svg></span>
+              <span class="stat-chip" id="chipPending">0%</span>
             </div>
-            <div class="stat-body">
-              <span class="stat-label">อนุมัติแล้ว</span>
-              <span class="stat-value mono" id="statApproved">0</span>
+            <span class="stat-value mono" id="statPending">0</span>
+            <span class="stat-label">รอดำเนินการ</span>
+            <div class="meter"><span id="meterPending" style="width:0%"></span></div>
+          </article>
+
+          <article class="stat-card" data-tone="red">
+            <div class="stat-top">
+              <span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></span>
+              <span class="stat-chip" id="chipRejected">0%</span>
             </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon icon-gold">
-              <svg viewBox="0 0 24 24"><path d="M12 8v4l3 3M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/></svg>
-            </div>
-            <div class="stat-body">
-              <span class="stat-label">รอดำเนินการ</span>
-              <span class="stat-value mono" id="statPending">0</span>
-            </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon icon-red">
-              <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
-            </div>
-            <div class="stat-body">
-              <span class="stat-label">ไม่อนุมัติ</span>
-              <span class="stat-value mono" id="statRejected">0</span>
-            </div>
-          </div>
+            <span class="stat-value mono" id="statRejected">0</span>
+            <span class="stat-label">ไม่อนุมัติ</span>
+            <div class="meter"><span id="meterRejected" style="width:0%"></span></div>
+          </article>
         </div>
 
         <div class="chart-grid">
           <div class="panel">
             <div class="panel-head">
-              <h3>เอกสารตามหมวดหมู่</h3>
+              <div class="panel-title">
+                <h3>เอกสารตามหมวดหมู่</h3>
+                <p>จำนวนเอกสารที่จัดเก็บในแต่ละหมวด</p>
+              </div>
             </div>
             <canvas id="chartCategory" height="220"></canvas>
           </div>
+
           <div class="panel">
             <div class="panel-head">
-              <h3>สถานะเอกสาร</h3>
+              <div class="panel-title">
+                <h3>สถานะเอกสาร</h3>
+                <p>สัดส่วนตามสถานะการพิจารณา</p>
+              </div>
             </div>
             <canvas id="chartStatus" height="220"></canvas>
           </div>
+
           <div class="panel panel-wide">
             <div class="panel-head">
-              <h3>แนวโน้มการนำเข้าเอกสารรายเดือน</h3>
+              <div class="panel-title">
+                <h3>แนวโน้มการนำเข้าเอกสาร</h3>
+                <p>ย้อนหลัง 6 เดือนล่าสุด</p>
+              </div>
+              <span class="panel-tag">รายเดือน</span>
             </div>
             <canvas id="chartTrend" height="140"></canvas>
           </div>
@@ -143,7 +233,10 @@
 
         <div class="panel">
           <div class="panel-head">
-            <h3>เอกสารล่าสุด</h3>
+            <div class="panel-title">
+              <h3>เอกสารล่าสุด</h3>
+              <p>5 รายการที่เพิ่มเข้าระบบล่าสุด</p>
+            </div>
             <button class="link-btn" data-view-link="documents">ดูทั้งหมด →</button>
           </div>
           <div class="table-scroll">
@@ -157,7 +250,7 @@
         </div>
       </section>
 
-<!-- ===== DOCUMENTS VIEW ===== -->
+      <!-- ===== DOCUMENTS VIEW ===== -->
       <section id="view-documents" class="view">
         <div class="view-head view-head-row">
           <div>
@@ -165,24 +258,37 @@
             <p>จัดการ แก้ไข ดาวน์โหลด และลบเอกสารราชการ</p>
           </div>
           <button class="btn btn-primary" id="addDocBtn">
-            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14M5 12h14"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
             เพิ่มเอกสาร
           </button>
         </div>
 
         <div class="toolbar">
-          <select id="filterCategory"><option value="">หมวดหมู่ทั้งหมด</option></select>
-          <select id="filterStatus">
-            <option value="">สถานะทั้งหมด</option>
-            <option value="approved">อนุมัติแล้ว</option>
-            <option value="pending">รอดำเนินการ</option>
-            <option value="rejected">ไม่อนุมัติ</option>
-          </select>
-          <input type="date" id="filterDate">
-          <button class="btn btn-ghost" id="clearFilters">ล้างตัวกรอง</button>
+          <div class="field">
+            <label for="filterCategory">หมวดหมู่</label>
+            <select id="filterCategory"><option value="">หมวดหมู่ทั้งหมด</option></select>
+          </div>
+          <div class="field">
+            <label for="filterStatus">สถานะ</label>
+            <select id="filterStatus">
+              <option value="">สถานะทั้งหมด</option>
+              <option value="approved">อนุมัติแล้ว</option>
+              <option value="pending">รอดำเนินการ</option>
+              <option value="rejected">ไม่อนุมัติ</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="filterDate">วันที่ออกเอกสาร</label>
+            <input type="date" id="filterDate">
+          </div>
+          <button class="btn btn-ghost" id="clearFilters">
+            <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            ล้างตัวกรอง
+          </button>
+          <span class="result-count mono" id="resultCount"></span>
         </div>
 
-        <div class="panel">
+        <div class="panel panel-flush">
           <div class="table-scroll">
             <table class="doc-table" id="docsTable">
               <thead>
@@ -201,7 +307,9 @@
             </table>
           </div>
           <div class="empty-state" id="docsEmpty" hidden>
-            <svg viewBox="0 0 24 24" width="40" height="40"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/></svg>
+            <span class="empty-art">
+              <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/></svg>
+            </span>
             <p id="docsEmptyMessage">ยังไม่มีเอกสารในระบบ</p>
             <button class="btn btn-primary" id="docsEmptyAddBtn" data-open="addDocBtn">เพิ่มเอกสารแรกของคุณ</button>
           </div>
@@ -217,7 +325,7 @@
             <p>จัดกลุ่มเอกสารราชการตามประเภทงาน</p>
           </div>
           <button class="btn btn-primary" id="addCategoryBtn">
-            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14M5 12h14"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
             เพิ่มหมวดหมู่
           </button>
         </div>
@@ -230,7 +338,7 @@
           <h2>รายการที่ลบ</h2>
           <p>เอกสารที่ถูกลบจะเก็บไว้ชั่วคราว สามารถกู้คืนหรือลบถาวรได้</p>
         </div>
-        <div class="panel">
+        <div class="panel panel-flush">
           <div class="table-scroll">
             <table class="doc-table" id="trashTable">
               <thead><tr><th>เลขที่หนังสือ</th><th>ชื่อเอกสาร</th><th>ลบเมื่อ</th><th class="col-actions">การดำเนินการ</th></tr></thead>
@@ -238,7 +346,9 @@
             </table>
           </div>
           <div class="empty-state" id="trashEmpty" hidden>
-            <svg viewBox="0 0 24 24" width="40" height="40"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7z"/></svg>
+            <span class="empty-art">
+              <svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7z"/></svg>
+            </span>
             <p>ถังขยะว่างเปล่า</p>
           </div>
         </div>
@@ -254,14 +364,18 @@
 <div class="modal-overlay" id="docModalOverlay" hidden>
   <div class="modal" role="dialog" aria-modal="true">
     <div class="modal-head">
-      <h3 id="docModalTitle">เพิ่มเอกสารใหม่</h3>
-      <button class="icon-btn" data-close-modal><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      <span class="modal-icon"><svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/></svg></span>
+      <div class="modal-heading">
+        <h3 id="docModalTitle">เพิ่มเอกสารใหม่</h3>
+        <p>กรอกรายละเอียดหนังสือราชการและแนบไฟล์ PDF</p>
+      </div>
+      <button class="icon-btn" data-close-modal aria-label="ปิด"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
     <form id="docForm" class="modal-body">
       <input type="hidden" id="docId">
       <div class="form-grid">
         <label class="span-2">ชื่อเอกสาร
-          <input type="text" id="docTitle" required>
+          <input type="text" id="docTitle" required placeholder="เช่น ขอเชิญประชุมคณะกรรมการ">
         </label>
         <label>เลขที่หนังสือ
           <input type="text" id="docNumber" required placeholder="เช่น ศธ 0001/2569">
@@ -275,7 +389,7 @@
         <label>หมวดหมู่
           <select id="docCategory" required></select>
         </label>
-        <label>สถานะ
+        <label class="span-2">สถานะ
           <select id="docStatus">
             <option value="pending">รอดำเนินการ</option>
             <option value="approved">อนุมัติแล้ว</option>
@@ -287,7 +401,7 @@
         </label>
         <label class="span-2">ไฟล์ PDF
           <div class="file-drop" id="fileDrop">
-            <svg viewBox="0 0 24 24" width="28" height="28"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+            <svg viewBox="0 0 24 24" class="file-ico"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
             <span id="fileDropText">ลากไฟล์ PDF มาวาง หรือคลิกเพื่อเลือกไฟล์ (สูงสุด 700KB)</span>
             <input type="file" id="docFile" accept="application/pdf" hidden>
           </div>
@@ -306,8 +420,12 @@
 <div class="modal-overlay" id="previewModalOverlay" hidden>
   <div class="modal modal-lg" role="dialog" aria-modal="true">
     <div class="modal-head">
-      <h3 id="previewTitle">ดูตัวอย่างเอกสาร</h3>
-      <button class="icon-btn" data-close-modal><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      <span class="modal-icon"><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></span>
+      <div class="modal-heading">
+        <h3 id="previewTitle">ดูตัวอย่างเอกสาร</h3>
+        <p>แสดงไฟล์ PDF ที่แนบไว้กับเอกสารนี้</p>
+      </div>
+      <button class="icon-btn" data-close-modal aria-label="ปิด"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
     <div class="modal-body">
       <iframe id="previewFrame" class="preview-frame" title="ตัวอย่างเอกสาร PDF"></iframe>
@@ -319,8 +437,11 @@
 <div class="modal-overlay" id="confirmModalOverlay" hidden>
   <div class="modal modal-sm" role="dialog" aria-modal="true">
     <div class="modal-head">
-      <h3 id="confirmTitle">ยืนยันการดำเนินการ</h3>
-      <button class="icon-btn" data-close-modal><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      <span class="modal-icon danger"><svg viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></span>
+      <div class="modal-heading">
+        <h3 id="confirmTitle">ยืนยันการดำเนินการ</h3>
+      </div>
+      <button class="icon-btn" data-close-modal aria-label="ปิด"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
     <div class="modal-body">
       <p id="confirmMessage">คุณแน่ใจหรือไม่?</p>
@@ -336,11 +457,15 @@
 <div class="modal-overlay" id="categoryModalOverlay" hidden>
   <div class="modal modal-sm" role="dialog" aria-modal="true">
     <div class="modal-head">
-      <h3>เพิ่มหมวดหมู่ใหม่</h3>
-      <button class="icon-btn" data-close-modal><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      <span class="modal-icon"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg></span>
+      <div class="modal-heading">
+        <h3>เพิ่มหมวดหมู่ใหม่</h3>
+        <p>ใช้จัดกลุ่มเอกสารให้ค้นหาง่ายขึ้น</p>
+      </div>
+      <button class="icon-btn" data-close-modal aria-label="ปิด"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
     <form id="categoryForm" class="modal-body">
-      <label>ชื่อหมวดหมู่
+      <label class="field-block">ชื่อหมวดหมู่
         <input type="text" id="categoryName" required placeholder="เช่น หนังสือเวียน">
       </label>
       <div class="modal-actions">
@@ -362,4 +487,4 @@
 <script src="firebase-config.js"></script>
 <script src="script.js"></script>
 </body>
-</html>      
+</html>

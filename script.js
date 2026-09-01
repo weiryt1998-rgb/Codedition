@@ -42,13 +42,24 @@ document.getElementById("themeToggle").addEventListener("click", () => {
 /* =========================================================
    TOASTS
    ========================================================= */
+const TOAST_ICON = {
+  success: `<path d="M20 6L9 17l-5-5"/>`,
+  error: `<path d="M12 8v5m0 3h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>`,
+  info: `<path d="M12 16v-5m0-3h.01M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/>`,
+};
 function showToast(message, type = "info") {
   const stack = document.getElementById("toastStack");
   const el = document.createElement("div");
   el.className = `toast ${type}`;
-  el.textContent = message;
+  el.innerHTML = `
+    <span class="toast-ico"><svg viewBox="0 0 24 24">${TOAST_ICON[type] || TOAST_ICON.info}</svg></span>
+    <span class="toast-text"></span>`;
+  el.querySelector(".toast-text").textContent = message;
   stack.appendChild(el);
-  setTimeout(() => el.remove(), 3800);
+  setTimeout(() => {
+    el.classList.add("is-out");
+    setTimeout(() => el.remove(), 260);
+  }, 3800);
 }
 
 /* =========================================================
@@ -56,9 +67,21 @@ function showToast(message, type = "info") {
    Signs in anonymously in the background so Firestore rules can
    still require request.auth != null without showing any UI for it.
    ========================================================= */
+function setConnection(state, text) {
+  const dot = document.getElementById("connDot");
+  const label = document.getElementById("connText");
+  if (!dot || !label) return;
+  dot.className = `dot-live ${state}`;
+  label.textContent = text;
+}
+
 auth.signInAnonymously()
-  .then(() => attachFirestoreListeners())
+  .then(() => {
+    setConnection("is-online", "เชื่อมต่อแล้ว · ซิงก์เรียลไทม์");
+    attachFirestoreListeners();
+  })
   .catch((err) => {
+    setConnection("is-error", "เชื่อมต่อไม่สำเร็จ");
     showToast("เชื่อมต่อฐานข้อมูลไม่สำเร็จ: " + err.message, "error");
     attachFirestoreListeners(); // still try, in case rules are open
   });
@@ -73,9 +96,18 @@ document.querySelectorAll("[data-view-link]").forEach((btn) => {
   btn.addEventListener("click", () => switchView(btn.dataset.viewLink));
 });
 
+const VIEW_TITLE = {
+  dashboard: "แดชบอร์ด",
+  documents: "เอกสารทั้งหมด",
+  categories: "หมวดหมู่เอกสาร",
+  trash: "รายการที่ลบ",
+};
+
 function switchView(view) {
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("is-active", b.dataset.view === view));
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("is-active", v.id === `view-${view}`));
+  document.getElementById("pageTitle").textContent = VIEW_TITLE[view] || "แดชบอร์ด";
+  window.scrollTo({ top: 0, behavior: "smooth" });
   closeSidebarMobile();
 }
 
@@ -101,6 +133,18 @@ document.querySelectorAll("[data-close-modal]").forEach((btn) => {
 });
 document.querySelectorAll(".modal-overlay").forEach((overlay) => {
   overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.hidden = true; });
+});
+
+/* Esc closes the topmost open modal · Ctrl/⌘+K jumps to search */
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const open = [...document.querySelectorAll(".modal-overlay")].filter((m) => !m.hidden).pop();
+    if (open) open.hidden = true;
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    document.getElementById("globalSearch").focus();
+  }
 });
 
 function askConfirm(message, onConfirm) {
@@ -148,19 +192,75 @@ function renderAll() {
 /* =========================================================
    DASHBOARD: STATS + CHARTS
    ========================================================= */
+/* Animates a number from its current value to `target` */
+function countTo(el, target) {
+  const from = Number(el.textContent.replace(/[^\d]/g, "")) || 0;
+  if (from === target) { el.textContent = target; return; }
+  const start = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - start) / 600);
+    const eased = 1 - Math.pow(1 - t, 3);
+    el.textContent = Math.round(from + (target - from) * eased);
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 function renderStats() {
-  document.getElementById("statTotal").textContent = allDocuments.length;
-  document.getElementById("statApproved").textContent = allDocuments.filter((d) => d.status === "approved").length;
-  document.getElementById("statPending").textContent = allDocuments.filter((d) => d.status === "pending").length;
-  document.getElementById("statRejected").textContent = allDocuments.filter((d) => d.status === "rejected").length;
+  const total = allDocuments.length;
+  const counts = {
+    Total: total,
+    Approved: allDocuments.filter((d) => d.status === "approved").length,
+    Pending: allDocuments.filter((d) => d.status === "pending").length,
+    Rejected: allDocuments.filter((d) => d.status === "rejected").length,
+  };
+
+  Object.entries(counts).forEach(([key, value]) => {
+    countTo(document.getElementById(`stat${key}`), value);
+    const pct = total ? Math.round((value / total) * 100) : 0;
+    const meter = document.getElementById(`meter${key}`);
+    if (meter && key !== "Total") meter.style.width = `${pct}%`;
+    const chip = document.getElementById(`chip${key}`);
+    if (chip && key !== "Total") chip.textContent = `${pct}%`;
+  });
+
+  // sidebar badges + attachment storage meter
+  document.getElementById("navCountDocs").textContent = total;
+  document.getElementById("navCountCats").textContent = allCategories.length;
+  document.getElementById("navCountTrash").textContent = allTrash.length;
+
+  const bytes = allDocuments.reduce((sum, d) => sum + (d.fileSize || 0), 0);
+  document.getElementById("storageText").textContent =
+    bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
+  // meter fills relative to a 20MB soft reference so it stays readable
+  document.getElementById("storageBar").style.width = `${Math.min(100, (bytes / (20 * 1024 * 1024)) * 100)}%`;
 }
 
 function chartColors() {
   const dark = document.documentElement.getAttribute("data-theme") === "dark";
   return {
-    text: dark ? "#8FA5C0" : "#5B7089",
-    grid: dark ? "#24405F" : "#C7DDF2",
-    palette: ["#0B3D91", "#C9A227", "#1E8E5A", "#C13B3B", "#5B93DD", "#8A6DD1"],
+    text: dark ? "#93A9C4" : "#5B7089",
+    grid: dark ? "rgba(34,59,89,.7)" : "rgba(213,227,244,.9)",
+    fill: dark ? "rgba(91,147,221,0.18)" : "rgba(11,61,145,0.12)",
+    tooltipBg: dark ? "#14243A" : "#10233A",
+    tooltipText: dark ? "#E8F1FB" : "#FFFFFF",
+    palette: dark
+      ? ["#5B93DD", "#E9CB6B", "#46C68D", "#EB7A7A", "#9B87E8", "#4FC3D9"]
+      : ["#0B3D91", "#C9A227", "#17805A", "#BE3535", "#5B93DD", "#8A6DD1"],
+  };
+}
+
+function chartTooltip(c) {
+  return {
+    backgroundColor: c.tooltipBg,
+    titleColor: c.tooltipText,
+    bodyColor: c.tooltipText,
+    padding: 12,
+    cornerRadius: 10,
+    borderColor: c.grid,
+    borderWidth: 1,
+    displayColors: true,
+    boxPadding: 5,
   };
 }
 
@@ -168,6 +268,7 @@ function renderCharts() {
   if (typeof Chart === "undefined") return;
   const c = chartColors();
   Chart.defaults.font.family = "Sarabun";
+  Chart.defaults.font.size = 12;
   Chart.defaults.color = c.text;
 
   // --- by category ---
@@ -178,16 +279,36 @@ function renderCharts() {
   });
   paintChart("chartCategory", "bar", {
     labels: Object.keys(catCounts),
-    datasets: [{ data: Object.values(catCounts), backgroundColor: c.palette[0], borderRadius: 6, maxBarThickness: 34 }],
-  }, { plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { grid: { color: c.grid }, beginAtZero: true, ticks: { precision: 0 } } } });
+    datasets: [{
+      data: Object.values(catCounts),
+      backgroundColor: Object.keys(catCounts).map((_, i) => c.palette[i % c.palette.length]),
+      borderRadius: 8, borderSkipped: false, maxBarThickness: 32, hoverOffset: 4,
+    }],
+  }, {
+    plugins: { legend: { display: false }, tooltip: chartTooltip(c) },
+    scales: {
+      x: { grid: { display: false }, border: { display: false } },
+      y: { grid: { color: c.grid }, border: { display: false }, beginAtZero: true, ticks: { precision: 0 } },
+    },
+  });
 
   // --- by status ---
   const statusCounts = { approved: 0, pending: 0, rejected: 0 };
   allDocuments.forEach((d) => { if (statusCounts[d.status] !== undefined) statusCounts[d.status]++; });
   paintChart("chartStatus", "doughnut", {
     labels: [STATUS_LABEL.approved, STATUS_LABEL.pending, STATUS_LABEL.rejected],
-    datasets: [{ data: [statusCounts.approved, statusCounts.pending, statusCounts.rejected], backgroundColor: [c.palette[2], c.palette[1], c.palette[3]], borderWidth: 0 }],
-  }, { cutout: "68%", plugins: { legend: { position: "bottom", labels: { boxWidth: 10, padding: 14 } } } });
+    datasets: [{
+      data: [statusCounts.approved, statusCounts.pending, statusCounts.rejected],
+      backgroundColor: [c.palette[2], c.palette[1], c.palette[3]],
+      borderWidth: 0, spacing: 3, hoverOffset: 8,
+    }],
+  }, {
+    cutout: "72%",
+    plugins: {
+      tooltip: chartTooltip(c),
+      legend: { position: "bottom", labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: "circle", padding: 16 } },
+    },
+  });
 
   // --- monthly trend (last 6 months) ---
   const months = [];
@@ -203,8 +324,27 @@ function renderCharts() {
   }).length);
   paintChart("chartTrend", "line", {
     labels: months.map((m) => m.label),
-    datasets: [{ data: trendData, borderColor: c.palette[0], backgroundColor: "rgba(11,61,145,0.12)", fill: true, tension: 0.35, pointRadius: 4, pointBackgroundColor: c.palette[0] }],
-  }, { plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { grid: { color: c.grid }, beginAtZero: true, ticks: { precision: 0 } } } });
+    datasets: [{
+      data: trendData,
+      borderColor: c.palette[0],
+      backgroundColor: c.fill,
+      borderWidth: 2.5,
+      fill: true,
+      tension: 0.4,
+      pointRadius: 4,
+      pointHoverRadius: 7,
+      pointBackgroundColor: c.palette[0],
+      pointBorderColor: "rgba(255,255,255,.85)",
+      pointBorderWidth: 2,
+    }],
+  }, {
+    plugins: { legend: { display: false }, tooltip: chartTooltip(c) },
+    interaction: { mode: "index", intersect: false },
+    scales: {
+      x: { grid: { display: false }, border: { display: false } },
+      y: { grid: { color: c.grid }, border: { display: false }, beginAtZero: true, ticks: { precision: 0 } },
+    },
+  });
 }
 
 function paintChart(canvasId, type, data, extraOptions) {
@@ -232,7 +372,7 @@ function renderRecentTable() {
    ========================================================= */
 function categoryName(id) {
   const cat = allCategories.find((c) => c.id === id);
-  return cat ? cat.name : id;
+  return cat ? cat.name : "";
 }
 function renderCategoryOptions() {
   const opts = allCategories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
@@ -242,17 +382,27 @@ function renderCategoryOptions() {
 function renderCategories() {
   const grid = document.getElementById("categoryGrid");
   if (!allCategories.length) {
-    grid.innerHTML = `<p class="doc-sub">ยังไม่มีหมวดหมู่ กดปุ่ม “เพิ่มหมวดหมู่” เพื่อเริ่มต้น</p>`;
+    grid.innerHTML = `
+      <div class="empty-state cat-empty">
+        <span class="empty-art"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg></span>
+        <p>ยังไม่มีหมวดหมู่</p>
+        <span class="doc-sub">กดปุ่ม “เพิ่มหมวดหมู่” เพื่อเริ่มจัดกลุ่มเอกสาร</span>
+      </div>`;
     return;
   }
   const max = Math.max(1, ...allCategories.map((c) => allDocuments.filter((d) => d.category === c.id).length));
   grid.innerHTML = allCategories.map((c) => {
     const count = allDocuments.filter((d) => d.category === c.id).length;
+    const share = allDocuments.length ? Math.round((count / allDocuments.length) * 100) : 0;
     return `
       <div class="category-card">
+        <div class="cat-top">
+          <span class="cat-ico"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg></span>
+          <span class="stat-chip mono">${share}%</span>
+        </div>
         <span class="cat-name">${escapeHtml(c.name)}</span>
         <span class="cat-count">${count} เอกสาร</span>
-        <div class="cat-bar"><span style="width:${(count / max) * 100}%"></span></div>
+        <div class="meter"><span style="width:${(count / max) * 100}%"></span></div>
         <div class="cat-actions">
           <button class="icon-btn" data-del-cat="${c.id}" title="ลบหมวดหมู่">
             <svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7z"/></svg>
@@ -503,9 +653,17 @@ function renderDocsTable() {
   const emptyMessage = document.getElementById("docsEmptyMessage");
   const emptyAddButton = document.getElementById("docsEmptyAddBtn");
 
+  // sort direction indicator on the header
+  document.querySelectorAll("#docsTable th[data-sort]").forEach((th) => {
+    th.classList.toggle("is-sorted-asc", th.dataset.sort === sortKey && sortDir === "asc");
+    th.classList.toggle("is-sorted-desc", th.dataset.sort === sortKey && sortDir === "desc");
+  });
+
   const hasDocuments = allDocuments.length > 0;
   const hasResults = list.length > 0;
   emptyEl.hidden = hasResults;
+  document.getElementById("resultCount").textContent =
+    hasDocuments ? `พบ ${list.length} จาก ${allDocuments.length} รายการ` : "";
   emptyMessage.textContent = hasDocuments ? "ไม่พบเอกสารที่ตรงกับตัวกรอง" : "ยังไม่มีเอกสารในระบบ";
   emptyAddButton.hidden = hasDocuments;
   document.querySelector("#docsTable").style.display = hasResults ? "table" : "none";
@@ -564,6 +722,7 @@ function renderTrash() {
   const emptyEl = document.getElementById("trashEmpty");
   emptyEl.hidden = allTrash.length !== 0;
   document.getElementById("trashTable").style.display = allTrash.length === 0 ? "none" : "table";
+  document.getElementById("navCountTrash").textContent = allTrash.length;
 
   tbody.innerHTML = allTrash.map((d) => `
     <tr>
