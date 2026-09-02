@@ -118,6 +118,14 @@
           <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
           เพิ่มเอกสาร
         </button>
+        <button class="icon-btn" id="appearanceBtn" aria-label="ปรับแต่งสี" title="ปรับแต่งสีและธีม">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 3a9 9 0 1 0 0 18h1.6a2 2 0 0 0 1.4-3.4 2 2 0 0 1 1.4-3.4H19a3 3 0 0 0 3-3A9 9 0 0 0 12 3z"/>
+            <circle cx="7.6" cy="12.4" r="1.1" fill="currentColor" stroke="none"/>
+            <circle cx="9.8" cy="8.2" r="1.1" fill="currentColor" stroke="none"/>
+            <circle cx="14.6" cy="8" r="1.1" fill="currentColor" stroke="none"/>
+          </svg>
+        </button>
         <button class="icon-btn theme-btn" id="themeToggle" aria-label="สลับโหมดสี" title="สลับโหมดสี">
           <svg viewBox="0 0 24 24" class="ico-sun"><path d="M12 4V2m0 20v-2M4 12H2m20 0h-2M5.64 5.64L4.22 4.22m15.56 15.56l-1.42-1.42M5.64 18.36L4.22 19.78M18.36 5.64l1.42-1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z"/></svg>
           <svg viewBox="0 0 24 24" class="ico-moon"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
@@ -473,6 +481,77 @@
         <button type="submit" class="btn btn-primary">บันทึก</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Appearance / Theme customizer Modal -->
+<div class="modal-overlay" id="appearanceModalOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="appearanceTitle">
+    <div class="modal-head">
+      <span class="modal-icon">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 3a9 9 0 1 0 0 18h1.6a2 2 0 0 0 1.4-3.4 2 2 0 0 1 1.4-3.4H19a3 3 0 0 0 3-3A9 9 0 0 0 12 3z"/>
+          <circle cx="7.6" cy="12.4" r="1.1" fill="currentColor" stroke="none"/>
+          <circle cx="9.8" cy="8.2" r="1.1" fill="currentColor" stroke="none"/>
+          <circle cx="14.6" cy="8" r="1.1" fill="currentColor" stroke="none"/>
+        </svg>
+      </span>
+      <div class="modal-heading">
+        <h3 id="appearanceTitle">ปรับแต่งสีและธีม</h3>
+        <p>เลือกโหมดสี ชุดสีสำเร็จรูป หรือกำหนดสีของแต่ละส่วนเอง</p>
+      </div>
+      <button class="icon-btn" data-close-modal aria-label="ปิด"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+
+    <div class="modal-body">
+      <section class="tune-group">
+        <p class="tune-label">โหมดสี</p>
+        <div class="segmented" id="modeSegment" role="group" aria-label="โหมดสี">
+          <button type="button" data-mode="light">
+            <svg viewBox="0 0 24 24"><path d="M12 4V2m0 20v-2M4 12H2m20 0h-2M5.6 5.6L4.2 4.2m15.6 15.6l-1.4-1.4M5.6 18.4l-1.4 1.4M18.4 5.6l1.4-1.4M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z"/></svg>
+            สว่าง
+          </button>
+          <button type="button" data-mode="dark">
+            <svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+            มืด
+          </button>
+          <button type="button" data-mode="system">
+            <svg viewBox="0 0 24 24"><path d="M3 5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5zM8 20h8"/></svg>
+            ตามระบบ
+          </button>
+        </div>
+      </section>
+
+      <section class="tune-group">
+        <p class="tune-label">ชุดสีสำเร็จรูป</p>
+        <div class="preset-grid" id="presetGrid"></div>
+      </section>
+
+      <section class="tune-group">
+        <div class="tune-label-row">
+          <p class="tune-label">กำหนดสีเอง</p>
+          <span class="tune-note" id="tuneModeNote"></span>
+        </div>
+        <div class="swatch-grid" id="swatchGrid"></div>
+      </section>
+
+      <section class="tune-group">
+        <div class="tune-label-row">
+          <p class="tune-label">ความมนของขอบ</p>
+          <span class="tune-note mono" id="radiusValue">100%</span>
+        </div>
+        <input type="range" id="radiusRange" class="tune-range" min="0" max="200" step="10" value="100" aria-label="ความมนของขอบ">
+        <div class="tune-scale"><span>เหลี่ยม</span><span>มนมาก</span></div>
+      </section>
+
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="resetAppearanceBtn">
+          <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/></svg>
+          คืนค่าเริ่มต้น
+        </button>
+        <button type="button" class="btn btn-primary" data-close-modal>เสร็จสิ้น</button>
+      </div>
+    </div>
   </div>
 </div>
 

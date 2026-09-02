@@ -22,21 +22,315 @@ let confirmCallback = null;
 let charts = {};
 
 /* =========================================================
-   THEME
+   THEME & APPEARANCE
+   ผู้ใช้เลือกโหมดสี ชุดสีสำเร็จรูป และกำหนดสีของแต่ละส่วนเองได้
+   ค่าที่ตั้งไว้ถูกเขียนทับลงบนตัวแปร CSS ของ :root แล้วบันทึกใน localStorage
    ========================================================= */
-function applyTheme(theme) {
-  document.documentElement.setAttribute("data-theme", theme);
-  localStorage.setItem("govdocs-theme", theme);
+const APPEARANCE_KEY = "govdocs-appearance";
+const RADIUS_BASE = { "--radius-xs": 8, "--radius-sm": 12, "--radius": 18, "--radius-lg": 24 };
+
+/* ค่าเริ่มต้น — ต้องตรงกับ :root และ [data-theme="dark"] ใน style.css */
+const APPEARANCE_DEFAULTS = {
+  light: { bg: "#EEF4FC", surface: "#FFFFFF", text: "#10233A", primary: "#0B3D91", accent: "#C9A227", success: "#17805A", warning: "#B5771A", danger: "#BE3535" },
+  dark:  { bg: "#060D18", surface: "#0F1B2D", text: "#E8F1FB", primary: "#5B93DD", accent: "#E9CB6B", success: "#46C68D", warning: "#E7B953", danger: "#EB7A7A" },
+};
+
+const COLOR_FIELDS = [
+  { key: "bg",      label: "พื้นหลังหน้าจอ" },
+  { key: "surface", label: "พื้นการ์ด / แผง" },
+  { key: "text",    label: "สีตัวอักษร" },
+  { key: "primary", label: "สีหลัก / ปุ่มหลัก" },
+  { key: "accent",  label: "สีเน้น" },
+  { key: "success", label: "สถานะอนุมัติแล้ว" },
+  { key: "warning", label: "สถานะรอดำเนินการ" },
+  { key: "danger",  label: "สถานะไม่อนุมัติ" },
+];
+
+const COLOR_PRESETS = [
+  { id: "default", name: "ราชการน้ำเงิน", primary: "#0B3D91", accent: "#C9A227" },
+  { id: "emerald", name: "เขียวมรกต",     primary: "#0F6B4F", accent: "#D2A02F" },
+  { id: "royal",   name: "ม่วงราชสำนัก",  primary: "#4B2E83", accent: "#CFA23C" },
+  { id: "crimson", name: "แดงชาด",        primary: "#A32330", accent: "#D8A13A" },
+  { id: "ocean",   name: "ฟ้าคราม",       primary: "#0F6C9E", accent: "#EFA93B" },
+  { id: "slate",   name: "เทาสุขุม",       primary: "#37485C", accent: "#8C9BAC" },
+];
+
+/* ---------- color helpers ---------- */
+const isHex = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
+
+function parseHex(hex) {
+  let h = String(hex).trim().replace("#", "");
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  const n = parseInt(h, 16) || 0;
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
-(function initTheme() {
-  const saved = localStorage.getItem("govdocs-theme");
-  const preferred = saved || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-  applyTheme(preferred);
-})();
+function toHex({ r, g, b }) {
+  const part = (v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
+  return `#${part(r)}${part(g)}${part(b)}`.toUpperCase();
+}
+/** ผสมสี a กับ b — t = 0 ได้ a ล้วน, t = 1 ได้ b ล้วน */
+function mixHex(a, b, t) {
+  const A = parseHex(a), B = parseHex(b);
+  return toHex({ r: A.r + (B.r - A.r) * t, g: A.g + (B.g - A.g) * t, b: A.b + (B.b - A.b) * t });
+}
+function rgbList(hex) { const c = parseHex(hex); return `${c.r}, ${c.g}, ${c.b}`; }
+function rgbaHex(hex, alpha) { const c = parseHex(hex); return `rgba(${c.r}, ${c.g}, ${c.b}, ${alpha})`; }
+
+/** สร้างตัวแปร CSS ทั้งชุดจากสีหลัก 8 สีที่ผู้ใช้เลือก */
+function deriveVars(b, dark) {
+  const W = "#FFFFFF", K = "#000000";
+  const tint = (c, t) => mixHex(c, dark ? b.bg : W, t);
+  return {
+    "--bg": b.bg,
+    "--bg-deep": mixHex(b.bg, K, dark ? 0.3 : 0.055),
+    "--surface": b.surface,
+    "--surface-2": dark ? mixHex(b.surface, W, 0.05) : mixHex(b.surface, b.bg, 0.55),
+    "--surface-3": dark ? mixHex(b.surface, W, 0.1) : mixHex(b.surface, b.bg, 0.85),
+    "--glass": rgbaHex(b.surface, 0.72),
+    "--glass-strong": rgbaHex(b.surface, 0.92),
+    "--border": mixHex(dark ? b.surface : b.bg, b.text, dark ? 0.16 : 0.14),
+    "--border-soft": mixHex(dark ? b.surface : b.bg, b.text, dark ? 0.09 : 0.07),
+    "--text": b.text,
+    "--text-muted": mixHex(b.text, b.bg, 0.38),
+    "--text-faint": mixHex(b.text, b.bg, 0.55),
+    "--primary": b.primary,
+    "--primary-600": dark ? mixHex(b.primary, W, 0.16) : mixHex(b.primary, K, 0.22),
+    "--primary-400": dark ? mixHex(b.primary, K, 0.12) : mixHex(b.primary, W, 0.18),
+    "--primary-100": dark ? mixHex(b.primary, b.bg, 0.84) : mixHex(b.primary, W, 0.88),
+    "--primary-rgb": rgbList(b.primary),
+    "--accent": b.accent,
+    "--accent-soft": tint(b.accent, dark ? 0.84 : 0.82),
+    "--success": b.success,
+    "--success-bg": tint(b.success, dark ? 0.86 : 0.84),
+    "--warning": b.warning,
+    "--warning-bg": tint(b.warning, dark ? 0.86 : 0.84),
+    "--danger": b.danger,
+    "--danger-bg": tint(b.danger, dark ? 0.86 : 0.84),
+    "--grad-primary": `linear-gradient(135deg, ${mixHex(b.primary, W, dark ? 0.06 : 0.1)} 0%, ${b.primary} 45%, ${mixHex(b.primary, K, dark ? 0.35 : 0.28)} 100%)`,
+    "--grad-gold": `linear-gradient(135deg, ${mixHex(b.accent, W, 0.22)}, ${b.accent})`,
+  };
+}
+
+const MANAGED_VARS = [...Object.keys(deriveVars(APPEARANCE_DEFAULTS.light, false)), ...Object.keys(RADIUS_BASE)];
+
+/* ---------- state ---------- */
+let appearance = loadAppearance();
+
+function loadAppearance() {
+  const fallbackMode = localStorage.getItem("govdocs-theme") || "system";
+  const blank = { mode: fallbackMode, preset: null, radius: 100, light: {}, dark: {} };
+  try {
+    const saved = JSON.parse(localStorage.getItem(APPEARANCE_KEY) || "null");
+    if (!saved || typeof saved !== "object") return blank;
+    const clean = (obj) => {
+      const out = {};
+      COLOR_FIELDS.forEach(({ key }) => { if (isHex(obj?.[key])) out[key] = obj[key].toUpperCase(); });
+      return out;
+    };
+    return {
+      mode: ["light", "dark", "system"].includes(saved.mode) ? saved.mode : fallbackMode,
+      preset: typeof saved.preset === "string" ? saved.preset : null,
+      radius: Number.isFinite(saved.radius) ? Math.min(200, Math.max(0, saved.radius)) : 100,
+      light: clean(saved.light),
+      dark: clean(saved.dark),
+    };
+  } catch {
+    return blank;
+  }
+}
+
+function saveAppearance() {
+  try {
+    localStorage.setItem(APPEARANCE_KEY, JSON.stringify(appearance));
+    localStorage.setItem("govdocs-theme", appearance.mode); // เผื่อโค้ดเดิมที่อ่านคีย์นี้
+  } catch { /* โหมดส่วนตัวของเบราว์เซอร์อาจบันทึกไม่ได้ — ไม่ถือเป็นข้อผิดพลาด */ }
+}
+
+const systemMode = () => (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+const activeMode = () => (appearance.mode === "system" ? systemMode() : appearance.mode);
+const baseColors = (mode) => ({ ...APPEARANCE_DEFAULTS[mode], ...appearance[mode] });
+
+/** ใส่ค่าสีทั้งหมดลง :root ตามโหมดปัจจุบัน */
+function applyAppearance({ repaintCharts = false } = {}) {
+  const mode = activeMode();
+  const root = document.documentElement;
+  root.setAttribute("data-theme", mode);
+
+  MANAGED_VARS.forEach((prop) => root.style.removeProperty(prop));
+
+  if (Object.keys(appearance[mode]).length) {
+    const vars = deriveVars(baseColors(mode), mode === "dark");
+    Object.entries(vars).forEach(([prop, value]) => root.style.setProperty(prop, value));
+  }
+  if (appearance.radius !== 100) {
+    Object.entries(RADIUS_BASE).forEach(([prop, px]) => root.style.setProperty(prop, `${Math.round((px * appearance.radius) / 100)}px`));
+  }
+  if (repaintCharts) renderCharts();
+}
+
+/* ---------- UI ---------- */
+function renderPresets() {
+  const grid = document.getElementById("presetGrid");
+  grid.innerHTML = "";
+  COLOR_PRESETS.forEach((p) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `preset-btn${appearance.preset === p.id || (!appearance.preset && p.id === "default" && !Object.keys(appearance[activeMode()]).length) ? " is-active" : ""}`;
+    btn.innerHTML = `<span class="preset-dots"><i style="background:${p.primary}"></i><i style="background:${p.accent}"></i></span><span></span>`;
+    btn.lastElementChild.textContent = p.name;
+    btn.addEventListener("click", () => applyPreset(p));
+    grid.appendChild(btn);
+  });
+}
+
+function presetColors(p, mode) {
+  const dark = mode === "dark";
+  const primary = dark ? mixHex(p.primary, "#FFFFFF", 0.34) : p.primary;
+  return {
+    ...APPEARANCE_DEFAULTS[mode],
+    primary,
+    accent: dark ? mixHex(p.accent, "#FFFFFF", 0.28) : p.accent,
+    bg: dark ? mixHex(p.primary, "#03060B", 0.9) : mixHex(p.primary, "#FFFFFF", 0.93),
+    surface: dark ? mixHex(p.primary, "#0A1119", 0.86) : "#FFFFFF",
+    text: dark ? APPEARANCE_DEFAULTS.dark.text : mixHex(p.primary, "#0A121C", 0.72),
+  };
+}
+
+function applyPreset(p) {
+  if (p.id === "default") {
+    appearance.light = {};
+    appearance.dark = {};
+  } else {
+    appearance.light = presetColors(p, "light");
+    appearance.dark = presetColors(p, "dark");
+  }
+  appearance.preset = p.id;
+  saveAppearance();
+  applyAppearance({ repaintCharts: true });
+  syncAppearanceUI();
+  showToast(`ใช้ชุดสี “${p.name}” แล้ว`, "success");
+}
+
+function renderSwatches() {
+  const grid = document.getElementById("swatchGrid");
+  const mode = activeMode();
+  const colors = baseColors(mode);
+  grid.innerHTML = "";
+  COLOR_FIELDS.forEach(({ key, label }) => {
+    const item = document.createElement("div");
+    item.className = "swatch";
+    item.innerHTML = `
+      <span class="swatch-chip"><input type="color" data-color-key="${key}" aria-label="${label}"></span>
+      <span class="swatch-text"><strong></strong><span class="mono" data-hex-for="${key}"></span></span>
+      <button type="button" class="swatch-reset" data-reset-key="${key}" aria-label="คืนค่าเดิมของ${label}" title="คืนค่าเดิม">
+        <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/></svg>
+      </button>`;
+    item.querySelector("strong").textContent = label;
+    item.querySelector("input").value = colors[key].toLowerCase();
+    item.querySelector("[data-hex-for]").textContent = colors[key];
+    grid.appendChild(item);
+  });
+}
+
+function syncAppearanceUI() {
+  const mode = activeMode();
+  const colors = baseColors(mode);
+
+  document.querySelectorAll("#modeSegment button").forEach((b) => {
+    b.classList.toggle("is-active", b.dataset.mode === appearance.mode);
+  });
+  document.getElementById("tuneModeNote").textContent =
+    `กำลังแก้ไขสีของโหมด${mode === "dark" ? "มืด" : "สว่าง"}`;
+
+  document.querySelectorAll("#swatchGrid input[type=color]").forEach((input) => {
+    const key = input.dataset.colorKey;
+    input.value = colors[key].toLowerCase();
+    const hex = document.querySelector(`[data-hex-for="${key}"]`);
+    if (hex) hex.textContent = colors[key];
+  });
+
+  document.getElementById("radiusRange").value = appearance.radius;
+  document.getElementById("radiusValue").textContent = `${appearance.radius}%`;
+  renderPresets();
+}
+
+function setColor(key, value) {
+  const mode = activeMode();
+  appearance[mode] = { ...appearance[mode], [key]: value.toUpperCase() };
+  appearance.preset = null;
+  saveAppearance();
+  applyAppearance();
+}
+
+function setMode(mode) {
+  appearance.mode = mode;
+  saveAppearance();
+  applyAppearance({ repaintCharts: true });
+  syncAppearanceUI();
+}
+
+function resetAppearance() {
+  appearance = { mode: appearance.mode, preset: "default", radius: 100, light: {}, dark: {} };
+  saveAppearance();
+  applyAppearance({ repaintCharts: true });
+  syncAppearanceUI();
+  showToast("คืนค่าสีเริ่มต้นแล้ว", "success");
+}
+
+/* ---------- wiring ---------- */
+applyAppearance();
+
+document.getElementById("appearanceBtn").addEventListener("click", () => {
+  renderSwatches();
+  syncAppearanceUI();
+  openModal("appearanceModalOverlay");
+});
+
 document.getElementById("themeToggle").addEventListener("click", () => {
-  const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
-  applyTheme(next);
-  renderCharts(); // repaint chart colors for the new theme
+  setMode(activeMode() === "dark" ? "light" : "dark");
+});
+
+document.getElementById("modeSegment").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-mode]");
+  if (btn) setMode(btn.dataset.mode);
+});
+
+document.getElementById("swatchGrid").addEventListener("input", (e) => {
+  const input = e.target.closest("input[data-color-key]");
+  if (!input) return;
+  setColor(input.dataset.colorKey, input.value);
+  const hex = document.querySelector(`[data-hex-for="${input.dataset.colorKey}"]`);
+  if (hex) hex.textContent = input.value.toUpperCase();
+});
+document.getElementById("swatchGrid").addEventListener("change", (e) => {
+  if (e.target.closest("input[data-color-key]")) { renderCharts(); renderPresets(); }
+});
+document.getElementById("swatchGrid").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-reset-key]");
+  if (!btn) return;
+  const mode = activeMode();
+  delete appearance[mode][btn.dataset.resetKey];
+  appearance.preset = null;
+  saveAppearance();
+  applyAppearance({ repaintCharts: true });
+  syncAppearanceUI();
+});
+
+const radiusRange = document.getElementById("radiusRange");
+radiusRange.addEventListener("input", () => {
+  appearance.radius = Number(radiusRange.value);
+  document.getElementById("radiusValue").textContent = `${appearance.radius}%`;
+  saveAppearance();
+  applyAppearance();
+});
+
+document.getElementById("resetAppearanceBtn").addEventListener("click", resetAppearance);
+
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (appearance.mode === "system") {
+    applyAppearance({ repaintCharts: true });
+    syncAppearanceUI();
+  }
 });
 
 /* =========================================================
@@ -236,17 +530,26 @@ function renderStats() {
   document.getElementById("storageBar").style.width = `${Math.min(100, (bytes / (20 * 1024 * 1024)) * 100)}%`;
 }
 
+/* อ่านสีจากตัวแปร CSS โดยตรง กราฟจึงเปลี่ยนตามธีมและสีที่ผู้ใช้ตั้งเองเสมอ */
 function chartColors() {
   const dark = document.documentElement.getAttribute("data-theme") === "dark";
+  const cs = getComputedStyle(document.documentElement);
+  const v = (name, fallback) => cs.getPropertyValue(name).trim() || fallback;
+  const primary = v("--primary", dark ? "#5B93DD" : "#0B3D91");
   return {
-    text: dark ? "#93A9C4" : "#5B7089",
-    grid: dark ? "rgba(34,59,89,.7)" : "rgba(213,227,244,.9)",
-    fill: dark ? "rgba(91,147,221,0.18)" : "rgba(11,61,145,0.12)",
-    tooltipBg: dark ? "#14243A" : "#10233A",
-    tooltipText: dark ? "#E8F1FB" : "#FFFFFF",
-    palette: dark
-      ? ["#5B93DD", "#E9CB6B", "#46C68D", "#EB7A7A", "#9B87E8", "#4FC3D9"]
-      : ["#0B3D91", "#C9A227", "#17805A", "#BE3535", "#5B93DD", "#8A6DD1"],
+    text: v("--text-muted", dark ? "#93A9C4" : "#5B7089"),
+    grid: v("--border", dark ? "#223B59" : "#D5E3F4"),
+    fill: `rgba(${v("--primary-rgb", dark ? "91, 147, 221" : "11, 61, 145")}, ${dark ? 0.18 : 0.12})`,
+    tooltipBg: dark ? v("--surface-2", "#14243A") : v("--text", "#10233A"),
+    tooltipText: dark ? v("--text", "#E8F1FB") : "#FFFFFF",
+    palette: [
+      primary,
+      v("--accent", "#C9A227"),
+      v("--success", "#17805A"),
+      v("--danger", "#BE3535"),
+      v("--primary-400", primary),
+      v("--warning", "#B5771A"),
+    ],
   };
 }
 
@@ -299,7 +602,7 @@ function renderCharts() {
     labels: [STATUS_LABEL.approved, STATUS_LABEL.pending, STATUS_LABEL.rejected],
     datasets: [{
       data: [statusCounts.approved, statusCounts.pending, statusCounts.rejected],
-      backgroundColor: [c.palette[2], c.palette[1], c.palette[3]],
+      backgroundColor: [c.palette[2], c.palette[5], c.palette[3]],
       borderWidth: 0, spacing: 3, hoverOffset: 8,
     }],
   }, {
