@@ -20,6 +20,10 @@ let currentPage = 1;
 let pendingFileData = null; // { name, size, dataUrl }
 let confirmCallback = null;
 let charts = {};
+let fileReadVersion = 0;
+let fileReading = false;
+let fileInvalid = false;
+let previewUrl = null;
 
 /* =========================================================
    THEME & APPEARANCE
@@ -117,9 +121,12 @@ const MANAGED_VARS = [...Object.keys(deriveVars(APPEARANCE_DEFAULTS.light, false
 let appearance = loadAppearance();
 
 function loadAppearance() {
-  const fallbackMode = localStorage.getItem("govdocs-theme") || "system";
+  let fallbackMode = "system";
   const blank = { mode: fallbackMode, preset: null, radius: 100, light: {}, dark: {} };
   try {
+    const legacyMode = localStorage.getItem("govdocs-theme");
+    if (["light", "dark", "system"].includes(legacyMode)) fallbackMode = legacyMode;
+    blank.mode = fallbackMode;
     const saved = JSON.parse(localStorage.getItem(APPEARANCE_KEY) || "null");
     if (!saved || typeof saved !== "object") return blank;
     const clean = (obj) => {
@@ -369,9 +376,9 @@ function setConnection(state, text) {
   label.textContent = text;
 }
 
-auth.signInAnonymously()
+if (typeof auth !== "undefined" && auth && typeof db !== "undefined" && db) auth.signInAnonymously()
   .then(() => {
-    setConnection("is-online", "เชื่อมต่อแล้ว · ซิงก์เรียลไทม์");
+    setConnection("", "กำลังโหลดข้อมูล…");
     attachFirestoreListeners();
   })
   .catch((err) => {
@@ -379,6 +386,9 @@ auth.signInAnonymously()
     showToast("เชื่อมต่อฐานข้อมูลไม่สำเร็จ: " + err.message, "error");
     attachFirestoreListeners(); // still try, in case rules are open
   });
+else {
+  setConnection("is-error", "โหลดฐานข้อมูลไม่สำเร็จ กรุณาโหลดหน้าใหม่");
+}
 
 /* =========================================================
    NAVIGATION
@@ -398,11 +408,13 @@ const VIEW_TITLE = {
 };
 
 function switchView(view) {
+  if (!Object.hasOwn(VIEW_TITLE, view)) return;
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("is-active", b.dataset.view === view));
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("is-active", v.id === `view-${view}`));
   document.getElementById("pageTitle").textContent = VIEW_TITLE[view] || "แดชบอร์ด";
   window.scrollTo({ top: 0, behavior: "smooth" });
   closeSidebarMobile();
+  if (view === "dashboard") Object.values(charts).forEach((chart) => chart.resize());
 }
 
 const sidebar = document.getElementById("sidebar");
@@ -410,33 +422,78 @@ const scrim = document.getElementById("scrim");
 document.getElementById("menuToggle").addEventListener("click", () => {
   sidebar.classList.add("is-open");
   scrim.classList.add("is-visible");
+  document.getElementById("menuToggle").setAttribute("aria-expanded", "true");
 });
 scrim.addEventListener("click", closeSidebarMobile);
 function closeSidebarMobile() {
   sidebar.classList.remove("is-open");
   scrim.classList.remove("is-visible");
+  document.getElementById("menuToggle").setAttribute("aria-expanded", "false");
 }
 
 /* =========================================================
    MODAL HELPERS
    ========================================================= */
-function openModal(id) { document.getElementById(id).hidden = false; }
-function closeModal(id) { document.getElementById(id).hidden = true; }
+const modalFocus = new Map();
+function openModal(id) {
+  const overlay = document.getElementById(id);
+  modalFocus.set(id, document.activeElement);
+  overlay.hidden = false;
+  document.getElementById("app").inert = true;
+  document.body.classList.add("modal-open");
+  (overlay.querySelector('input:not([type="hidden"]):not([type="file"]), [data-close-modal]') || overlay.querySelector(".modal")).focus();
+}
+function closeModal(id) {
+  const overlay = document.getElementById(id);
+  if (overlay.getAttribute("aria-busy") === "true") return;
+  overlay.hidden = true;
+  if (id === "docModalOverlay") { fileReadVersion++; fileReading = false; }
+  if (id === "confirmModalOverlay") confirmCallback = null;
+  if (id === "previewModalOverlay") {
+    document.getElementById("previewFrame").removeAttribute("src");
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = null;
+  }
+  const anotherOpen = [...document.querySelectorAll(".modal-overlay")].some((m) => !m.hidden);
+  document.getElementById("app").inert = anotherOpen;
+  document.body.classList.toggle("modal-open", anotherOpen);
+  const trigger = modalFocus.get(id);
+  if (trigger?.isConnected) trigger.focus();
+  modalFocus.delete(id);
+}
+function setModalBusy(id, busy) {
+  const overlay = document.getElementById(id);
+  overlay.setAttribute("aria-busy", String(busy));
+  overlay.querySelectorAll("button, input, select, textarea").forEach((el) => { el.disabled = busy; });
+}
 document.querySelectorAll("[data-close-modal]").forEach((btn) => {
-  btn.addEventListener("click", () => btn.closest(".modal-overlay").hidden = true);
+  btn.addEventListener("click", () => closeModal(btn.closest(".modal-overlay").id));
 });
 document.querySelectorAll(".modal-overlay").forEach((overlay) => {
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.hidden = true; });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(overlay.id); });
 });
 
 /* Esc closes the topmost open modal · Ctrl/⌘+K jumps to search */
 document.addEventListener("keydown", (e) => {
+  const open = [...document.querySelectorAll(".modal-overlay")].filter((m) => !m.hidden).pop();
   if (e.key === "Escape") {
-    const open = [...document.querySelectorAll(".modal-overlay")].filter((m) => !m.hidden).pop();
-    if (open) open.hidden = true;
+    if (open) closeModal(open.id);
+    else closeSidebarMobile();
+  }
+  if (e.key === "Tab" && open) {
+    const focusable = [...open.querySelectorAll('button, input, select, textarea, iframe, [tabindex="0"]')]
+      .filter((el) => !el.disabled && el.getClientRects().length);
+    const first = focusable[0], last = focusable.at(-1);
+    if (!first) { e.preventDefault(); return; }
+    if (e.shiftKey && (document.activeElement === first || !focusable.includes(document.activeElement))) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && (document.activeElement === last || !focusable.includes(document.activeElement))) {
+      e.preventDefault(); first.focus();
+    }
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
+    if (open) return;
     document.getElementById("globalSearch").focus();
   }
 });
@@ -446,34 +503,62 @@ function askConfirm(message, onConfirm) {
   confirmCallback = onConfirm;
   openModal("confirmModalOverlay");
 }
-document.getElementById("confirmActionBtn").addEventListener("click", () => {
-  if (confirmCallback) confirmCallback();
-  closeModal("confirmModalOverlay");
+document.getElementById("confirmActionBtn").addEventListener("click", async () => {
+  if (!confirmCallback || document.getElementById("confirmActionBtn").disabled) return;
+  const action = confirmCallback;
+  setModalBusy("confirmModalOverlay", true);
+  try { await action(); }
+  catch (err) { showToast(err.message, "error"); }
+  finally {
+    setModalBusy("confirmModalOverlay", false);
+    closeModal("confirmModalOverlay");
+  }
 });
 
 /* =========================================================
    FIRESTORE LISTENERS
    ========================================================= */
 function attachFirestoreListeners() {
+  const states = new Map();
+  const updateConnection = () => {
+    if (!navigator.onLine) setConnection("is-error", "ออฟไลน์ · รอเชื่อมต่ออินเทอร์เน็ต");
+    else if ([...states.values()].includes("error")) setConnection("is-error", "โหลดข้อมูลบางส่วนไม่สำเร็จ กรุณาโหลดหน้าใหม่");
+    else if (states.size === 3 && [...states.values()].every((s) => s === "ready")) setConnection("is-online", "เชื่อมต่อแล้ว · ซิงก์เรียลไทม์");
+    else setConnection("", "กำลังซิงก์ข้อมูล…");
+  };
+  const received = (key, snap) => {
+    states.set(key, snap.metadata.fromCache || snap.metadata.hasPendingWrites ? "waiting" : "ready");
+    updateConnection();
+  };
+  const failed = (key, err) => {
+    states.set(key, "error");
+    updateConnection();
+    showToast("โหลดข้อมูลล้มเหลว: " + err.message, "error");
+  };
+  window.addEventListener("online", updateConnection);
+  window.addEventListener("offline", updateConnection);
   db.collection("documents").where("deleted", "==", false)
-    .onSnapshot((snap) => {
-      allDocuments = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    .onSnapshot({ includeMetadataChanges: true }, (snap) => {
+      received("documents", snap);
+      allDocuments = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
       renderAll();
-    }, (err) => showToast("โหลดเอกสารล้มเหลว: " + err.message, "error"));
+    }, (err) => failed("documents", err));
 
   db.collection("documents").where("deleted", "==", true)
-    .onSnapshot((snap) => {
-      allTrash = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    .onSnapshot({ includeMetadataChanges: true }, (snap) => {
+      received("trash", snap);
+      allTrash = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
       renderTrash();
-    }, (err) => showToast("โหลดถังขยะล้มเหลว: " + err.message, "error"));
+      renderStats();
+    }, (err) => failed("trash", err));
 
   db.collection("categories").orderBy("name")
-    .onSnapshot((snap) => {
-      allCategories = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    .onSnapshot({ includeMetadataChanges: true }, (snap) => {
+      received("categories", snap);
+      allCategories = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
       renderCategoryOptions();
-      renderCategories();
       renderAll();
-    }, (err) => showToast("โหลดหมวดหมู่ล้มเหลว: " + err.message, "error"));
+    }, (err) => failed("categories", err));
 }
 
 function renderAll() {
@@ -481,13 +566,15 @@ function renderAll() {
   renderCharts();
   renderRecentTable();
   renderDocsTable();
-  }
+  renderCategories();
+}
 
 /* =========================================================
    DASHBOARD: STATS + CHARTS
    ========================================================= */
 /* Animates a number from its current value to `target` */
 function countTo(el, target) {
+  if (el.countAnimation) cancelAnimationFrame(el.countAnimation);
   const from = Number(el.textContent.replace(/[^\d]/g, "")) || 0;
   if (from === target) { el.textContent = target; return; }
   const start = performance.now();
@@ -495,9 +582,9 @@ function countTo(el, target) {
     const t = Math.min(1, (now - start) / 600);
     const eased = 1 - Math.pow(1 - t, 3);
     el.textContent = Math.round(from + (target - from) * eased);
-    if (t < 1) requestAnimationFrame(step);
+    if (t < 1) el.countAnimation = requestAnimationFrame(step);
   };
-  requestAnimationFrame(step);
+  el.countAnimation = requestAnimationFrame(step);
 }
 
 function renderStats() {
@@ -523,7 +610,7 @@ function renderStats() {
   document.getElementById("navCountCats").textContent = allCategories.length;
   document.getElementById("navCountTrash").textContent = allTrash.length;
 
-  const bytes = allDocuments.reduce((sum, d) => sum + (d.fileSize || 0), 0);
+  const bytes = [...allDocuments, ...allTrash].reduce((sum, d) => sum + Math.max(0, Number(d.fileSize) || 0), 0);
   document.getElementById("storageText").textContent =
     bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
   // meter fills relative to a 20MB soft reference so it stays readable
@@ -575,7 +662,7 @@ function renderCharts() {
   Chart.defaults.color = c.text;
 
   // --- by category ---
-  const catCounts = {};
+  const catCounts = Object.create(null);
   allDocuments.forEach((d) => {
     const name = categoryName(d.category) || "ไม่ระบุหมวดหมู่";
     catCounts[name] = (catCounts[name] || 0) + 1;
@@ -621,8 +708,7 @@ function renderCharts() {
     months.push({ key: `${dt.getFullYear()}-${dt.getMonth()}`, label: dt.toLocaleDateString("th-TH", { month: "short", year: "2-digit" }) });
   }
   const trendData = months.map((m) => allDocuments.filter((d) => {
-    if (!d.date) return false;
-    const dt = new Date(d.date);
+    const dt = new Date(createdAtMillis(d));
     return `${dt.getFullYear()}-${dt.getMonth()}` === m.key;
   }).length);
   paintChart("chartTrend", "line", {
@@ -659,7 +745,7 @@ function paintChart(canvasId, type, data, extraOptions) {
 
 function renderRecentTable() {
   const tbody = document.querySelector("#recentTable tbody");
-  const recent = [...allDocuments].sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0)).slice(0, 5);
+  const recent = [...allDocuments].sort((a, b) => createdAtMillis(b) - createdAtMillis(a)).slice(0, 5);
   tbody.innerHTML = recent.map((d) => `
     <tr>
       <td class="mono">${escapeHtml(d.docNumber || "-")}</td>
@@ -678,9 +764,14 @@ function categoryName(id) {
   return cat ? cat.name : "";
 }
 function renderCategoryOptions() {
-  const opts = allCategories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
-  document.getElementById("docCategory").innerHTML = opts || `<option value="">— ยังไม่มีหมวดหมู่ —</option>`;
-  document.getElementById("filterCategory").innerHTML = `<option value="">หมวดหมู่ทั้งหมด</option>${opts}`;
+  const docSelect = document.getElementById("docCategory");
+  const filterSelect = document.getElementById("filterCategory");
+  const selected = docSelect.value, filtered = filterSelect.value;
+  const opts = allCategories.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join("");
+  docSelect.innerHTML = `<option value="">ไม่ระบุหมวดหมู่</option>${opts}`;
+  filterSelect.innerHTML = `<option value="">หมวดหมู่ทั้งหมด</option>${opts}`;
+  docSelect.value = allCategories.some((c) => c.id === selected) ? selected : "";
+  filterSelect.value = allCategories.some((c) => c.id === filtered) ? filtered : "";
 }
 function renderCategories() {
   const grid = document.getElementById("categoryGrid");
@@ -732,12 +823,19 @@ document.getElementById("addCategoryBtn").addEventListener("click", () => {
 document.getElementById("categoryForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = document.getElementById("categoryName").value.trim();
-  if (!name) return;
+  if (!name || document.getElementById("categoryModalOverlay").getAttribute("aria-busy") === "true") return;
+  if (allCategories.some((c) => String(c.name).normalize().toLocaleLowerCase("th") === name.normalize().toLocaleLowerCase("th"))) {
+    showToast("มีหมวดหมู่นี้แล้ว กรุณาใช้ชื่ออื่น", "error");
+    return;
+  }
+  setModalBusy("categoryModalOverlay", true);
   try {
     await db.collection("categories").add({ name, createdAt: Date.now() });
     showToast("เพิ่มหมวดหมู่แล้ว", "success");
+    setModalBusy("categoryModalOverlay", false);
     closeModal("categoryModalOverlay");
   } catch (err) { showToast(err.message, "error"); }
+  finally { setModalBusy("categoryModalOverlay", false); }
 });
 
 /* =========================================================
@@ -747,7 +845,10 @@ const fileDrop = document.getElementById("fileDrop");
 const fileInput = document.getElementById("docFile");
 const fileDropText = document.getElementById("fileDropText");
 
-fileDrop.addEventListener("click", () => fileInput.click());
+fileDrop.addEventListener("click", (e) => { if (e.target !== fileInput && !fileInput.disabled) fileInput.click(); });
+fileDrop.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (!fileInput.disabled) fileInput.click(); }
+});
 fileDrop.addEventListener("dragover", (e) => { e.preventDefault(); fileDrop.classList.add("has-file"); });
 fileDrop.addEventListener("dragleave", () => { if (!pendingFileData) fileDrop.classList.remove("has-file"); });
 fileDrop.addEventListener("drop", (e) => {
@@ -756,10 +857,20 @@ fileDrop.addEventListener("drop", (e) => {
 });
 fileInput.addEventListener("change", () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
 
-function handleFile(file) {
+async function handleFile(file) {
+  if (fileInput.disabled) return;
+  const version = ++fileReadVersion;
   const errEl = document.getElementById("docFormError");
+  const saveBtn = document.getElementById("docSaveBtn");
+  pendingFileData = null;
+  fileReading = false;
+  fileInvalid = true;
+  saveBtn.disabled = false;
+  fileDrop.classList.remove("has-file");
+  fileDropText.textContent = "เลือกไฟล์ PDF ใหม่ (สูงสุด 700KB)";
+  fileInput.value = "";
   errEl.hidden = true;
-  if (file.type !== "application/pdf") {
+  if (file.type !== "application/pdf" && (file.type || !/\.pdf$/i.test(file.name))) {
     errEl.textContent = "รองรับเฉพาะไฟล์ PDF เท่านั้น";
     errEl.hidden = false;
     return;
@@ -769,13 +880,27 @@ function handleFile(file) {
     errEl.hidden = false;
     return;
   }
-  const reader = new FileReader();
-  reader.onload = () => {
-    pendingFileData = { name: file.name, size: file.size, dataUrl: reader.result };
+  fileReading = true;
+  saveBtn.disabled = true;
+  fileDropText.textContent = `กำลังอ่านไฟล์ ${file.name}…`;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (version !== fileReadVersion) return;
+    if (String.fromCharCode(...bytes.subarray(0, 5)) !== "%PDF-") throw new Error("ไฟล์นี้ไม่ใช่ PDF ที่ถูกต้อง");
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+    pendingFileData = { name: file.name, size: bytes.length, dataUrl: "data:application/pdf;base64," + btoa(binary) };
+    fileInvalid = false;
     fileDrop.classList.add("has-file");
     fileDropText.textContent = `${file.name} (${(file.size / 1024).toFixed(0)}KB) — คลิกเพื่อเปลี่ยนไฟล์`;
-  };
-  reader.readAsDataURL(file);
+  } catch (err) {
+    if (version !== fileReadVersion) return;
+    errEl.textContent = "อ่านไฟล์ไม่สำเร็จ: " + err.message;
+    errEl.hidden = false;
+    fileDropText.textContent = "อ่านไฟล์ไม่สำเร็จ — คลิกเพื่อเลือกไฟล์ใหม่";
+  } finally {
+    if (version === fileReadVersion) { fileReading = false; saveBtn.disabled = false; }
+  }
 }
 /* =========================================================
    DOCUMENT CRUD
@@ -784,6 +909,10 @@ document.getElementById("addDocBtn").addEventListener("click", () => openDocModa
 document.querySelectorAll("[data-open='addDocBtn']").forEach((b) => b.addEventListener("click", () => openDocModal()));
 
 function openDocModal(doc = null) {
+  fileReadVersion++;
+  fileReading = false;
+  fileInvalid = false;
+  setModalBusy("docModalOverlay", false);
   document.getElementById("docForm").reset();
   document.getElementById("docFormError").hidden = true;
   fileInput.value = "";
@@ -798,7 +927,7 @@ function openDocModal(doc = null) {
     document.getElementById("docNumber").value = doc.docNumber || "";
     document.getElementById("docDate").value = doc.date || "";
     document.getElementById("docAgency").value = doc.agency || "";
-    document.getElementById("docCategory").value = doc.category || "";
+    document.getElementById("docCategory").value = allCategories.some((c) => c.id === doc.category) ? doc.category : "";
     document.getElementById("docStatus").value = doc.status || "pending";
     document.getElementById("docDescription").value = doc.description || "";
     if (doc.fileName) fileDropText.textContent = `ไฟล์ปัจจุบัน: ${doc.fileName} — คลิกเพื่อแทนที่`;
@@ -816,8 +945,15 @@ function openDocModal(doc = null) {
 
 document.getElementById("docForm").addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (document.getElementById("docModalOverlay").getAttribute("aria-busy") === "true") return;
   const id = document.getElementById("docId").value;
   const errEl = document.getElementById("docFormError");
+  errEl.hidden = true;
+  if (fileReading || fileInvalid) {
+    errEl.textContent = fileReading ? "กรุณารออ่านไฟล์ให้เสร็จ" : "กรุณาเลือกไฟล์ PDF ที่ถูกต้องก่อนบันทึก";
+    errEl.hidden = false;
+    return;
+  }
   const payload = {
     title: document.getElementById("docTitle").value.trim(),
     docNumber: document.getElementById("docNumber").value.trim(),
@@ -829,6 +965,11 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
     deleted: false,
     updatedAt: Date.now(),
   };
+  if (!payload.title || !payload.docNumber || !payload.date) {
+    errEl.textContent = "กรุณากรอกชื่อเอกสาร เลขที่หนังสือ และวันที่ให้ครบถ้วน";
+    errEl.hidden = false;
+    return;
+  }
   if (pendingFileData) {
     payload.fileName = pendingFileData.name;
     payload.fileSize = pendingFileData.size;
@@ -840,7 +981,7 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
   }
 
   const saveBtn = document.getElementById("docSaveBtn");
-  saveBtn.disabled = true;
+  setModalBusy("docModalOverlay", true);
   saveBtn.textContent = "กำลังบันทึก...";
   try {
     if (id) {
@@ -852,12 +993,13 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
       await db.collection("documents").add(payload);
       showToast("เพิ่มเอกสารสำเร็จ", "success");
     }
+    setModalBusy("docModalOverlay", false);
     closeModal("docModalOverlay");
   } catch (err) {
     errEl.textContent = "บันทึกไม่สำเร็จ: " + err.message;
     errEl.hidden = false;
   } finally {
-    saveBtn.disabled = false;
+    setModalBusy("docModalOverlay", false);
     saveBtn.textContent = "บันทึกเอกสาร";
   }
 });
@@ -885,25 +1027,38 @@ function permanentlyDeleteDoc(id) {
 }
 
 function downloadDoc(doc) {
-  if (!doc.fileData) { showToast("ไม่พบไฟล์แนบสำหรับเอกสารนี้", "error"); return; }
+  const blob = attachmentBlob(doc);
+  if (!blob) return;
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = doc.fileData;
+  a.href = url;
   a.download = doc.fileName || `${doc.title}.pdf`;
   document.body.appendChild(a);
   a.click();
   a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function previewDoc(doc) {
-  if (!doc.fileData) { showToast("ไม่พบไฟล์แนบสำหรับเอกสารนี้", "error"); return; }
+  const blob = attachmentBlob(doc);
+  if (!blob) return;
+  // A selection in the host page can tint the entire embedded PDF viewer blue.
+  // Clear only the host selection; the PDF document keeps its own text selection.
+  window.getSelection()?.removeAllRanges();
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  previewUrl = URL.createObjectURL(blob);
   document.getElementById("previewTitle").textContent = doc.title;
-  document.getElementById("previewFrame").src = doc.fileData;
+  document.getElementById("previewFrame").src = previewUrl;
   openModal("previewModalOverlay");
 }
 
 /* =========================================================
    DOCUMENTS TABLE: search, filter, sort, paginate
    ========================================================= */
-document.getElementById("globalSearch").addEventListener("input", () => { currentPage = 1; renderDocsTable(); });
+document.getElementById("globalSearch").addEventListener("input", () => {
+  if (!document.getElementById("view-documents").classList.contains("is-active")) switchView("documents");
+  currentPage = 1;
+  renderDocsTable();
+});
 document.getElementById("filterCategory").addEventListener("change", () => { currentPage = 1; renderDocsTable(); });
 document.getElementById("filterStatus").addEventListener("change", () => { currentPage = 1; renderDocsTable(); });
 document.getElementById("filterDate").addEventListener("change", () => { currentPage = 1; renderDocsTable(); });
@@ -916,10 +1071,15 @@ document.getElementById("clearFilters").addEventListener("click", () => {
   renderDocsTable();
 });
 document.querySelectorAll("#docsTable th[data-sort]").forEach((th) => {
+  th.tabIndex = 0;
+  th.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); th.click(); }
+  });
   th.addEventListener("click", () => {
     const key = th.dataset.sort;
     if (sortKey === key) sortDir = sortDir === "asc" ? "desc" : "asc";
     else { sortKey = key; sortDir = "asc"; }
+    currentPage = 1;
     renderDocsTable();
   });
 });
@@ -932,7 +1092,7 @@ function getFilteredDocs() {
 
   let list = allDocuments.filter((d) => {
     const matchesQuery = !q || [d.title, d.docNumber, d.agency, categoryName(d.category)]
-      .some((f) => (f || "").toLowerCase().includes(q));
+      .some((f) => String(f ?? "").toLowerCase().includes(q));
     const matchesCat = !catFilter || d.category === catFilter;
     const matchesStatus = !statusFilter || d.status === statusFilter;
     const matchesDate = !dateFilter || d.date === dateFilter;
@@ -943,6 +1103,7 @@ function getFilteredDocs() {
     let av = a[sortKey] ?? "", bv = b[sortKey] ?? "";
     if (sortKey === "category") { av = categoryName(a.category) || ""; bv = categoryName(b.category) || ""; }
     if (sortKey === "size") { av = a.fileSize || 0; bv = b.fileSize || 0; }
+    if (typeof av === "string" && typeof bv === "string") return av.localeCompare(bv, "th", { numeric: true }) * (sortDir === "asc" ? 1 : -1);
     if (av < bv) return sortDir === "asc" ? -1 : 1;
     if (av > bv) return sortDir === "asc" ? 1 : -1;
     return 0;
@@ -960,6 +1121,7 @@ function renderDocsTable() {
   document.querySelectorAll("#docsTable th[data-sort]").forEach((th) => {
     th.classList.toggle("is-sorted-asc", th.dataset.sort === sortKey && sortDir === "asc");
     th.classList.toggle("is-sorted-desc", th.dataset.sort === sortKey && sortDir === "desc");
+    th.setAttribute("aria-sort", th.dataset.sort === sortKey ? (sortDir === "asc" ? "ascending" : "descending") : "none");
   });
 
   const hasDocuments = allDocuments.length > 0;
@@ -1009,10 +1171,15 @@ function findDoc(id) { return allDocuments.find((d) => d.id === id) || allTrash.
 function renderPagination(totalPages) {
   const el = document.getElementById("pagination");
   if (totalPages <= 1) { el.innerHTML = ""; return; }
-  let html = "";
-  for (let i = 1; i <= totalPages; i++) {
-    html += `<button class="${i === currentPage ? "is-active" : ""}" data-page="${i}">${i}</button>`;
+  let html = `<button data-page="${currentPage - 1}" ${currentPage === 1 ? "disabled" : ""} aria-label="หน้าก่อนหน้า">‹</button>`;
+  const pages = [...new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1])].filter((p) => p >= 1 && p <= totalPages).sort((a, b) => a - b);
+  let previous = 0;
+  for (const i of pages) {
+    if (i - previous > 1) html += `<span aria-hidden="true">…</span>`;
+    html += `<button class="${i === currentPage ? "is-active" : ""}" data-page="${i}" aria-label="หน้า ${i}" ${i === currentPage ? 'aria-current="page"' : ""}>${i}</button>`;
+    previous = i;
   }
+  html += `<button data-page="${currentPage + 1}" ${currentPage === totalPages ? "disabled" : ""} aria-label="หน้าถัดไป">›</button>`;
   el.innerHTML = html;
   el.querySelectorAll("[data-page]").forEach((b) => b.addEventListener("click", () => { currentPage = Number(b.dataset.page); renderDocsTable(); }));
 }
@@ -1053,11 +1220,26 @@ function statusStamp(status) {
 }
 function formatDate(iso) {
   if (!iso) return "-";
-  const d = new Date(iso);
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T00:00:00` : iso);
   if (isNaN(d)) return "-";
   return d.toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
 }
-function truncate(str, n) { return str.length > n ? str.slice(0, n) + "…" : str; }
+function createdAtMillis(doc) {
+  const value = doc.createdAtMs ?? doc.createdAt;
+  if (typeof value?.toMillis === "function") return value.toMillis();
+  if (Number.isFinite(value)) return value;
+  if (Number.isFinite(value?.seconds)) return value.seconds * 1000;
+  return 0;
+}
+function attachmentBlob(doc) {
+  try {
+    if (!doc?.fileData || !/^data:application\/pdf;base64,/i.test(doc.fileData)) throw new Error("ไม่พบไฟล์แนบ PDF ที่ถูกต้อง");
+    const binary = atob(doc.fileData.slice(doc.fileData.indexOf(",") + 1));
+    if (!binary.startsWith("%PDF-")) throw new Error("ไฟล์แนบ PDF เสียหาย");
+    return new Blob([Uint8Array.from(binary, (c) => c.charCodeAt(0))], { type: "application/pdf" });
+  } catch (err) { showToast(err.message, "error"); return null; }
+}
+function truncate(str, n) { str = String(str ?? ""); return str.length > n ? str.slice(0, n) + "…" : str; }
 function escapeHtml(str) {
   return String(str ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 }

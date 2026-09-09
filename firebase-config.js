@@ -7,6 +7,13 @@ const firebaseConfig = {
   appId: "1:319198063949:web:99e308e2c0e899022a9b04"
 };
 
-const app = firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db = firebase.firestore();
+let app = null;
+let auth = null;
+let db = null;
+try {
+  app = firebase.initializeApp(firebaseConfig);
+  auth = firebase.auth();
+  db = firebase.firestore();
+} catch (error) {
+  console.error("Firebase initialization failed", error);
+}

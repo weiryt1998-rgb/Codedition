@@ -98,7 +98,7 @@
   <!-- ===== Main ===== -->
   <div class="main">
     <header class="topbar">
-      <button class="icon-btn" id="menuToggle" aria-label="เมนู">
+      <button class="icon-btn" id="menuToggle" aria-label="เมนู" aria-controls="sidebar" aria-expanded="false">
         <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
 
@@ -109,7 +109,7 @@
 
       <div class="search-wrap">
         <svg viewBox="0 0 24 24" class="search-icon"><path d="M21 21l-4.35-4.35m1.35-5.15a7 7 0 1 1-14 0 7 7 0 0 1 14 0z"/></svg>
-        <input type="search" id="globalSearch" placeholder="ค้นหาเอกสาร เลขที่หนังสือ หน่วยงาน...">
+        <input type="search" id="globalSearch" aria-label="ค้นหาเอกสาร เลขที่หนังสือ หน่วยงาน" placeholder="ค้นหาเอกสาร เลขที่หนังสือ หน่วยงาน...">
         <kbd class="search-kbd">Ctrl K</kbd>
       </div>
 
@@ -293,7 +293,7 @@
             <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
             ล้างตัวกรอง
           </button>
-          <span class="result-count mono" id="resultCount"></span>
+          <span class="result-count mono" id="resultCount" role="status"></span>
         </div>
 
         <div class="panel panel-flush">
@@ -321,7 +321,7 @@
             <p id="docsEmptyMessage">ยังไม่มีเอกสารในระบบ</p>
             <button class="btn btn-primary" id="docsEmptyAddBtn" data-open="addDocBtn">เพิ่มเอกสารแรกของคุณ</button>
           </div>
-          <div class="pagination" id="pagination"></div>
+          <nav class="pagination" id="pagination" aria-label="หน้าเอกสาร"></nav>
         </div>
       </section>
 
@@ -370,7 +370,7 @@
 
 <!-- Add/Edit Document Modal -->
 <div class="modal-overlay" id="docModalOverlay" hidden>
-  <div class="modal" role="dialog" aria-modal="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="docModalTitle" tabindex="-1">
     <div class="modal-head">
       <span class="modal-icon"><svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/></svg></span>
       <div class="modal-heading">
@@ -383,19 +383,19 @@
       <input type="hidden" id="docId">
       <div class="form-grid">
         <label class="span-2">ชื่อเอกสาร
-          <input type="text" id="docTitle" required placeholder="เช่น ขอเชิญประชุมคณะกรรมการ">
+          <input type="text" id="docTitle" required maxlength="300" placeholder="เช่น ขอเชิญประชุมคณะกรรมการ">
         </label>
         <label>เลขที่หนังสือ
-          <input type="text" id="docNumber" required placeholder="เช่น ศธ 0001/2569">
+          <input type="text" id="docNumber" required maxlength="100" placeholder="เช่น ศธ 0001/2569">
         </label>
         <label>วันที่ออกเอกสาร
           <input type="date" id="docDate" required>
         </label>
         <label>หน่วยงาน
-          <input type="text" id="docAgency" placeholder="เช่น กรมการปกครอง">
+          <input type="text" id="docAgency" maxlength="300" placeholder="เช่น กรมการปกครอง">
         </label>
         <label>หมวดหมู่
-          <select id="docCategory" required></select>
+          <select id="docCategory"><option value="">ไม่ระบุหมวดหมู่</option></select>
         </label>
         <label class="span-2">สถานะ
           <select id="docStatus">
@@ -405,17 +405,17 @@
           </select>
         </label>
         <label class="span-2">คำอธิบาย / หมายเหตุ
-          <textarea id="docDescription" rows="3" placeholder="รายละเอียดเพิ่มเติมของเอกสาร"></textarea>
+          <textarea id="docDescription" rows="3" maxlength="5000" placeholder="รายละเอียดเพิ่มเติมของเอกสาร"></textarea>
         </label>
-        <label class="span-2">ไฟล์ PDF
-          <div class="file-drop" id="fileDrop">
+        <div class="span-2 field-block"><span id="fileLabel">ไฟล์ PDF</span>
+          <div class="file-drop" id="fileDrop" role="button" tabindex="0" aria-labelledby="fileLabel fileDropText" aria-describedby="docFormError">
             <svg viewBox="0 0 24 24" class="file-ico"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
             <span id="fileDropText">ลากไฟล์ PDF มาวาง หรือคลิกเพื่อเลือกไฟล์ (สูงสุด 700KB)</span>
             <input type="file" id="docFile" accept="application/pdf" hidden>
           </div>
-        </label>
+        </div>
       </div>
-      <p class="modal-hint" id="docFormError" hidden></p>
+      <p class="modal-hint" id="docFormError" role="alert" hidden></p>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" data-close-modal>ยกเลิก</button>
         <button type="submit" class="btn btn-primary" id="docSaveBtn">บันทึกเอกสาร</button>
@@ -426,7 +426,7 @@
 
 <!-- Preview Modal -->
 <div class="modal-overlay" id="previewModalOverlay" hidden>
-  <div class="modal modal-lg" role="dialog" aria-modal="true">
+  <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="previewTitle" tabindex="-1">
     <div class="modal-head">
       <span class="modal-icon"><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></span>
       <div class="modal-heading">
@@ -443,7 +443,7 @@
 
 <!-- Confirm Modal -->
 <div class="modal-overlay" id="confirmModalOverlay" hidden>
-  <div class="modal modal-sm" role="dialog" aria-modal="true">
+  <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" tabindex="-1">
     <div class="modal-head">
       <span class="modal-icon danger"><svg viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></span>
       <div class="modal-heading">
@@ -463,18 +463,18 @@
 
 <!-- Category Modal -->
 <div class="modal-overlay" id="categoryModalOverlay" hidden>
-  <div class="modal modal-sm" role="dialog" aria-modal="true">
+  <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="categoryModalTitle" tabindex="-1">
     <div class="modal-head">
       <span class="modal-icon"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg></span>
       <div class="modal-heading">
-        <h3>เพิ่มหมวดหมู่ใหม่</h3>
+        <h3 id="categoryModalTitle">เพิ่มหมวดหมู่ใหม่</h3>
         <p>ใช้จัดกลุ่มเอกสารให้ค้นหาง่ายขึ้น</p>
       </div>
       <button class="icon-btn" data-close-modal aria-label="ปิด"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
     <form id="categoryForm" class="modal-body">
       <label class="field-block">ชื่อหมวดหมู่
-        <input type="text" id="categoryName" required placeholder="เช่น หนังสือเวียน">
+        <input type="text" id="categoryName" required maxlength="100" placeholder="เช่น หนังสือเวียน">
       </label>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" data-close-modal>ยกเลิก</button>
@@ -486,7 +486,7 @@
 
 <!-- Appearance / Theme customizer Modal -->
 <div class="modal-overlay" id="appearanceModalOverlay" hidden>
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="appearanceTitle">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="appearanceTitle" tabindex="-1">
     <div class="modal-head">
       <span class="modal-icon">
         <svg viewBox="0 0 24 24">
@@ -556,7 +556,7 @@
 </div>
 
 <!-- Toast container -->
-<div class="toast-stack" id="toastStack"></div>
+<div class="toast-stack" id="toastStack" role="status" aria-live="polite" aria-atomic="false"></div>
 
 <!-- ===================== SCRIPTS ===================== -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>

@@ -1,0 +1,85 @@
+rules_version = '2';
+
+// Security rules for the government document system (ระบบจัดเก็บเอกสารราชการ).
+// The app signs every visitor in anonymously and relies entirely on these rules
+// to keep the "documents" and "categories" collections safe — none of the
+// client-side checks in script.js (PDF magic bytes, 700KB limit, required
+// fields) are enforced unless mirrored here, since anyone can call the
+// Firestore REST/SDK API directly with the public web config.
+//
+// This file has no effect until you deploy it:
+//   firebase deploy --only firestore:rules
+// Test it against real data with the Firestore Emulator first — a mismatched
+// field name or type here will turn into permission-denied errors in the app.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isPdfDataUrl(value) {
+      return value is string
+        && value.matches('^data:application/pdf;base64,.*')
+        // 700KB binary, base64-inflated (~4/3), plus headroom.
+        && value.size() <= 960000;
+    }
+
+    function validDocument(data) {
+      return data.keys().hasOnly([
+          'title', 'docNumber', 'date', 'agency', 'category', 'status',
+          'description', 'deleted', 'deletedAt', 'createdAt', 'createdAtMs',
+          'updatedAt', 'fileName', 'fileSize', 'fileData'
+        ])
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 300
+        && data.docNumber is string && data.docNumber.size() > 0 && data.docNumber.size() <= 100
+        && data.date is string && data.date.size() > 0 && data.date.size() <= 10
+        && data.agency is string && data.agency.size() <= 300
+        && data.category is string && data.category.size() <= 200
+        && data.status in ['approved', 'pending', 'rejected']
+        && data.description is string && data.description.size() <= 5000
+        && data.deleted is bool
+        && data.fileName is string && data.fileName.size() <= 260
+        && data.fileSize is number && data.fileSize > 0 && data.fileSize <= 716800 // 700 * 1024
+        && isPdfDataUrl(data.fileData);
+    }
+
+    match /documents/{docId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && validDocument(request.resource.data)
+        && request.resource.data.deleted == false;
+
+      // A full add/edit resends every field (validated above). Soft-delete
+      // and restore only ever touch deleted/deletedAt, so they're allowed
+      // through a narrower check instead of the full schema.
+      allow update: if signedIn()
+        && (
+          validDocument(request.resource.data)
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'deletedAt'])
+        );
+
+      allow delete: if signedIn();
+    }
+
+    match /categories/{categoryId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['name', 'createdAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && request.resource.data.createdAt is number;
+
+      allow update: if false; // the app never edits an existing category
+      allow delete: if signedIn();
+    }
+
+    // Deny everything else by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

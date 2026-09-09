@@ -481,7 +481,7 @@ tr:hover .row-actions { opacity: 1; }
 .empty-art svg { width: 30px; height: 30px; }
 .empty-state p { font-size: 14.5px; font-weight: 600; color: var(--text); }
 
-.pagination { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 18px 0 6px; }
+.pagination { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; padding: 18px 0 6px; }
 .pagination button {
   min-width: 36px; height: 36px; border-radius: 11px; border: 1px solid var(--border);
   background: var(--surface); color: var(--text-muted); cursor: pointer; font-size: 13px;
@@ -538,6 +538,11 @@ tr:hover .row-actions { opacity: 1; }
   justify-content: center; z-index: 100; padding: 20px; backdrop-filter: blur(6px);
   animation: fadeIn .18s var(--ease);
 }
+body.modal-open { overflow: hidden; }
+.modal[tabindex="-1"] { outline: none; }
+.modal[aria-busy="true"], .modal-overlay[aria-busy="true"] { cursor: progress; }
+.file-drop { overflow-wrap: anywhere; }
+button:disabled { cursor: not-allowed; opacity: .55; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .modal {
   width: 100%; max-width: 600px; background: var(--surface); border-radius: var(--radius-lg);
@@ -593,6 +598,8 @@ tr:hover .row-actions { opacity: 1; }
 .file-drop.has-file { border-style: solid; border-color: var(--success); color: var(--success); background: var(--success-bg); }
 
 .preview-frame { width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+/* Prevent selecting the iframe as a single object without affecting PDF text. */
+.preview-frame { -webkit-user-select: none; user-select: none; }
 
 /* ===================== Appearance customizer ===================== */
 .tune-group { margin-bottom: 24px; }
@@ -702,6 +709,10 @@ tr:hover .row-actions { opacity: 1; }
   .hero-art { align-self: center; }
 }
 @media (max-width: 640px) {
+  .modal-overlay { padding: 10px; }
+  .modal { max-height: calc(100dvh - 20px); }
+  .modal-head, .modal-body { padding: 16px; }
+  .view-head-row { flex-wrap: wrap; gap: 14px; }
   .stat-grid { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
   .content { padding: 18px 14px 56px; }
