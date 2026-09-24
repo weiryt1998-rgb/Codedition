@@ -319,23 +319,56 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
   content: ""; position: absolute; left: 0; top: 50%; width: 3px; height: 0; border-radius: 999px;
   background: var(--grad-gold); transform: translateY(-50%); transition: height .25s var(--ease);
 }
+/* ไอคอนเมนูทำเป็นปุ่มนูน: ไล่เฉดจากมุมบนซ้าย + ขอบสว่างด้านบนและเงาจมด้านล่าง
+   ทำให้ดูเป็นวัตถุมีความหนา ไม่ใช่สี่เหลี่ยมแบน ๆ */
 .nav-ico {
-  display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px;
-  background: rgba(255, 255, 255, .06); transition: all .2s var(--ease);
+  display: grid; place-items: center; width: 32px; height: 32px; border-radius: 11px;
+  background: linear-gradient(150deg, rgba(255, 255, 255, .15), rgba(255, 255, 255, .03));
+  border: 1px solid rgba(255, 255, 255, .1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .2),
+    inset 0 -2px 4px rgba(4, 10, 22, .38),
+    0 4px 10px -7px rgba(0, 0, 0, .9);
+  transition: background .2s var(--ease), box-shadow .2s var(--ease),
+    transform .2s var(--ease), color .2s var(--ease), border-color .2s var(--ease);
 }
-.nav-ico svg { width: 17px; height: 17px; }
+.nav-ico svg {
+  width: 17px; height: 17px; stroke-width: 1.9;
+  filter: drop-shadow(0 1px 1px rgba(3, 8, 18, .5));
+}
 .nav-label { flex: 1; }
 .nav-badge {
   font-size: 11.5px; padding: 2px 8px; border-radius: 999px; font-weight: 600;
   background: rgba(255, 255, 255, .1); color: rgba(255, 255, 255, .72);
 }
 .nav-item:hover { background: rgba(255, 255, 255, .07); color: #fff; }
+.nav-item:hover .nav-ico {
+  transform: translateY(-1px);
+  background: linear-gradient(150deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, .06));
+  border-color: rgba(255, 255, 255, .18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .28),
+    inset 0 -2px 4px rgba(4, 10, 22, .32),
+    0 7px 14px -8px rgba(0, 0, 0, .95);
+}
 .nav-item.is-active {
   background: rgba(255, 255, 255, .13); color: #fff;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12);
 }
 .nav-item.is-active::before { height: 22px; }
-.nav-item.is-active .nav-ico { background: var(--grad-gold); color: #23180A; }
+/* เมนูที่เลือกอยู่ยกเด่นขึ้นมาอีกชั้น ด้วยขอบทองสว่างและเงาทองใต้ปุ่ม */
+.nav-item.is-active .nav-ico {
+  background: var(--grad-gold); color: #23180A;
+  border-color: rgba(255, 236, 184, .6);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .62),
+    inset 0 -2px 5px rgba(120, 86, 10, .42),
+    0 8px 16px -8px rgba(201, 162, 39, .95);
+}
+.nav-item.is-active .nav-ico svg {
+  stroke-width: 2;
+  filter: drop-shadow(0 1px 0 rgba(255, 248, 224, .55));
+}
 .nav-item.is-active .nav-badge { background: rgba(255, 255, 255, .2); color: #fff; }
 
 .side-foot { display: flex; flex-direction: column; gap: 12px; padding-top: 14px; }
@@ -380,6 +413,11 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 .officer-photo-remove:hover { background: rgba(235, 122, 122, .18); border-color: #EB7A7A; color: #FFC9C9; }
 .officer-text strong { font-size: 12.5px; font-weight: 600; color: rgba(255, 255, 255, .92); line-height: 1.35; }
 .officer-text span { font-size: 11px; color: rgba(255, 255, 255, .5); line-height: 1.35; }
+/* สถานะการซิงก์รูป ใช้สีเหลืองอำพันให้ต่างจากข้อความปกติ จะได้รู้ว่ายังค้างอยู่ */
+.officer-text .officer-status {
+  font-size: 10px; line-height: 1.3; letter-spacing: .01em;
+  color: #E7B953; text-wrap: balance; margin-top: 2px;
+}
 
 
 .scrim { display: none; }
