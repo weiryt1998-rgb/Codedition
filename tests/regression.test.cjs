@@ -71,6 +71,7 @@ function setup({ storageThrows = false, legacyTheme = null } = {}) {
   };
   const subscriptions = [];
   const writes = [];
+  const deletes = [];
   let completeWrite;
   const db = {
     collection(name) {
@@ -79,7 +80,14 @@ function setup({ storageThrows = false, legacyTheme = null } = {}) {
         orderBy() { return this; },
         onSnapshot(options, receive, fail) { subscriptions.push({ name, deleted: this.deleted, options, receive, fail }); },
         add(payload) { writes.push(payload); return new Promise((resolve) => { completeWrite = resolve; }); },
-        doc() { return { update: (payload) => query.add(payload) }; },
+        doc(id) {
+          return {
+            update: (payload) => query.add(payload),
+            set: (payload) => query.add(payload),
+            delete: () => { deletes.push(`${name}/${id}`); return Promise.resolve(); },
+            onSnapshot(receive, fail) { subscriptions.push({ name, doc: id, receive, fail }); },
+          };
+        },
       };
       return query;
     },
@@ -93,7 +101,7 @@ function setup({ storageThrows = false, legacyTheme = null } = {}) {
   });
   const run = (code) => vm.runInContext(code, context);
   run(source);
-  return { run, elements, context, subscriptions, writes, complete: () => completeWrite() };
+  return { run, elements, context, subscriptions, writes, deletes, complete: () => completeWrite() };
 }
 
 function pdf(name = 'document.pdf', content = '%PDF-1.7\n%%EOF', type = 'application/pdf') {
@@ -104,7 +112,6 @@ function pdf(name = 'document.pdf', content = '%PDF-1.7\n%%EOF', type = 'applica
 test('startup survives blocked storage and unavailable Firebase', () => {
   const app = setup({ storageThrows: true });
   assert.equal(app.run('appearance.mode'), 'system');
-  assert.match(app.elements.get('connText').textContent, /โหลดฐานข้อมูลไม่สำเร็จ/);
   assert.ok(app.elements.get('globalSearch').events.input.length);
 });
 
@@ -125,6 +132,74 @@ test('category snapshots preserve selections and clear removed categories', () =
   assert.equal(elements.get('filterCategory').value, '');
 });
 
+test('default categories are seeded once, and never when they already exist', () => {
+  const seed = (docs) => {
+    const { run, subscriptions, writes } = setup();
+    run('attachFirestoreListeners()');
+    const stream = subscriptions.find((s) => s.name === 'categories');
+    const snap = { docs, metadata: { fromCache: false, hasPendingWrites: false } };
+    stream.receive({ ...snap, metadata: { ...snap.metadata, fromCache: true } }); // cached first paint
+    stream.receive(snap);
+    stream.receive(snap); // a later snapshot must not add a duplicate
+    return writes;
+  };
+  assert.deepEqual(seed([]).map((w) => w.name), ['หนังสือคำสั่ง']);
+  assert.deepEqual(seed([{ id: 'c', data: () => ({ name: ' หนังสือคำสั่ง ' }) }]), []);
+});
+
+test('profile photo only renders a real image data URL', () => {
+  const { run, subscriptions, elements } = setup();
+  run('attachFirestoreListeners()');
+  const stream = subscriptions.find((s) => s.doc === 'profile');
+  const avatar = elements.get('officerPhotoBtn');
+
+  stream.receive({ exists: false, data: () => ({}) });
+  assert.equal(avatar.classList.contains('has-photo'), false);
+
+  stream.receive({ exists: true, data: () => ({ photo: 'javascript:alert(1)' }) });
+  assert.equal(avatar.classList.contains('has-photo'), false);
+  assert.equal(elements.get('officerPhoto').src, undefined);
+
+  stream.receive({ exists: true, data: () => ({ photo: 'data:image/jpeg;base64,AAAA' }) });
+  assert.equal(avatar.classList.contains('has-photo'), true);
+  assert.equal(elements.get('officerPhoto').src, 'data:image/jpeg;base64,AAAA');
+});
+
+test('removing the profile photo is confirmed first and restores the default icon', async () => {
+  const { run, subscriptions, elements, deletes } = setup();
+  run('attachFirestoreListeners()');
+  const stream = subscriptions.find((s) => s.doc === 'profile');
+  stream.receive({ exists: true, data: () => ({ photo: 'data:image/png;base64,AAAA' }) });
+  assert.equal(elements.get('officerPhotoRemove').hidden, false);
+
+  await elements.get('officerPhotoRemove').fire('click');
+  assert.deepEqual(deletes, []); // ยังไม่ลบจนกว่าจะกดยืนยัน
+  await elements.get('confirmActionBtn').fire('click');
+
+  assert.deepEqual(deletes, ['settings/profile']);
+  assert.equal(elements.get('officerPhotoBtn').classList.contains('has-photo'), false);
+  assert.equal(elements.get('officerPhotoRemove').hidden, true);
+});
+
+test('profile photo upload rejects non-images and oversized files before writing', async () => {
+  const { run, elements, writes, context } = setup();
+  const toasts = [];
+  context.record = (message) => toasts.push(message);
+  run('showToast = record; attachFirestoreListeners()');
+  const input = elements.get('officerPhotoInput');
+
+  input.files = [{ type: 'application/pdf', size: 10 }];
+  await input.fire('change');
+  input.files = [{ type: 'image/png', size: 6 * 1024 * 1024 }];
+  await input.fire('change');
+
+  assert.deepEqual(writes, []);
+  assert.equal(toasts.length, 2);
+  assert.match(toasts[0], /PNG, JPG หรือ WebP/);
+  assert.match(toasts[1], /ไฟล์ใหญ่เกินไป/);
+  assert.equal(elements.get('officerPhotoBtn').classList.contains('is-busy'), false);
+});
+
 test('global search opens results and tolerates legacy numeric metadata', async () => {
   const { run, elements } = setup();
   run('allDocuments = [{id:"a", title:"Test", docNumber:123}]');
@@ -140,12 +215,6 @@ test('document numbers sort naturally and pagination stays bounded', () => {
   run('currentPage = 500; renderPagination(1000)');
   assert.equal((elements.get('pagination').innerHTML.match(/<button/g) || []).length, 7);
   assert.match(elements.get('pagination').innerHTML, /aria-current="page"/);
-});
-
-test('attachment storage includes trash and numeric sizes', () => {
-  const { run, elements } = setup();
-  run('allDocuments = [{fileSize:"1024"}]; allTrash = [{fileSize:2048}]; renderStats()');
-  assert.equal(elements.get('storageText').textContent, '3 KB');
 });
 
 test('newest file selection wins even when an older read finishes last', async () => {
@@ -247,7 +316,10 @@ test('opening a PDF clears a stale selection in the host page', () => {
 });
 
 test('realtime updates refresh category counts and report stream errors', () => {
-  const { run, subscriptions, elements } = setup();
+  const { run, subscriptions, elements, context } = setup();
+  const toasts = [];
+  context.record = (message, type) => toasts.push({ message, type });
+  run('showToast = record');
   run('attachFirestoreListeners()');
   const snap = (docs) => ({ docs, metadata: { fromCache: false, hasPendingWrites: false } });
   subscriptions.find((s) => s.name === 'categories').receive(snap([{ id: 'cat', data: () => ({ name: 'Category' }) }]));
@@ -255,9 +327,9 @@ test('realtime updates refresh category counts and report stream errors', () => 
   subscriptions.find((s) => s.deleted === true).receive(snap([]));
   assert.equal(run('allDocuments[0].id'), 'actual-id');
   assert.match(elements.get('categoryGrid').innerHTML, /1 เอกสาร/);
-  assert.match(elements.get('connText').textContent, /เชื่อมต่อแล้ว/);
+  assert.equal(toasts.length, 0);
   subscriptions[0].fail(new Error('Permission denied'));
-  assert.match(elements.get('connText').textContent, /โหลดข้อมูลบางส่วนไม่สำเร็จ/);
+  assert.deepEqual(toasts, [{ message: 'โหลดข้อมูลล้มเหลว: Permission denied', type: 'error' }]);
 });
 
 test('trend counts import timestamps instead of document issue dates', () => {

@@ -77,6 +77,24 @@ service cloud.firestore {
       allow delete: if signedIn();
     }
 
+    // Sidebar profile photo. The app downsizes the picture to a 256px square
+    // JPEG before writing, so the stored data URL stays far below the 1MB
+    // Firestore document ceiling.
+    match /settings/profile {
+      allow read: if signedIn();
+
+      allow create, update: if signedIn()
+        && request.resource.data.keys().hasOnly(['photo', 'updatedAt'])
+        && request.resource.data.updatedAt is number
+        && request.resource.data.photo is string
+        && request.resource.data.photo.matches('^data:image/(png|jpeg|webp);base64,.*')
+        && request.resource.data.photo.size() <= 700000;
+
+      // Removing the photo deletes the document, so the app falls back to the
+      // default avatar icon.
+      allow delete: if signedIn();
+    }
+
     // Deny everything else by default.
     match /{document=**} {
       allow read, write: if false;

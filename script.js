@@ -368,26 +368,17 @@ function showToast(message, type = "info") {
    Signs in anonymously in the background so Firestore rules can
    still require request.auth != null without showing any UI for it.
    ========================================================= */
-function setConnection(state, text) {
-  const dot = document.getElementById("connDot");
-  const label = document.getElementById("connText");
-  if (!dot || !label) return;
-  dot.className = `dot-live ${state}`;
-  label.textContent = text;
-}
-
 if (typeof auth !== "undefined" && auth && typeof db !== "undefined" && db) auth.signInAnonymously()
   .then(() => {
-    setConnection("", "กำลังโหลดข้อมูล…");
     attachFirestoreListeners();
   })
   .catch((err) => {
-    setConnection("is-error", "เชื่อมต่อไม่สำเร็จ");
     showToast("เชื่อมต่อฐานข้อมูลไม่สำเร็จ: " + err.message, "error");
     attachFirestoreListeners(); // still try, in case rules are open
   });
 else {
-  setConnection("is-error", "โหลดฐานข้อมูลไม่สำเร็จ กรุณาโหลดหน้าใหม่");
+  // no status bar to fall back on, so this startup failure has to speak up itself
+  showToast("โหลดฐานข้อมูลไม่สำเร็จ กรุณาโหลดหน้าใหม่", "error");
 }
 
 /* =========================================================
@@ -516,49 +507,132 @@ document.getElementById("confirmActionBtn").addEventListener("click", async () =
 });
 
 /* =========================================================
+   PROFILE PHOTO — รูปในวงกลมท้าย sidebar
+   เก็บเป็น data URL ใน settings/profile รูปจึงขึ้นทุกเครื่องที่เปิดระบบ
+   ========================================================= */
+const PROFILE_PHOTO_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const PROFILE_PHOTO_PX = 256;
+const MAX_PROFILE_SOURCE_BYTES = 5 * 1024 * 1024;
+const MAX_PROFILE_PHOTO_CHARS = 700000; // ต้องไม่เกินเพดานเดียวกับ firestore.rules
+const PROFILE_PHOTO_PATTERN = /^data:image\/(png|jpeg|webp);base64,/;
+
+function applyProfilePhoto(photo) {
+  const btn = document.getElementById("officerPhotoBtn");
+  const img = document.getElementById("officerPhoto");
+  const ok = typeof photo === "string" && PROFILE_PHOTO_PATTERN.test(photo);
+  if (ok) img.src = photo; else img.removeAttribute("src");
+  btn.classList.toggle("has-photo", ok);
+  document.getElementById("officerPhotoRemove").hidden = !ok;
+}
+
+/* ครอปกลางภาพเป็นจัตุรัสแล้วย่อ รูปในวงกลมจึงไม่ยืดผิดสัดส่วนและไฟล์เล็กพอเก็บใน Firestore */
+async function readProfilePhoto(file) {
+  if (!PROFILE_PHOTO_TYPES.includes(file.type)) throw new Error("รองรับเฉพาะไฟล์ภาพ PNG, JPG หรือ WebP");
+  if (file.size > MAX_PROFILE_SOURCE_BYTES) {
+    throw new Error(`ไฟล์ใหญ่เกินไป กรุณาใช้รูปไม่เกิน ${MAX_PROFILE_SOURCE_BYTES / 1024 / 1024}MB`);
+  }
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = PROFILE_PHOTO_PX;
+    canvas.height = PROFILE_PHOTO_PX;
+    const ctx = canvas.getContext && canvas.getContext("2d");
+    if (!ctx) throw new Error("เบราว์เซอร์นี้ไม่รองรับการย่อรูป");
+    const side = Math.min(bitmap.width, bitmap.height);
+    ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side,
+      0, 0, PROFILE_PHOTO_PX, PROFILE_PHOTO_PX);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    if (!PROFILE_PHOTO_PATTERN.test(dataUrl)) throw new Error("แปลงรูปไม่สำเร็จ");
+    if (dataUrl.length > MAX_PROFILE_PHOTO_CHARS) throw new Error("รูปนี้ยังใหญ่เกินไปหลังย่อ กรุณาใช้รูปอื่น");
+    return dataUrl;
+  } finally {
+    if (typeof bitmap.close === "function") bitmap.close();
+  }
+}
+
+document.getElementById("officerPhotoBtn").addEventListener("click", () => {
+  document.getElementById("officerPhotoInput").click();
+});
+
+document.getElementById("officerPhotoInput").addEventListener("change", async (e) => {
+  const input = e.target;
+  const file = input.files && input.files[0];
+  input.value = ""; // เลือกไฟล์เดิมซ้ำได้ทันทีถ้าครั้งก่อนล้มเหลว
+  if (!file) return;
+  const btn = document.getElementById("officerPhotoBtn");
+  btn.classList.add("is-busy");
+  try {
+    const photo = await readProfilePhoto(file);
+    if (typeof db === "undefined" || !db) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
+    await db.collection("settings").doc("profile").set({ photo, updatedAt: Date.now() });
+    applyProfilePhoto(photo);
+    showToast("อัปเดตรูปโปรไฟล์แล้ว", "success");
+  } catch (err) {
+    showToast("เปลี่ยนรูปไม่สำเร็จ: " + err.message, "error");
+  } finally {
+    btn.classList.remove("is-busy");
+  }
+});
+
+document.getElementById("officerPhotoRemove").addEventListener("click", () => {
+  askConfirm("ลบรูปโปรไฟล์นี้? วงกลมจะกลับไปใช้ไอคอนเริ่มต้น", async () => {
+    if (typeof db === "undefined" || !db) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
+    try {
+      await db.collection("settings").doc("profile").delete();
+      applyProfilePhoto(null);
+      showToast("ลบรูปโปรไฟล์แล้ว", "success");
+    } catch (err) {
+      showToast("ลบรูปไม่สำเร็จ: " + err.message, "error");
+    }
+  });
+});
+
+/* =========================================================
    FIRESTORE LISTENERS
    ========================================================= */
 function attachFirestoreListeners() {
-  const states = new Map();
-  const updateConnection = () => {
-    if (!navigator.onLine) setConnection("is-error", "ออฟไลน์ · รอเชื่อมต่ออินเทอร์เน็ต");
-    else if ([...states.values()].includes("error")) setConnection("is-error", "โหลดข้อมูลบางส่วนไม่สำเร็จ กรุณาโหลดหน้าใหม่");
-    else if (states.size === 3 && [...states.values()].every((s) => s === "ready")) setConnection("is-online", "เชื่อมต่อแล้ว · ซิงก์เรียลไทม์");
-    else setConnection("", "กำลังซิงก์ข้อมูล…");
-  };
-  const received = (key, snap) => {
-    states.set(key, snap.metadata.fromCache || snap.metadata.hasPendingWrites ? "waiting" : "ready");
-    updateConnection();
-  };
-  const failed = (key, err) => {
-    states.set(key, "error");
-    updateConnection();
-    showToast("โหลดข้อมูลล้มเหลว: " + err.message, "error");
-  };
-  window.addEventListener("online", updateConnection);
-  window.addEventListener("offline", updateConnection);
+  const failed = (err) => showToast("โหลดข้อมูลล้มเหลว: " + err.message, "error");
+
   db.collection("documents").where("deleted", "==", false)
     .onSnapshot({ includeMetadataChanges: true }, (snap) => {
-      received("documents", snap);
       allDocuments = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
       renderAll();
-    }, (err) => failed("documents", err));
+    }, failed);
 
   db.collection("documents").where("deleted", "==", true)
     .onSnapshot({ includeMetadataChanges: true }, (snap) => {
-      received("trash", snap);
       allTrash = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
       renderTrash();
       renderStats();
-    }, (err) => failed("trash", err));
+    }, failed);
 
   db.collection("categories").orderBy("name")
     .onSnapshot({ includeMetadataChanges: true }, (snap) => {
-      received("categories", snap);
       allCategories = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
       renderCategoryOptions();
       renderAll();
-    }, (err) => failed("categories", err));
+      ensureDefaultCategories(snap);
+    }, failed);
+
+  db.collection("settings").doc("profile")
+    .onSnapshot((snap) => applyProfilePhoto(snap.exists ? snap.data().photo : null),
+      (err) => console.warn("โหลดรูปโปรไฟล์ไม่สำเร็จ:", err));
+}
+
+/* หมวดหมู่ที่ระบบต้องมีเสมอ สร้างให้อัตโนมัติถ้ายังไม่มีในฐานข้อมูล */
+const DEFAULT_CATEGORIES = ["หนังสือคำสั่ง"];
+let defaultCategoriesChecked = false;
+
+function ensureDefaultCategories(snap) {
+  // รอสแนปช็อตจริงจากเซิร์ฟเวอร์ก่อน ไม่งั้นข้อมูลจากแคชอาจทำให้สร้างซ้ำ
+  if (defaultCategoriesChecked || snap.metadata.fromCache || snap.metadata.hasPendingWrites) return;
+  defaultCategoriesChecked = true;
+  const key = (name) => String(name).trim().normalize().toLocaleLowerCase("th");
+  const existing = new Set(allCategories.map((c) => key(c.name)));
+  DEFAULT_CATEGORIES.filter((name) => !existing.has(key(name))).forEach((name) => {
+    db.collection("categories").add({ name, createdAt: Date.now() })
+      .catch((err) => console.warn("สร้างหมวดหมู่เริ่มต้นไม่สำเร็จ:", name, err));
+  });
 }
 
 function renderAll() {
@@ -605,16 +679,10 @@ function renderStats() {
     if (chip && key !== "Total") chip.textContent = `${pct}%`;
   });
 
-  // sidebar badges + attachment storage meter
+  // sidebar badges
   document.getElementById("navCountDocs").textContent = total;
   document.getElementById("navCountCats").textContent = allCategories.length;
   document.getElementById("navCountTrash").textContent = allTrash.length;
-
-  const bytes = [...allDocuments, ...allTrash].reduce((sum, d) => sum + Math.max(0, Number(d.fileSize) || 0), 0);
-  document.getElementById("storageText").textContent =
-    bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
-  // meter fills relative to a 20MB soft reference so it stays readable
-  document.getElementById("storageBar").style.width = `${Math.min(100, (bytes / (20 * 1024 * 1024)) * 100)}%`;
 }
 
 /* อ่านสีจากตัวแปร CSS โดยตรง กราฟจึงเปลี่ยนตามธีมและสีที่ผู้ใช้ตั้งเองเสมอ */

@@ -13,6 +13,65 @@
 </head>
 <body>
 
+<!-- Intro starts before external scripts so a slow connection cannot trap the page. -->
+<div id="pageLoader" class="page-loader" role="status" aria-live="polite" hidden>
+  <div class="page-loader-content">
+    <span class="page-loader-eyebrow">ราชการดิจิทัล</span>
+    <div class="page-loader-seal" aria-hidden="true">
+      <svg viewBox="0 0 120 120">
+        <circle class="page-loader-orbit" cx="60" cy="60" r="54" stroke-dasharray="3 8"/>
+        <circle cx="60" cy="60" r="43" opacity=".3"/>
+        <circle cx="60" cy="60" r="34" opacity=".15"/>
+        <path d="M60 34 L76 66 L60 58 L44 66 Z" fill="currentColor" stroke="none"/>
+        <path d="M43 80h34" stroke-width="3"/>
+      </svg>
+    </div>
+    <h2 class="page-loader-title">ระบบจัดเก็บเอกสาร</h2>
+    <p class="page-loader-org">องค์การบริหารส่วนตำบลวังใหญ่</p>
+    <div class="page-loader-track" aria-hidden="true"><span></span></div>
+    <p class="page-loader-status">กำลังเตรียมหน้าใช้งาน<span class="page-loader-dots" aria-hidden="true"><i></i><i></i><i></i></span></p>
+    <span class="page-loader-caption" aria-hidden="true">จัดเก็บ · ค้นหา · ติดตามเอกสาร</span>
+  </div>
+</div>
+<script>
+(() => {
+  const loader = document.getElementById("pageLoader");
+  const root = document.documentElement;
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const startedAt = performance.now();
+  let dismissed = false;
+  let readyTimer;
+
+  function dismissLoader() {
+    if (dismissed) return;
+    dismissed = true;
+    clearTimeout(fallbackTimer);
+    clearTimeout(readyTimer);
+    root.classList.remove("is-page-loading");
+    loader.setAttribute("aria-hidden", "true");
+    loader.classList.add("is-leaving");
+    setTimeout(() => { loader.hidden = true; }, reducedMotion.matches ? 0 : 500);
+  }
+
+  // Never wait indefinitely for CDN scripts, fonts, or the background database connection.
+  const fallbackTimer = setTimeout(dismissLoader, 6000);
+  root.classList.add("is-page-loading");
+  loader.hidden = false;
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const minimumDuration = reducedMotion.matches ? 0 : 1400;
+    readyTimer = setTimeout(dismissLoader, Math.max(0, minimumDuration - (performance.now() - startedAt)));
+  }, { once: true });
+
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) {
+      dismissLoader();
+      loader.hidden = true;
+    }
+  });
+})();
+</script>
+
 <!-- ambient background layers -->
 <div class="aurora" aria-hidden="true">
   <span class="aurora-blob b1"></span>
@@ -78,17 +137,22 @@
     </nav>
 
     <div class="side-foot">
-      <div class="storage-card">
-        <div class="storage-head">
-          <span>พื้นที่ไฟล์แนบ</span>
-          <span class="mono" id="storageText">0 KB</span>
+      <div class="officer-card">
+        <button type="button" class="officer-avatar" id="officerPhotoBtn" title="เปลี่ยนรูปโปรไฟล์" aria-label="เปลี่ยนรูปโปรไฟล์">
+          <img id="officerPhoto" alt="รูปโปรไฟล์เจ้าหน้าที่">
+          <svg class="officer-avatar-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zm0 2.2c-3.6 0-6.6 2-6.6 4.4V21h13.2v-2.4c0-2.4-3-4.4-6.6-4.4z"/></svg>
+          <span class="officer-avatar-edit" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 8h3.2l1.4-2h6.8l1.4 2H20a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.2"/></svg>
+          </span>
+        </button>
+        <input type="file" id="officerPhotoInput" accept="image/png,image/jpeg,image/webp" hidden>
+        <div class="officer-text">
+          <strong>นางสาวจิรัฐฑิกาล จ่านาค</strong>
+          <span>เจ้าพนักงานธุรการชำนาญงาน</span>
         </div>
-        <div class="meter"><span id="storageBar" style="width:0%"></span></div>
-        <p class="storage-note">จัดเก็บบน Firestore · จำกัด 700KB ต่อไฟล์</p>
-      </div>
-      <div class="side-status">
-        <span class="dot-live" id="connDot"></span>
-        <span id="connText">กำลังเชื่อมต่อ…</span>
+        <button type="button" class="officer-photo-remove" id="officerPhotoRemove" title="ลบรูปโปรไฟล์" aria-label="ลบรูปโปรไฟล์" hidden>
+          <svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7zm3-4h6l1 2H8l1-2z"/></svg>
+        </button>
       </div>
     </div>
   </aside>
@@ -141,7 +205,10 @@
         <div class="hero">
           <div class="hero-copy">
             <span class="pill">ภาพรวมระบบ</span>
-            <h2>ศูนย์กลางเอกสารราชการของคุณ</h2>
+            <h2 class="hero-title">
+              <span class="hero-title-main">ระบบจัดเก็บเอกสารงานธุรการสำนักปลัด</span>
+              <span class="hero-title-org">องค์การบริหารส่วนตำบลวังใหญ่</span>
+            </h2>
             <p>จัดเก็บ ค้นหา และติดตามสถานะหนังสือราชการได้จากที่เดียว พร้อมสำรองข้อมูลแบบเรียลไทม์</p>
             <div class="hero-actions">
               <button class="btn btn-primary" data-open="addDocBtn">
