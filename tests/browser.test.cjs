@@ -78,6 +78,20 @@ async function main() {
       for (let i = 0; i < 100; i++) { if (await evaluate(expression)) return; await pause(50); }
       throw new Error(`Condition not reached: ${expression}`);
     }
+    async function waitForApp() {
+      await waitFor(`document.getElementById('navCountDocs')?.textContent === '12' && document.getElementById('pageLoader').hidden`);
+    }
+    async function reloadApp() { await cdp('Page.reload'); await waitForApp(); }
+    async function selectProfileImage({ color = '#168a75', type = 'image/png', corrupt = false } = {}) {
+      await evaluate(`(async () => {
+        const canvas = document.createElement('canvas'); canvas.width = 480; canvas.height = 320;
+        const context = canvas.getContext('2d'); context.fillStyle = ${JSON.stringify(color)}; context.fillRect(0, 0, 480, 320);
+        const blob = ${corrupt ? "new Blob(['not a valid image'])" : "await new Promise(resolve => canvas.toBlob(resolve, 'image/png'))"};
+        const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'portrait.png', {type:${JSON.stringify(type)}}));
+        const input = document.getElementById('officerPhotoInput'); input.files = transfer.files;
+        input.dispatchEvent(new Event('change', {bubbles:true}));
+      })()`);
+    }
     async function click(selector) {
       const point = await evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); if(!el) throw new Error('Missing target'); el.scrollIntoView({block:'center'}); const r=el.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()`);
       await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
@@ -96,12 +110,78 @@ async function main() {
     await cdp('Page.enable');
     await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
     await cdp('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
-    await waitFor(`document.getElementById('navCountDocs')?.textContent === '12'`);
+    await waitForApp();
     await check('Dashboard renders 12 documents and three real charts', async () => {
       await waitFor(`document.getElementById('statTotal').textContent === '12'`);
       assert.equal(await evaluate(`Object.keys(charts).length`), 3);
       assert.ok(await evaluate(`Object.values(charts).every(c=>c.width>0&&c.height>0)`));
       await screenshot('desktop.png');
+    });
+    await check('Selected profile photo becomes a 256px JPEG and survives reload', async () => {
+      await selectProfileImage();
+      await waitFor(`document.getElementById('officerPhoto').naturalWidth === 256 && !document.getElementById('officerPhotoBtn').classList.contains('is-busy')`);
+      assert.equal(await evaluate(`document.getElementById('officerPhoto').naturalHeight`), 256);
+      const photo = await evaluate(`document.getElementById('officerPhoto').src`);
+      assert.ok(photo.startsWith('data:image/jpeg;base64,'));
+      await waitFor(`fixtureStore.settings[0]?.photo === document.getElementById('officerPhoto').src && JSON.parse(localStorage.getItem('govdocs-profile-photo')).pending === false`);
+      await reloadApp();
+      assert.equal(await evaluate(`document.getElementById('officerPhoto').src`), photo);
+    });
+    await check('Denied cloud writes retain the new photo and local status after reload', async () => {
+      await evaluate(`configureFixture({profileWriteMode:'denied'})`);
+      const oldPhoto = await evaluate(`fixtureStore.settings[0].photo`);
+      await selectProfileImage({ color: '#ad385d' });
+      await waitFor(`JSON.parse(localStorage.getItem('govdocs-profile-photo')).pending && /ในเครื่อง/.test(document.getElementById('officerPhotoStatus').textContent) && !document.getElementById('officerPhotoBtn').classList.contains('is-busy')`);
+      const localPhoto = await evaluate(`document.getElementById('officerPhoto').src`);
+      assert.notEqual(localPhoto, oldPhoto);
+      assert.equal(await evaluate(`fixtureStore.settings[0].photo`), oldPhoto);
+      assert.equal(await evaluate(`document.getElementById('officerPhotoStatus').hidden`), false);
+      await reloadApp();
+      assert.equal(await evaluate(`document.getElementById('officerPhoto').src`), localPhoto);
+      assert.ok(await evaluate(`JSON.parse(localStorage.getItem('govdocs-profile-photo')).pending`));
+    });
+    await check('Photo removal persists locally while denied and later deletes the shared photo', async () => {
+      await click('#officerPhotoRemove');
+      await click('#confirmActionBtn');
+      await waitFor(`document.getElementById('confirmModalOverlay').hidden && !document.getElementById('officerPhotoBtn').classList.contains('has-photo')`);
+      assert.deepEqual(await evaluate(`(() => {const cache=JSON.parse(localStorage.getItem('govdocs-profile-photo')); return {photo:cache.photo,pending:cache.pending};})()`), { photo: null, pending: true });
+      await reloadApp();
+      assert.equal(await evaluate(`document.getElementById('officerPhotoBtn').classList.contains('has-photo')`), false);
+      assert.equal(await evaluate(`fixtureStore.settings.length`), 1, 'The denied delete leaves the old cloud photo');
+      await evaluate(`configureFixture({profileWriteMode:'ok'}); syncProfilePhoto()`);
+      await waitFor(`fixtureStore.settings.length === 0 && !JSON.parse(localStorage.getItem('govdocs-profile-photo')).pending`);
+    });
+    await check('Photo decoding supports missing createImageBitmap and empty MIME types', async () => {
+      await evaluate(`window.fixtureOriginalCreateImageBitmap = window.createImageBitmap; window.createImageBitmap = undefined`);
+      try {
+        await selectProfileImage({ color: '#da9c24', type: '' });
+        await waitFor(`document.getElementById('officerPhoto').naturalWidth === 256 && !JSON.parse(localStorage.getItem('govdocs-profile-photo')).pending`);
+        assert.equal(await evaluate(`document.getElementById('officerPhoto').naturalHeight`), 256);
+      } finally { await evaluate(`window.createImageBitmap = window.fixtureOriginalCreateImageBitmap; delete window.fixtureOriginalCreateImageBitmap`); }
+    });
+    await check('Corrupt images leave the existing photo and cloud record intact', async () => {
+      const photo = await evaluate(`document.getElementById('officerPhoto').src`);
+      const writes = await evaluate('fixtureProfileWriteAttempts.length');
+      await selectProfileImage({ corrupt: true });
+      await waitFor(`!document.getElementById('officerPhotoBtn').classList.contains('is-busy') && document.querySelectorAll('.toast.error').length > 0`);
+      assert.equal(await evaluate(`document.getElementById('officerPhoto').src`), photo);
+      assert.equal(await evaluate('fixtureProfileWriteAttempts.length'), writes);
+    });
+    await check('Slow sign-in and cloud writes do not block local photo changes', async () => {
+      await evaluate(`configureFixture({authMode:'delayed',profileWriteMode:'delayed'})`);
+      await cdp('Page.reload');
+      await waitFor(`typeof syncProfilePhoto === 'function' && document.getElementById('pageLoader').hidden`);
+      await selectProfileImage({ color: '#394bbb' });
+      await waitFor(`JSON.parse(localStorage.getItem('govdocs-profile-photo')).pending && !document.getElementById('officerPhotoBtn').classList.contains('is-busy')`);
+      assert.equal(await evaluate('fixtureProfileWriteAttempts.length'), 0, 'The profile write waits for authentication');
+      assert.equal(await evaluate(`document.getElementById('officerPhoto').naturalWidth`), 256);
+      await evaluate('releaseFixtureAuth()');
+      await waitFor('fixturePendingProfileWrites.length === 1');
+      assert.equal(await evaluate('fixtureProfileWriteAttempts[0].signedIn'), true);
+      assert.equal(await evaluate(`document.getElementById('officerPhotoBtn').classList.contains('is-busy')`), false);
+      await evaluate(`configureFixture({authMode:'ok',profileWriteMode:'ok'}); releaseFixtureProfileWrites()`);
+      await waitFor(`!JSON.parse(localStorage.getItem('govdocs-profile-photo')).pending`);
+      await waitForApp();
     });
     await check('Global search opens and filters document results', async () => {
       await click('#globalSearch');
@@ -189,22 +269,22 @@ async function main() {
     });
     await check('Categories can be added and removed without deleting documents', async () => {
       await click('[data-view="categories"]');
+      const count = await evaluate('allCategories.length');
       await click('#addCategoryBtn');
       await evaluate(`document.getElementById('categoryName').value='หมวดหมู่ทดสอบเบราว์เซอร์'`);
       await click('#categoryForm button[type="submit"]');
-      await waitFor(`document.getElementById('categoryModalOverlay').hidden && allCategories.length===3`);
+      await waitFor(`document.getElementById('categoryModalOverlay').hidden && allCategories.length===${count + 1}`);
       const id = await evaluate(`allCategories.find(c=>c.name==='หมวดหมู่ทดสอบเบราว์เซอร์').id`);
       await click(`[data-del-cat="${id}"]`);
       await click('#confirmActionBtn');
-      await waitFor('allCategories.length===2');
+      await waitFor(`allCategories.length===${count}`);
       assert.equal(await evaluate('allDocuments.length'), 12);
     });
     await check('Theme changes and persists across reload', async () => {
       const previous = await evaluate('activeMode()');
       await click('#themeToggle');
       assert.notEqual(await evaluate('activeMode()'), previous);
-      await cdp('Page.reload');
-      await waitFor(`document.getElementById('navCountDocs')?.textContent==='12'`);
+      await reloadApp();
       assert.notEqual(await evaluate('activeMode()'), previous);
     });
     await check('Mobile navigation and form fit a 390px viewport', async () => {

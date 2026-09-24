@@ -368,15 +368,22 @@ function showToast(message, type = "info") {
    Signs in anonymously in the background so Firestore rules can
    still require request.auth != null without showing any UI for it.
    ========================================================= */
-if (typeof auth !== "undefined" && auth && typeof db !== "undefined" && db) auth.signInAnonymously()
-  .then(() => {
-    attachFirestoreListeners();
-  })
-  .catch((err) => {
+function signInDatabase() {
+  if (typeof auth === "undefined" || !auth || typeof db === "undefined" || !db) return Promise.resolve(false);
+  return auth.signInAnonymously().then(() => true).catch((err) => {
     showToast("เชื่อมต่อฐานข้อมูลไม่สำเร็จ: " + err.message, "error");
-    attachFirestoreListeners(); // still try, in case rules are open
+    return false;
   });
-else {
+}
+let databaseReady = signInDatabase();
+let databaseReconnecting = false;
+let firestoreUnsubscribes = [];
+
+databaseReady.then((ready) => {
+  if (typeof db !== "undefined" && db) attachFirestoreListeners();
+  if (ready) syncProfilePhoto();
+});
+if (typeof db === "undefined" || !db) {
   // no status bar to fall back on, so this startup failure has to speak up itself
   showToast("โหลดฐานข้อมูลไม่สำเร็จ กรุณาโหลดหน้าใหม่", "error");
 }
@@ -508,36 +515,169 @@ document.getElementById("confirmActionBtn").addEventListener("click", async () =
 
 /* =========================================================
    PROFILE PHOTO — รูปในวงกลมท้าย sidebar
-   เก็บเป็น data URL ใน settings/profile รูปจึงขึ้นทุกเครื่องที่เปิดระบบ
+   เก็บในเครื่องก่อน แล้วซิงก์ settings/profile เมื่อฐานข้อมูลพร้อม
    ========================================================= */
 const PROFILE_PHOTO_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const PROFILE_PHOTO_PX = 256;
 const MAX_PROFILE_SOURCE_BYTES = 5 * 1024 * 1024;
 const MAX_PROFILE_PHOTO_CHARS = 700000; // ต้องไม่เกินเพดานเดียวกับ firestore.rules
 const PROFILE_PHOTO_PATTERN = /^data:image\/(png|jpeg|webp);base64,/;
+const PROFILE_PHOTO_KEY = "govdocs-profile-photo";
+let profilePhotoState = loadProfilePhoto();
+let profilePhotoStored = !!profilePhotoState;
+let profilePhotoSyncing = false;
+let profilePhotoReading = false;
+
+function validProfilePhoto(photo) {
+  return typeof photo === "string" && PROFILE_PHOTO_PATTERN.test(photo)
+    && photo.length <= MAX_PROFILE_PHOTO_CHARS;
+}
+
+function loadProfilePhoto() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PROFILE_PHOTO_KEY) || "null");
+    if (saved && (saved.photo === null || validProfilePhoto(saved.photo))
+      && typeof saved.pending === "boolean" && Number.isFinite(saved.updatedAt)) return saved;
+  } catch { /* รูปยังใช้งานได้แม้เบราว์เซอร์ปิดการเก็บข้อมูล */ }
+  return null;
+}
+
+function storeProfilePhoto() {
+  try {
+    localStorage.setItem(PROFILE_PHOTO_KEY, JSON.stringify(profilePhotoState));
+    profilePhotoStored = true;
+  } catch {
+    profilePhotoStored = false;
+    // Never leave an older queued change that could overwrite this one after reload.
+    try { localStorage.removeItem(PROFILE_PHOTO_KEY); } catch { /* storage is unavailable */ }
+  }
+}
+
+function setProfilePhotoStatus(message = "") {
+  const status = document.getElementById("officerPhotoStatus");
+  status.textContent = message;
+  status.hidden = !message;
+}
+
+function pendingProfilePhotoStatus(reason = "รอซิงก์") {
+  setProfilePhotoStatus(profilePhotoStored
+    ? `บันทึกในเครื่องแล้ว · ${reason}`
+    : "แสดงชั่วคราว · ยังบันทึกไม่ได้");
+}
 
 function applyProfilePhoto(photo) {
   const btn = document.getElementById("officerPhotoBtn");
   const img = document.getElementById("officerPhoto");
-  const ok = typeof photo === "string" && PROFILE_PHOTO_PATTERN.test(photo);
+  const ok = validProfilePhoto(photo);
   if (ok) img.src = photo; else img.removeAttribute("src");
   btn.classList.toggle("has-photo", ok);
   document.getElementById("officerPhotoRemove").hidden = !ok;
 }
 
+applyProfilePhoto(profilePhotoState?.photo);
+if (profilePhotoState?.pending) pendingProfilePhotoStatus();
+
+function receiveProfilePhoto(snap) {
+  // A cached/optimistic snapshot must not replace a newer local selection or deletion.
+  if (profilePhotoState?.pending || snap.metadata?.hasPendingWrites) return;
+  if (snap.metadata?.fromCache && profilePhotoState) return;
+  const data = snap.exists ? snap.data() : null;
+  profilePhotoState = {
+    photo: validProfilePhoto(data?.photo) ? data.photo : null,
+    updatedAt: Number.isFinite(data?.updatedAt) ? data.updatedAt : 0,
+    pending: false,
+  };
+  storeProfilePhoto();
+  applyProfilePhoto(profilePhotoState.photo);
+  setProfilePhotoStatus();
+}
+
+async function syncProfilePhoto() {
+  if (profilePhotoSyncing || !profilePhotoState?.pending) return;
+  const change = profilePhotoState;
+  profilePhotoSyncing = true;
+  try {
+    if (!(await databaseReady)) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
+    const ref = db.collection("settings").doc("profile");
+    if (change.photo === null) await ref.delete();
+    else await ref.set({ photo: change.photo, updatedAt: change.updatedAt });
+    if (profilePhotoState !== change) return;
+    profilePhotoState = { ...change, pending: false };
+    storeProfilePhoto();
+    setProfilePhotoStatus();
+    showToast(change.photo === null ? "ลบรูปโปรไฟล์แล้ว" : "อัปเดตรูปโปรไฟล์แล้ว", "success");
+  } catch (err) {
+    if (profilePhotoState !== change) return;
+    pendingProfilePhotoStatus(err.code === "permission-denied" ? "ยังซิงก์ไม่ได้" : "รอซิงก์");
+    console.warn("ซิงก์รูปโปรไฟล์ไม่สำเร็จ:", err);
+  } finally {
+    profilePhotoSyncing = false;
+    // Serialize writes so an older upload cannot overwrite a subsequent selection/removal.
+    if (profilePhotoState !== change && profilePhotoState?.pending) syncProfilePhoto();
+  }
+}
+
+function saveProfilePhoto(photo) {
+  profilePhotoState = { photo, updatedAt: Date.now(), pending: true };
+  storeProfilePhoto();
+  applyProfilePhoto(photo);
+  pendingProfilePhotoStatus();
+  syncProfilePhoto();
+}
+
+window.addEventListener("online", async () => {
+  if (databaseReconnecting) return;
+  databaseReconnecting = true;
+  try {
+    // A failed first sign-in must not prevent syncing after the connection returns.
+    if (!(await databaseReady)) {
+      databaseReady = signInDatabase();
+      if (await databaseReady) attachFirestoreListeners();
+    }
+    syncProfilePhoto();
+  } finally {
+    databaseReconnecting = false;
+  }
+});
+
+async function decodeProfilePhoto(file) {
+  if (typeof createImageBitmap === "function") {
+    try { return await createImageBitmap(file); }
+    catch { /* บางเบราว์เซอร์อ่านไฟล์ชนิดเดียวกันผ่าน Image ได้ */ }
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    return await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("อ่านรูปไม่ได้ ไฟล์อาจเสียหาย กรุณาเลือก PNG, JPG หรือ WebP ใหม่"));
+      img.src = url;
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 /* ครอปกลางภาพเป็นจัตุรัสแล้วย่อ รูปในวงกลมจึงไม่ยืดผิดสัดส่วนและไฟล์เล็กพอเก็บใน Firestore */
 async function readProfilePhoto(file) {
-  if (!PROFILE_PHOTO_TYPES.includes(file.type)) throw new Error("รองรับเฉพาะไฟล์ภาพ PNG, JPG หรือ WebP");
+  const type = file.type.toLowerCase();
+  const missingType = !type || type === "application/octet-stream";
+  if (!PROFILE_PHOTO_TYPES.includes(type) && !(missingType && /\.(png|jpe?g|webp)$/i.test(file.name))) {
+    throw new Error("รองรับเฉพาะไฟล์ภาพ PNG, JPG หรือ WebP");
+  }
+  if (!file.size) throw new Error("ไฟล์รูปว่างเปล่า กรุณาเลือกไฟล์ใหม่");
   if (file.size > MAX_PROFILE_SOURCE_BYTES) {
     throw new Error(`ไฟล์ใหญ่เกินไป กรุณาใช้รูปไม่เกิน ${MAX_PROFILE_SOURCE_BYTES / 1024 / 1024}MB`);
   }
-  const bitmap = await createImageBitmap(file);
+  const bitmap = await decodeProfilePhoto(file);
   try {
     const canvas = document.createElement("canvas");
     canvas.width = PROFILE_PHOTO_PX;
     canvas.height = PROFILE_PHOTO_PX;
     const ctx = canvas.getContext && canvas.getContext("2d");
     if (!ctx) throw new Error("เบราว์เซอร์นี้ไม่รองรับการย่อรูป");
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, PROFILE_PHOTO_PX, PROFILE_PHOTO_PX);
     const side = Math.min(bitmap.width, bitmap.height);
     ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side,
       0, 0, PROFILE_PHOTO_PX, PROFILE_PHOTO_PX);
@@ -551,6 +691,7 @@ async function readProfilePhoto(file) {
 }
 
 document.getElementById("officerPhotoBtn").addEventListener("click", () => {
+  if (profilePhotoReading) return;
   document.getElementById("officerPhotoInput").click();
 });
 
@@ -558,32 +699,32 @@ document.getElementById("officerPhotoInput").addEventListener("change", async (e
   const input = e.target;
   const file = input.files && input.files[0];
   input.value = ""; // เลือกไฟล์เดิมซ้ำได้ทันทีถ้าครั้งก่อนล้มเหลว
-  if (!file) return;
+  if (!file || profilePhotoReading) return;
   const btn = document.getElementById("officerPhotoBtn");
+  const remove = document.getElementById("officerPhotoRemove");
+  profilePhotoReading = true;
+  btn.disabled = true;
+  remove.disabled = true;
+  btn.setAttribute("aria-busy", "true");
   btn.classList.add("is-busy");
   try {
     const photo = await readProfilePhoto(file);
-    if (typeof db === "undefined" || !db) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
-    await db.collection("settings").doc("profile").set({ photo, updatedAt: Date.now() });
-    applyProfilePhoto(photo);
-    showToast("อัปเดตรูปโปรไฟล์แล้ว", "success");
+    saveProfilePhoto(photo);
   } catch (err) {
     showToast("เปลี่ยนรูปไม่สำเร็จ: " + err.message, "error");
   } finally {
+    profilePhotoReading = false;
+    btn.disabled = false;
+    remove.disabled = false;
+    btn.setAttribute("aria-busy", "false");
     btn.classList.remove("is-busy");
   }
 });
 
 document.getElementById("officerPhotoRemove").addEventListener("click", () => {
-  askConfirm("ลบรูปโปรไฟล์นี้? วงกลมจะกลับไปใช้ไอคอนเริ่มต้น", async () => {
-    if (typeof db === "undefined" || !db) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
-    try {
-      await db.collection("settings").doc("profile").delete();
-      applyProfilePhoto(null);
-      showToast("ลบรูปโปรไฟล์แล้ว", "success");
-    } catch (err) {
-      showToast("ลบรูปไม่สำเร็จ: " + err.message, "error");
-    }
+  if (profilePhotoReading) return;
+  askConfirm("ลบรูปโปรไฟล์นี้? วงกลมจะกลับไปใช้ไอคอนเริ่มต้น", () => {
+    saveProfilePhoto(null);
   });
 });
 
@@ -591,32 +732,34 @@ document.getElementById("officerPhotoRemove").addEventListener("click", () => {
    FIRESTORE LISTENERS
    ========================================================= */
 function attachFirestoreListeners() {
+  firestoreUnsubscribes.forEach((unsubscribe) => { if (typeof unsubscribe === "function") unsubscribe(); });
+  firestoreUnsubscribes = [];
   const failed = (err) => showToast("โหลดข้อมูลล้มเหลว: " + err.message, "error");
 
-  db.collection("documents").where("deleted", "==", false)
+  firestoreUnsubscribes.push(db.collection("documents").where("deleted", "==", false)
     .onSnapshot({ includeMetadataChanges: true }, (snap) => {
       allDocuments = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
       renderAll();
-    }, failed);
+    }, failed));
 
-  db.collection("documents").where("deleted", "==", true)
+  firestoreUnsubscribes.push(db.collection("documents").where("deleted", "==", true)
     .onSnapshot({ includeMetadataChanges: true }, (snap) => {
       allTrash = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
       renderTrash();
       renderStats();
-    }, failed);
+    }, failed));
 
-  db.collection("categories").orderBy("name")
+  firestoreUnsubscribes.push(db.collection("categories").orderBy("name")
     .onSnapshot({ includeMetadataChanges: true }, (snap) => {
       allCategories = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
       renderCategoryOptions();
       renderAll();
       ensureDefaultCategories(snap);
-    }, failed);
+    }, failed));
 
-  db.collection("settings").doc("profile")
-    .onSnapshot((snap) => applyProfilePhoto(snap.exists ? snap.data().photo : null),
-      (err) => console.warn("โหลดรูปโปรไฟล์ไม่สำเร็จ:", err));
+  firestoreUnsubscribes.push(db.collection("settings").doc("profile")
+    .onSnapshot({ includeMetadataChanges: true }, receiveProfilePhoto,
+      (err) => console.warn("โหลดรูปโปรไฟล์ไม่สำเร็จ:", err)));
 }
 
 /* หมวดหมู่ที่ระบบต้องมีเสมอ สร้างให้อัตโนมัติถ้ายังไม่มีในฐานข้อมูล */

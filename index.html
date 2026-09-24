@@ -145,10 +145,11 @@
             <svg viewBox="0 0 24 24"><path d="M4 8h3.2l1.4-2h6.8l1.4 2H20a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.2"/></svg>
           </span>
         </button>
-        <input type="file" id="officerPhotoInput" accept="image/png,image/jpeg,image/webp" hidden>
+        <input type="file" id="officerPhotoInput" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" hidden>
         <div class="officer-text">
           <strong>นางสาวจิรัฐฑิกาล จ่านาค</strong>
           <span>เจ้าพนักงานธุรการชำนาญงาน</span>
+          <span id="officerPhotoStatus" role="status" aria-live="polite" hidden></span>
         </div>
         <button type="button" class="officer-photo-remove" id="officerPhotoRemove" title="ลบรูปโปรไฟล์" aria-label="ลบรูปโปรไฟล์" hidden>
           <svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7zm3-4h6l1 2H8l1-2z"/></svg>
