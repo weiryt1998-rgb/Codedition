@@ -132,6 +132,31 @@ test('only listed browser origins may call the Worker', async () => {
 
   env.ALLOWED_ORIGINS = '';
   assert.equal((await call('OPTIONS', '/api/files')).status, 403, 'an empty list allows no browser origin');
+
+  env.ALLOWED_ORIGINS = 'HTTPS://APP.EXAMPLE/ ';
+  assert.equal((await call('OPTIONS', '/api/files')).status, 204, 'case and a trailing slash in the config do not matter');
+});
+
+test('every response to an allowed origin carries CORS headers, errors included', async () => {
+  const token = await idToken();
+  const responses = [
+    await upload(pdfBytes()),                                         // 201
+    await call('POST', '/api/files'),                                 // 401 missing token
+    await call('DELETE', '/api/files/not-a-key', { token }),          // 400
+    await call('GET', '/api/documents/missing/file', { token }),      // 404
+    await call('PUT', '/api/files', { token }),                       // 405
+  ];
+  firestoreDenies = true;
+  responses.push(await call('GET', '/api/documents/doc-1/file', { token })); // 403
+  env.PDF_BUCKET = undefined;
+  responses.push(await upload(pdfBytes()));                                 // 500
+  assert.deepEqual(responses.map((r) => r.status), [201, 401, 400, 404, 405, 403, 500]);
+  for (const { response } of responses) {
+    assert.equal(response.headers.get('Access-Control-Allow-Origin'), ORIGIN);
+    assert.equal(response.headers.get('Access-Control-Allow-Methods'), 'GET, POST, DELETE, OPTIONS');
+    assert.equal(response.headers.get('Access-Control-Allow-Headers'), 'Authorization, Content-Type');
+    assert.equal(response.headers.get('Vary'), 'Origin');
+  }
 });
 
 test('a normal PDF is stored under a generated key and never under the user file name', async () => {

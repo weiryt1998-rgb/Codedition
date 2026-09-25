@@ -55,8 +55,10 @@ export default {
 function corsHeaders(request, env) {
   const origin = request.headers.get("Origin");
   if (!origin) return {};
-  const allowed = String(env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
-  if (!allowed.includes(origin)) return null;
+  // เทียบแบบไม่สนตัวพิมพ์และ "/" ท้าย กันค่าใน config พิมพ์ต่างจาก Origin ที่เบราว์เซอร์ส่งมาเล็กน้อย
+  const normalize = (value) => value.trim().replace(/\/+$/, "").toLowerCase();
+  const allowed = String(env.ALLOWED_ORIGINS || "").split(",").map(normalize).filter(Boolean);
+  if (!allowed.includes(normalize(origin))) return null;
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
