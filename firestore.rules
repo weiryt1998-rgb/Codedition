@@ -97,7 +97,10 @@ service cloud.firestore {
             )
             && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['createdBy'])
           )
-          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'deletedAt'])
+          || (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'deletedAt'])
+            && request.resource.data.deleted is bool
+          )
         );
 
       allow delete: if signedIn();

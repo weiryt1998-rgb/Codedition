@@ -22,11 +22,14 @@ const { privateKey: strangerKey } = await crypto.subtle.generateKey(
 const b64url = (data) => Buffer.from(data).toString('base64url');
 async function idToken(claims = {}, { key = privateKey, kid = 'test-key' } = {}) {
   const now = Math.floor(Date.now() / 1000);
-  const header = b64url(JSON.stringify({ alg: 'RS256', kid, typ: 'JWT' }));
-  const payload = b64url(JSON.stringify({
+  return signedToken({ alg: 'RS256', kid, typ: 'JWT' }, {
     iss: `https://securetoken.google.com/${PROJECT}`, aud: PROJECT, sub: 'user-1',
     iat: now - 10, exp: now + 3600, auth_time: now - 10, ...claims,
-  }));
+  }, key);
+}
+async function signedToken(headerValue, payloadValue, key = privateKey) {
+  const header = b64url(JSON.stringify(headerValue));
+  const payload = b64url(JSON.stringify(payloadValue));
   const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(`${header}.${payload}`));
   return `${header}.${payload}.${b64url(new Uint8Array(signature))}`;
 }
@@ -118,6 +121,26 @@ test('every endpoint rejects missing, forged, foreign and expired tokens', async
   }
   assert.equal(env.PDF_BUCKET.objects.size, 0);
   assert.equal(firestoreCalls.length, 0, 'nothing reaches Firestore without a valid token');
+});
+
+test('JWT headers and payloads must be JSON objects, including correctly signed tokens', async () => {
+  const token = await idToken();
+  const [headerPart, payloadPart] = token.split('.');
+  const validHeader = JSON.parse(Buffer.from(headerPart, 'base64url').toString());
+  const validPayload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString());
+  for (const value of [null, [], 'text', 42, true]) {
+    for (const invalidToken of [
+      await signedToken(value, validPayload),
+      await signedToken(validHeader, value),
+    ]) {
+      const result = await call('POST', '/api/files', {
+        token: invalidToken, body: pdfBytes(), headers: { 'Content-Type': 'application/pdf' },
+      });
+      assert.deepEqual([result.status, result.json.error], [401, 'invalid-token']);
+    }
+  }
+  assert.equal(env.PDF_BUCKET.objects.size, 0);
+  assert.equal(firestoreCalls.length, 0);
 });
 
 test('only listed browser origins may call the Worker', async () => {

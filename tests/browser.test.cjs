@@ -179,6 +179,25 @@ async function main() {
       assert.equal(await evaluate(`document.getElementById('filterCategory').value`), 'cat-b');
       await click('#clearFilters');
     });
+    await check('Document and category action IDs preserve quotes and HTML entities', async () => {
+      const id = 'record" data-id-marker="injected &quot; literal';
+      const ids = await evaluate(`(() => {
+        const id = ${JSON.stringify(id)};
+        allDocuments = [{ ...allDocuments[0], id }];
+        allTrash = [{ ...allDocuments[0], deleted: true }];
+        allCategories = [{ ...allCategories[0], id }];
+        renderDocsTable(); renderTrash(); renderCategories();
+        const actions = ['preview', 'download', 'edit', 'delete', 'restore', 'purge', 'del-cat'];
+        return {
+          values: actions.map(action => document.querySelector('[data-' + action + ']').getAttribute('data-' + action)),
+          injected: document.querySelectorAll('[data-id-marker]').length,
+        };
+      })()`);
+      assert.deepEqual(ids.values, Array(7).fill(id));
+      assert.equal(ids.injected, 0, 'Record IDs must not create HTML attributes');
+      await reloadApp();
+      await click('[data-view="documents"]');
+    });
     await check('Modal traps keyboard focus and restores it on Escape', async () => {
       await click('#addDocBtn');
       await evaluate(`document.getElementById('docSaveBtn').focus()`);

@@ -285,6 +285,30 @@ test('document numbers sort naturally and pagination stays bounded', () => {
   assert.match(elements.get('pagination').innerHTML, /aria-current="page"/);
 });
 
+test('record IDs stay escaped in document, trash and category action attributes', () => {
+  const app = setup();
+  const id = 'record" data-id-marker="injected &quot;';
+  const escapedId = 'record&quot; data-id-marker=&quot;injected &amp;quot;';
+  app.context.recordId = id;
+  app.run(`
+    allDocuments = [{ id: recordId, title: 'Test', category: recordId }];
+    allTrash = [{ id: recordId, title: 'Test' }];
+    allCategories = [{ id: recordId, name: 'Category' }];
+    renderDocsTable(); renderTrash(); renderCategories();
+  `);
+  for (const [elementId, actions] of [
+    ['docsTableBody', ['preview', 'download', 'edit', 'delete']],
+    ['trashTableBody', ['restore', 'purge']],
+    ['categoryGrid', ['del-cat']],
+  ]) {
+    const markup = app.elements.get(elementId).innerHTML;
+    for (const action of actions) {
+      assert.ok(markup.includes(`data-${action}="${escapedId}"`), `${action} must preserve the entire ID`);
+    }
+    assert.ok(!markup.includes(' data-id-marker="'), 'IDs must not create HTML attributes');
+  }
+});
+
 test('newest file selection wins even when an older read finishes last', async () => {
   const { run, context, elements } = setup();
   let finishOld;

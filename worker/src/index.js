@@ -151,6 +151,8 @@ async function verifyFirebaseToken(request, env) {
   } catch {
     throw invalid;
   }
+  if (!header || typeof header !== "object" || Array.isArray(header)
+    || !payload || typeof payload !== "object" || Array.isArray(payload)) throw invalid;
   if (header.alg !== "RS256" || typeof header.kid !== "string") throw invalid;
 
   const key = await googleKey(header.kid);

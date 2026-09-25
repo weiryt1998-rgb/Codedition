@@ -1112,7 +1112,7 @@ function renderCategories() {
         <span class="cat-count">${count} เอกสาร</span>
         <div class="meter"><span style="width:${(count / max) * 100}%"></span></div>
         <div class="cat-actions">
-          <button class="icon-btn" data-del-cat="${c.id}" title="ลบหมวดหมู่">
+          <button class="icon-btn" data-del-cat="${escapeHtml(c.id)}" title="ลบหมวดหมู่">
             <svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7z"/></svg>
           </button>
         </div>
@@ -1609,10 +1609,10 @@ function renderDocsTable() {
       <td>${statusStamp(d.status)}</td>
       <td class="col-actions">
         <div class="row-actions">
-          <button class="icon-btn" data-preview="${d.id}" title="ดูตัวอย่าง"><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
-          <button class="icon-btn" data-download="${d.id}" title="ดาวน์โหลด"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg></button>
-          <button class="icon-btn" data-edit="${d.id}" title="แก้ไข"><svg viewBox="0 0 24 24"><path d="M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6M17.5 3.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button>
-          <button class="icon-btn" data-delete="${d.id}" title="ลบ"><svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7z"/></svg></button>
+          <button class="icon-btn" data-preview="${escapeHtml(d.id)}" title="ดูตัวอย่าง"><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          <button class="icon-btn" data-download="${escapeHtml(d.id)}" title="ดาวน์โหลด"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg></button>
+          <button class="icon-btn" data-edit="${escapeHtml(d.id)}" title="แก้ไข"><svg viewBox="0 0 24 24"><path d="M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6M17.5 3.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button>
+          <button class="icon-btn" data-delete="${escapeHtml(d.id)}" title="ลบ"><svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7z"/></svg></button>
         </div>
       </td>
     </tr>`).join("");
@@ -1662,8 +1662,8 @@ function renderTrash() {
       <td class="mono">${d.deletedAt ? new Date(d.deletedAt).toLocaleDateString("th-TH") : "-"}</td>
       <td class="col-actions">
         <div class="row-actions">
-          <button class="icon-btn" data-restore="${d.id}" title="กู้คืน"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/></svg></button>
-          <button class="icon-btn" data-purge="${d.id}" title="ลบถาวร"><svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7z"/></svg></button>
+          <button class="icon-btn" data-restore="${escapeHtml(d.id)}" title="กู้คืน"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/></svg></button>
+          <button class="icon-btn" data-purge="${escapeHtml(d.id)}" title="ลบถาวร"><svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7z"/></svg></button>
         </div>
       </td>
     </tr>`).join("");
