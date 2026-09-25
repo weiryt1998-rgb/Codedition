@@ -1,17 +1,7 @@
-// Test backend. Only the profile survives reloads, like the real shared document.
-const fixtureControls = {
-  authMode: 'ok', profileWriteMode: 'ok',
-  ...JSON.parse(sessionStorage.getItem('fixture-controls') || '{}'),
-};
-function configureFixture(changes) {
-  Object.assign(fixtureControls, changes);
-  sessionStorage.setItem('fixture-controls', JSON.stringify(fixtureControls));
-}
-let releaseFixtureAuth = () => {};
+// Test backend. In-memory only, so every reload starts from the same seed data.
 const auth = {
   currentUser: null,
   async signInAnonymously() {
-    if (fixtureControls.authMode === 'delayed') await new Promise((resolve) => { releaseFixtureAuth = resolve; });
     this.currentUser = { uid: 'browser-test' };
     return { user: this.currentUser };
   },
@@ -31,7 +21,6 @@ const fixturePdf = (() => {
   return pdf + `trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
 })();
 const fixtureStore = {
-  settings: JSON.parse(sessionStorage.getItem('fixture-profile') || '[]'),
   categories: [{ id: 'cat-a', name: 'หนังสือเข้า' }, { id: 'cat-b', name: 'หนังสือออก' }],
   documents: Array.from({ length: 12 }, (_, i) => ({
     id: `seed-${i}`, title: `เอกสารทดสอบ ${i + 1}`, docNumber: `ทดสอบ/${i + 1}`,
@@ -42,21 +31,8 @@ const fixtureStore = {
   })),
 };
 const fixtureSubscriptions = [];
-const fixtureProfileWriteAttempts = [];
-const fixturePendingProfileWrites = [];
 let fixtureId = 0;
 function emitFixture() { fixtureSubscriptions.forEach((notify) => notify()); }
-function releaseFixtureProfileWrites() { fixturePendingProfileWrites.splice(0).forEach((resolve) => resolve()); }
-async function beforeProfileWrite(operation, payload) {
-  fixtureProfileWriteAttempts.push({ operation, payload, signedIn: !!auth.currentUser });
-  if (fixtureControls.profileWriteMode === 'denied') {
-    throw Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
-  }
-  if (fixtureControls.profileWriteMode === 'delayed') {
-    await new Promise((resolve) => fixturePendingProfileWrites.push(resolve));
-  }
-}
-function persistFixtureProfile() { sessionStorage.setItem('fixture-profile', JSON.stringify(fixtureStore.settings)); }
 function subscribeFixture(notify) {
   fixtureSubscriptions.push(notify);
   queueMicrotask(notify);
@@ -84,26 +60,6 @@ const db = {
       },
       doc(id) {
         return {
-          onSnapshot(options, callback) {
-            if (typeof options === 'function') callback = options;
-            return subscribeFixture(() => {
-              const record = fixtureStore[name].find((d) => d.id === id);
-              callback({
-                exists: !!record,
-                data: () => { if (!record) return undefined; const { id: ignored, ...data } = record; return structuredClone(data); },
-                metadata: { fromCache: false, hasPendingWrites: false },
-              });
-            });
-          },
-          async set(payload) {
-            if (name === 'settings') await beforeProfileWrite('set', payload);
-            const index = fixtureStore[name].findIndex((d) => d.id === id);
-            const record = { ...structuredClone(payload), id };
-            if (index === -1) fixtureStore[name].push(record);
-            else fixtureStore[name][index] = record;
-            if (name === 'settings') persistFixtureProfile();
-            emitFixture();
-          },
           async update(payload) {
             await new Promise((resolve) => setTimeout(resolve, 30));
             const record = fixtureStore[name].find((d) => d.id === id);
@@ -112,10 +68,8 @@ const db = {
             emitFixture();
           },
           async delete() {
-            if (name === 'settings') await beforeProfileWrite('delete');
             await new Promise((resolve) => setTimeout(resolve, 30));
             fixtureStore[name] = fixtureStore[name].filter((d) => d.id !== id);
-            if (name === 'settings') persistFixtureProfile();
             emitFixture();
           },
         };

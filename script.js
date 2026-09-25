@@ -379,14 +379,27 @@ let databaseReady = signInDatabase();
 let databaseReconnecting = false;
 let firestoreUnsubscribes = [];
 
-databaseReady.then((ready) => {
+databaseReady.then(() => {
   if (typeof db !== "undefined" && db) attachFirestoreListeners();
-  if (ready) syncProfilePhoto();
 });
 if (typeof db === "undefined" || !db) {
   // no status bar to fall back on, so this startup failure has to speak up itself
   showToast("โหลดฐานข้อมูลไม่สำเร็จ กรุณาโหลดหน้าใหม่", "error");
 }
+
+window.addEventListener("online", async () => {
+  if (databaseReconnecting) return;
+  databaseReconnecting = true;
+  try {
+    // A failed first sign-in must not leave the app without data after the connection returns.
+    if (!(await databaseReady)) {
+      databaseReady = signInDatabase();
+      if (await databaseReady) attachFirestoreListeners();
+    }
+  } finally {
+    databaseReconnecting = false;
+  }
+});
 
 /* =========================================================
    NAVIGATION
@@ -514,221 +527,6 @@ document.getElementById("confirmActionBtn").addEventListener("click", async () =
 });
 
 /* =========================================================
-   PROFILE PHOTO — รูปในวงกลมท้าย sidebar
-   เก็บในเครื่องก่อน แล้วซิงก์ settings/profile เมื่อฐานข้อมูลพร้อม
-   ========================================================= */
-const PROFILE_PHOTO_TYPES = ["image/png", "image/jpeg", "image/webp"];
-const PROFILE_PHOTO_PX = 256;
-const MAX_PROFILE_SOURCE_BYTES = 5 * 1024 * 1024;
-const MAX_PROFILE_PHOTO_CHARS = 700000; // ต้องไม่เกินเพดานเดียวกับ firestore.rules
-const PROFILE_PHOTO_PATTERN = /^data:image\/(png|jpeg|webp);base64,/;
-const PROFILE_PHOTO_KEY = "govdocs-profile-photo";
-let profilePhotoState = loadProfilePhoto();
-let profilePhotoStored = !!profilePhotoState;
-let profilePhotoSyncing = false;
-let profilePhotoReading = false;
-
-function validProfilePhoto(photo) {
-  return typeof photo === "string" && PROFILE_PHOTO_PATTERN.test(photo)
-    && photo.length <= MAX_PROFILE_PHOTO_CHARS;
-}
-
-function loadProfilePhoto() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(PROFILE_PHOTO_KEY) || "null");
-    if (saved && (saved.photo === null || validProfilePhoto(saved.photo))
-      && typeof saved.pending === "boolean" && Number.isFinite(saved.updatedAt)) return saved;
-  } catch { /* รูปยังใช้งานได้แม้เบราว์เซอร์ปิดการเก็บข้อมูล */ }
-  return null;
-}
-
-function storeProfilePhoto() {
-  try {
-    localStorage.setItem(PROFILE_PHOTO_KEY, JSON.stringify(profilePhotoState));
-    profilePhotoStored = true;
-  } catch {
-    profilePhotoStored = false;
-    // Never leave an older queued change that could overwrite this one after reload.
-    try { localStorage.removeItem(PROFILE_PHOTO_KEY); } catch { /* storage is unavailable */ }
-  }
-}
-
-function setProfilePhotoStatus(message = "") {
-  const status = document.getElementById("officerPhotoStatus");
-  status.textContent = message;
-  status.hidden = !message;
-}
-
-function pendingProfilePhotoStatus(reason = "รอซิงก์") {
-  setProfilePhotoStatus(profilePhotoStored
-    ? `บันทึกในเครื่องแล้ว · ${reason}`
-    : "แสดงชั่วคราว · ยังบันทึกไม่ได้");
-}
-
-function applyProfilePhoto(photo) {
-  const btn = document.getElementById("officerPhotoBtn");
-  const img = document.getElementById("officerPhoto");
-  const ok = validProfilePhoto(photo);
-  if (ok) img.src = photo; else img.removeAttribute("src");
-  btn.classList.toggle("has-photo", ok);
-  document.getElementById("officerPhotoRemove").hidden = !ok;
-}
-
-applyProfilePhoto(profilePhotoState?.photo);
-if (profilePhotoState?.pending) pendingProfilePhotoStatus();
-
-function receiveProfilePhoto(snap) {
-  // A cached/optimistic snapshot must not replace a newer local selection or deletion.
-  if (profilePhotoState?.pending || snap.metadata?.hasPendingWrites) return;
-  if (snap.metadata?.fromCache && profilePhotoState) return;
-  const data = snap.exists ? snap.data() : null;
-  profilePhotoState = {
-    photo: validProfilePhoto(data?.photo) ? data.photo : null,
-    updatedAt: Number.isFinite(data?.updatedAt) ? data.updatedAt : 0,
-    pending: false,
-  };
-  storeProfilePhoto();
-  applyProfilePhoto(profilePhotoState.photo);
-  setProfilePhotoStatus();
-}
-
-async function syncProfilePhoto() {
-  if (profilePhotoSyncing || !profilePhotoState?.pending) return;
-  const change = profilePhotoState;
-  profilePhotoSyncing = true;
-  try {
-    if (!(await databaseReady)) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
-    const ref = db.collection("settings").doc("profile");
-    if (change.photo === null) await ref.delete();
-    else await ref.set({ photo: change.photo, updatedAt: change.updatedAt });
-    if (profilePhotoState !== change) return;
-    profilePhotoState = { ...change, pending: false };
-    storeProfilePhoto();
-    setProfilePhotoStatus();
-    showToast(change.photo === null ? "ลบรูปโปรไฟล์แล้ว" : "อัปเดตรูปโปรไฟล์แล้ว", "success");
-  } catch (err) {
-    if (profilePhotoState !== change) return;
-    pendingProfilePhotoStatus(err.code === "permission-denied" ? "ยังซิงก์ไม่ได้" : "รอซิงก์");
-    console.warn("ซิงก์รูปโปรไฟล์ไม่สำเร็จ:", err);
-  } finally {
-    profilePhotoSyncing = false;
-    // Serialize writes so an older upload cannot overwrite a subsequent selection/removal.
-    if (profilePhotoState !== change && profilePhotoState?.pending) syncProfilePhoto();
-  }
-}
-
-function saveProfilePhoto(photo) {
-  profilePhotoState = { photo, updatedAt: Date.now(), pending: true };
-  storeProfilePhoto();
-  applyProfilePhoto(photo);
-  pendingProfilePhotoStatus();
-  syncProfilePhoto();
-}
-
-window.addEventListener("online", async () => {
-  if (databaseReconnecting) return;
-  databaseReconnecting = true;
-  try {
-    // A failed first sign-in must not prevent syncing after the connection returns.
-    if (!(await databaseReady)) {
-      databaseReady = signInDatabase();
-      if (await databaseReady) attachFirestoreListeners();
-    }
-    syncProfilePhoto();
-  } finally {
-    databaseReconnecting = false;
-  }
-});
-
-async function decodeProfilePhoto(file) {
-  if (typeof createImageBitmap === "function") {
-    try { return await createImageBitmap(file); }
-    catch { /* บางเบราว์เซอร์อ่านไฟล์ชนิดเดียวกันผ่าน Image ได้ */ }
-  }
-  const url = URL.createObjectURL(file);
-  try {
-    return await new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error("อ่านรูปไม่ได้ ไฟล์อาจเสียหาย กรุณาเลือก PNG, JPG หรือ WebP ใหม่"));
-      img.src = url;
-    });
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-/* ครอปกลางภาพเป็นจัตุรัสแล้วย่อ รูปในวงกลมจึงไม่ยืดผิดสัดส่วนและไฟล์เล็กพอเก็บใน Firestore */
-async function readProfilePhoto(file) {
-  const type = file.type.toLowerCase();
-  const missingType = !type || type === "application/octet-stream";
-  if (!PROFILE_PHOTO_TYPES.includes(type) && !(missingType && /\.(png|jpe?g|webp)$/i.test(file.name))) {
-    throw new Error("รองรับเฉพาะไฟล์ภาพ PNG, JPG หรือ WebP");
-  }
-  if (!file.size) throw new Error("ไฟล์รูปว่างเปล่า กรุณาเลือกไฟล์ใหม่");
-  if (file.size > MAX_PROFILE_SOURCE_BYTES) {
-    throw new Error(`ไฟล์ใหญ่เกินไป กรุณาใช้รูปไม่เกิน ${MAX_PROFILE_SOURCE_BYTES / 1024 / 1024}MB`);
-  }
-  const bitmap = await decodeProfilePhoto(file);
-  try {
-    const canvas = document.createElement("canvas");
-    canvas.width = PROFILE_PHOTO_PX;
-    canvas.height = PROFILE_PHOTO_PX;
-    const ctx = canvas.getContext && canvas.getContext("2d");
-    if (!ctx) throw new Error("เบราว์เซอร์นี้ไม่รองรับการย่อรูป");
-    ctx.fillStyle = "#FFFFFF";
-    ctx.fillRect(0, 0, PROFILE_PHOTO_PX, PROFILE_PHOTO_PX);
-    const side = Math.min(bitmap.width, bitmap.height);
-    ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side,
-      0, 0, PROFILE_PHOTO_PX, PROFILE_PHOTO_PX);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-    if (!PROFILE_PHOTO_PATTERN.test(dataUrl)) throw new Error("แปลงรูปไม่สำเร็จ");
-    if (dataUrl.length > MAX_PROFILE_PHOTO_CHARS) throw new Error("รูปนี้ยังใหญ่เกินไปหลังย่อ กรุณาใช้รูปอื่น");
-    return dataUrl;
-  } finally {
-    if (typeof bitmap.close === "function") bitmap.close();
-  }
-}
-
-document.getElementById("officerPhotoBtn").addEventListener("click", () => {
-  if (profilePhotoReading) return;
-  document.getElementById("officerPhotoInput").click();
-});
-
-document.getElementById("officerPhotoInput").addEventListener("change", async (e) => {
-  const input = e.target;
-  const file = input.files && input.files[0];
-  input.value = ""; // เลือกไฟล์เดิมซ้ำได้ทันทีถ้าครั้งก่อนล้มเหลว
-  if (!file || profilePhotoReading) return;
-  const btn = document.getElementById("officerPhotoBtn");
-  const remove = document.getElementById("officerPhotoRemove");
-  profilePhotoReading = true;
-  btn.disabled = true;
-  remove.disabled = true;
-  btn.setAttribute("aria-busy", "true");
-  btn.classList.add("is-busy");
-  try {
-    const photo = await readProfilePhoto(file);
-    saveProfilePhoto(photo);
-  } catch (err) {
-    showToast("เปลี่ยนรูปไม่สำเร็จ: " + err.message, "error");
-  } finally {
-    profilePhotoReading = false;
-    btn.disabled = false;
-    remove.disabled = false;
-    btn.setAttribute("aria-busy", "false");
-    btn.classList.remove("is-busy");
-  }
-});
-
-document.getElementById("officerPhotoRemove").addEventListener("click", () => {
-  if (profilePhotoReading) return;
-  askConfirm("ลบรูปโปรไฟล์นี้? วงกลมจะกลับไปใช้ไอคอนเริ่มต้น", () => {
-    saveProfilePhoto(null);
-  });
-});
-
-/* =========================================================
    FIRESTORE LISTENERS
    ========================================================= */
 function attachFirestoreListeners() {
@@ -756,14 +554,12 @@ function attachFirestoreListeners() {
       renderAll();
       ensureDefaultCategories(snap);
     }, failed));
-
-  firestoreUnsubscribes.push(db.collection("settings").doc("profile")
-    .onSnapshot({ includeMetadataChanges: true }, receiveProfilePhoto,
-      (err) => console.warn("โหลดรูปโปรไฟล์ไม่สำเร็จ:", err)));
 }
 
 /* หมวดหมู่ที่ระบบต้องมีเสมอ สร้างให้อัตโนมัติถ้ายังไม่มีในฐานข้อมูล */
-const DEFAULT_CATEGORIES = ["หนังสือคำสั่ง"];
+const DEFAULT_CATEGORIES = ["คำสั่ง"];
+/* ชื่อหมวดหมู่เดิม → ชื่อใหม่ เปลี่ยนชื่อใน doc เดิม (id ไม่เปลี่ยน เอกสารที่อ้างถึงจึงไม่หลุด) */
+const RENAMED_CATEGORIES = { "หนังสือคำสั่ง": "คำสั่ง" };
 let defaultCategoriesChecked = false;
 
 function ensureDefaultCategories(snap) {
@@ -772,6 +568,13 @@ function ensureDefaultCategories(snap) {
   defaultCategoriesChecked = true;
   const key = (name) => String(name).trim().normalize().toLocaleLowerCase("th");
   const existing = new Set(allCategories.map((c) => key(c.name)));
+  Object.entries(RENAMED_CATEGORIES).forEach(([from, to]) => {
+    const old = allCategories.find((c) => key(c.name) === key(from));
+    if (!old || existing.has(key(to))) return;
+    existing.add(key(to));
+    db.collection("categories").doc(old.id).update({ name: to })
+      .catch((err) => console.warn("เปลี่ยนชื่อหมวดหมู่ไม่สำเร็จ:", from, err));
+  });
   DEFAULT_CATEGORIES.filter((name) => !existing.has(key(name))).forEach((name) => {
     db.collection("categories").add({ name, createdAt: Date.now() })
       .catch((err) => console.warn("สร้างหมวดหมู่เริ่มต้นไม่สำเร็จ:", name, err));

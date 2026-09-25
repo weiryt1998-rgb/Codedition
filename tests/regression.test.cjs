@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(root, 'script.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 
 // Minimal DOM doubles: these exercise application logic, not browser layout.
-function setup({ storageThrows = false, storageWriteThrows = false, legacyTheme = null, storageValues = {}, authMode = 'missing', databaseAvailable = true } = {}) {
+function setup({ storageThrows = false, legacyTheme = null, storageValues = {}, authMode = 'missing', databaseAvailable = true } = {}) {
   const elements = new Map();
   const storage = new Map(Object.entries(storageValues));
   if (legacyTheme !== null) storage.set('govdocs-theme', legacyTheme);
@@ -127,7 +127,7 @@ function setup({ storageThrows = false, storageWriteThrows = false, legacyTheme 
     },
     localStorage: {
       getItem(key) { if (storageThrows) throw new Error('Storage blocked'); return storage.get(key) ?? null; },
-      setItem(key, value) { if (storageThrows || storageWriteThrows) throw new Error('Storage blocked'); storage.set(key, String(value)); },
+      setItem(key, value) { if (storageThrows) throw new Error('Storage blocked'); storage.set(key, String(value)); },
       removeItem(key) { if (storageThrows) throw new Error('Storage blocked'); storage.delete(key); },
     },
     performance: { now: () => 0 }, requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout() {},
@@ -145,16 +145,6 @@ function setup({ storageThrows = false, storageWriteThrows = false, legacyTheme 
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
-const PHOTO_A = 'data:image/jpeg;base64,AAAA';
-const PHOTO_B = 'data:image/png;base64,BBBB';
-const PROFILE_KEY = 'govdocs-profile-photo';
-const savedProfile = (app) => JSON.parse(app.storage.get(PROFILE_KEY));
-const profileSnapshot = (photo, metadata = {}) => ({
-  exists: photo !== null,
-  data: () => ({ photo, updatedAt: 123 }),
-  metadata: { fromCache: false, hasPendingWrites: false, ...metadata },
-});
-
 function pdf(name = 'document.pdf', content = '%PDF-1.7\n%%EOF', type = 'application/pdf') {
   const bytes = new TextEncoder().encode(content);
   return { name, type, size: bytes.length, arrayBuffer: async () => bytes.buffer };
@@ -194,320 +184,34 @@ test('default categories are seeded once, and never when they already exist', ()
     stream.receive(snap); // a later snapshot must not add a duplicate
     return writes;
   };
-  assert.deepEqual(seed([]).map((w) => w.name), ['หนังสือคำสั่ง']);
-  assert.deepEqual(seed([{ id: 'c', data: () => ({ name: ' หนังสือคำสั่ง ' }) }]), []);
+  assert.deepEqual(seed([]).map((w) => w.name), ['คำสั่ง']);
+  assert.deepEqual(seed([{ id: 'c', data: () => ({ name: ' คำสั่ง ' }) }]), []);
+  // the old name is renamed in place (not duplicated), unless the new name already exists
+  assert.deepEqual(seed([{ id: 'c', data: () => ({ name: 'หนังสือคำสั่ง' }) }]).map((w) => w.name), ['คำสั่ง']);
+  assert.deepEqual(seed([
+    { id: 'c', data: () => ({ name: 'หนังสือคำสั่ง' }) },
+    { id: 'd', data: () => ({ name: 'คำสั่ง' }) },
+  ]), []);
 });
 
-test('profile photo only renders a real image data URL', () => {
-  const { run, subscriptions, elements } = setup();
-  run('attachFirestoreListeners()');
-  const stream = subscriptions.find((s) => s.doc === 'profile');
-  const avatar = elements.get('officerPhotoBtn');
-
-  stream.receive({ exists: false, data: () => ({}) });
-  assert.equal(avatar.classList.contains('has-photo'), false);
-
-  stream.receive({ exists: true, data: () => ({ photo: 'javascript:alert(1)' }) });
-  assert.equal(avatar.classList.contains('has-photo'), false);
-  assert.equal(elements.get('officerPhoto').src, undefined);
-
-  stream.receive({ exists: true, data: () => ({ photo: 'data:image/jpeg;base64,AAAA' }) });
-  assert.equal(avatar.classList.contains('has-photo'), true);
-  assert.equal(elements.get('officerPhoto').src, 'data:image/jpeg;base64,AAAA');
-});
-
-test('removing the profile photo is confirmed first and restores the default icon', async () => {
-  const { subscriptions, elements, deletes } = setup({ authMode: 'ready' });
-  await flush();
-  const stream = subscriptions.find((s) => s.doc === 'profile');
-  stream.receive({ exists: true, data: () => ({ photo: 'data:image/png;base64,AAAA' }) });
-  assert.equal(elements.get('officerPhotoRemove').hidden, false);
-
-  await elements.get('officerPhotoRemove').fire('click');
-  assert.deepEqual(deletes, []); // ยังไม่ลบจนกว่าจะกดยืนยัน
-  await elements.get('confirmActionBtn').fire('click');
-  await flush();
-
-  assert.deepEqual(deletes, ['settings/profile']);
-  assert.equal(elements.get('officerPhotoBtn').classList.contains('has-photo'), false);
-  assert.equal(elements.get('officerPhotoRemove').hidden, true);
-});
-
-test('profile photo upload rejects non-images and oversized files before writing', async () => {
-  const { run, elements, writes, context } = setup();
-  const toasts = [];
-  context.record = (message) => toasts.push(message);
-  run('showToast = record; attachFirestoreListeners()');
-  const input = elements.get('officerPhotoInput');
-
-  input.files = [{ type: 'application/pdf', size: 10 }];
-  await input.fire('change');
-  input.files = [{ type: 'image/png', size: 6 * 1024 * 1024 }];
-  await input.fire('change');
-
-  assert.deepEqual(writes, []);
-  assert.equal(toasts.length, 2);
-  assert.match(toasts[0], /PNG, JPG หรือ WebP/);
-  assert.match(toasts[1], /ไฟล์ใหญ่เกินไป/);
-  assert.equal(elements.get('officerPhotoBtn').classList.contains('is-busy'), false);
-});
-
-test('a photo saved without Firebase is visible immediately and survives reload', async () => {
-  const app = setup({ databaseAvailable: false });
-  app.context.photo = PHOTO_A;
-  app.run('saveProfilePhoto(photo)');
-  assert.equal(app.elements.get('officerPhoto').src, PHOTO_A);
-  assert.equal(savedProfile(app).pending, true);
-  await flush();
-  assert.deepEqual(app.writes, []);
-  assert.match(app.elements.get('officerPhotoStatus').textContent, /บันทึกในเครื่องแล้ว/);
-
-  const reloaded = setup({ databaseAvailable: false, storageValues: Object.fromEntries(app.storage) });
-  assert.equal(reloaded.elements.get('officerPhoto').src, PHOTO_A);
-  assert.equal(reloaded.elements.get('officerPhotoBtn').classList.contains('has-photo'), true);
-  assert.equal(reloaded.elements.get('officerPhotoStatus').hidden, false);
-  assert.equal(savedProfile(reloaded).pending, true);
-});
-
-test('denied cloud writes retain the local photo across failed listeners and reload', async () => {
-  const app = setup({ authMode: 'ready' });
-  await flush();
-  app.context.photo = PHOTO_A;
-  app.run('saveProfilePhoto(photo)');
-  await flush();
-  const denied = Object.assign(new Error('Permission denied'), { code: 'permission-denied' });
-  app.rejectWrite(denied);
-  await flush();
-  app.subscriptions.find((s) => s.doc === 'profile').fail(denied);
-  assert.equal(app.elements.get('officerPhoto').src, PHOTO_A);
-  assert.equal(savedProfile(app).pending, true);
-  assert.match(app.elements.get('officerPhotoStatus').textContent, /บันทึกในเครื่องแล้ว.*ยังซิงก์ไม่ได้/);
-
-  const reloaded = setup({ storageValues: Object.fromEntries(app.storage) });
-  assert.equal(reloaded.elements.get('officerPhoto').src, PHOTO_A);
-  assert.equal(savedProfile(reloaded).photo, PHOTO_A);
-  assert.equal(savedProfile(reloaded).pending, true);
-});
-
-test('server snapshots cannot replace a pending selection or restore a pending removal', async () => {
-  const app = setup();
-  await flush();
-  const stream = app.subscriptions.find((s) => s.doc === 'profile');
-  app.context.photo = PHOTO_A;
-  app.run('saveProfilePhoto(photo)');
-  stream.receive(profileSnapshot(PHOTO_B));
-  stream.receive(profileSnapshot(null));
-  assert.equal(app.elements.get('officerPhoto').src, PHOTO_A);
-  assert.equal(savedProfile(app).photo, PHOTO_A);
-
-  app.run('saveProfilePhoto(null)');
-  stream.receive(profileSnapshot(PHOTO_A));
-  await flush();
-  assert.equal(app.elements.get('officerPhoto').src, undefined);
-  assert.equal(app.elements.get('officerPhotoBtn').classList.contains('has-photo'), false);
-  assert.equal(savedProfile(app).photo, null);
-  assert.equal(savedProfile(app).pending, true);
-
-  const reloaded = setup({ storageValues: Object.fromEntries(app.storage) });
-  await flush();
-  reloaded.subscriptions.find((s) => s.doc === 'profile').receive(profileSnapshot(PHOTO_A));
-  assert.equal(reloaded.elements.get('officerPhotoBtn').classList.contains('has-photo'), false);
-  assert.equal(savedProfile(reloaded).photo, null);
-});
-
-test('profile cloud writes wait for authentication while the local preview stays usable', async () => {
+test('connectivity recovery retries failed authentication and replaces old listeners once', async () => {
   const app = setup({ authMode: 'deferred' });
-  app.context.photo = PHOTO_A;
-  app.run('saveProfilePhoto(photo)');
-  await flush();
-  assert.deepEqual(app.writes, []);
-  assert.equal(app.elements.get('officerPhoto').src, PHOTO_A);
-  assert.equal(savedProfile(app).pending, true);
-
-  app.authenticate();
-  await flush();
-  assert.equal(app.writes.length, 1);
-  assert.equal(app.writes[0].photo, PHOTO_A);
-  app.complete();
-  await flush();
-  assert.equal(savedProfile(app).pending, false);
-  assert.equal(app.elements.get('officerPhotoStatus').hidden, true);
-});
-
-test('failed authentication leaves a locally saved photo pending without attempting a cloud write', async () => {
-  const app = setup({ authMode: 'deferred' });
-  app.context.photo = PHOTO_A;
-  app.run('saveProfilePhoto(photo)');
-  app.rejectAuthentication(new Error('Authentication unavailable'));
-  await flush();
-  assert.deepEqual(app.writes, []);
-  assert.equal(savedProfile(app).photo, PHOTO_A);
-  assert.equal(savedProfile(app).pending, true);
-  assert.match(app.elements.get('officerPhotoStatus').textContent, /บันทึกในเครื่องแล้ว/);
-});
-
-test('connectivity recovery retries failed authentication before syncing and replaces old listeners once', async () => {
-  const app = setup({ authMode: 'deferred' });
-  app.context.photo = PHOTO_A;
-  app.run('saveProfilePhoto(photo)');
   app.rejectAuthentication(new Error('Offline during startup'));
   await flush();
   assert.equal(app.authAttempts.length, 1);
-  assert.deepEqual(app.writes, []);
-  assert.equal(app.subscriptions.filter((s) => s.active).length, 4);
+  assert.equal(app.subscriptions.filter((s) => s.active).length, 3);
+  assert.equal(app.subscriptions.some((s) => s.name === 'settings'), false); // no profile photo stream
 
   app.fireWindow('online');
   app.fireWindow('online');
   await flush();
   assert.equal(app.authAttempts.length, 2);
-  assert.deepEqual(app.writes, []);
-  assert.equal(app.elements.get('officerPhoto').src, PHOTO_A);
-  assert.equal(savedProfile(app).pending, true);
 
   app.authenticate();
   await flush();
-  assert.equal(app.writes.length, 1);
-  assert.equal(app.writes[0].photo, PHOTO_A);
-  assert.equal(app.subscriptions.length, 8);
-  assert.equal(app.subscriptions.slice(0, 4).every((s) => !s.active), true);
-  assert.equal(app.subscriptions.filter((s) => s.active).length, 4);
-
-  app.complete();
-  await flush();
-  assert.equal(savedProfile(app).pending, false);
-  assert.equal(app.elements.get('officerPhotoStatus').hidden, true);
-});
-
-test('blocked storage reports a temporary preview rather than claiming the photo was saved', async () => {
-  const app = setup({ storageThrows: true, databaseAvailable: false });
-  const toasts = [];
-  app.context.record = (message, type) => toasts.push({ message, type });
-  app.context.photo = PHOTO_A;
-  app.run('showToast = record; saveProfilePhoto(photo)');
-  await flush();
-  assert.equal(app.elements.get('officerPhoto').src, PHOTO_A);
-  assert.equal(app.storage.has(PROFILE_KEY), false);
-  assert.equal(app.elements.get('officerPhotoStatus').hidden, false);
-  assert.match(app.elements.get('officerPhotoStatus').textContent, /แสดงชั่วคราว.*ยังบันทึกไม่ได้/);
-  assert.equal(toasts.some((toast) => toast.type === 'success'), false);
-});
-
-test('storage write failures discard an older pending cache so reload cannot reupload the old photo', async () => {
-  const app = setup({
-    authMode: 'deferred',
-    storageWriteThrows: true,
-    storageValues: { [PROFILE_KEY]: JSON.stringify({ photo: PHOTO_A, updatedAt: 100, pending: true }) },
-  });
-  app.context.photo = PHOTO_B;
-  app.run('saveProfilePhoto(photo)');
-  assert.equal(app.elements.get('officerPhoto').src, PHOTO_B);
-  assert.equal(app.storage.has(PROFILE_KEY), false);
-  assert.match(app.elements.get('officerPhotoStatus').textContent, /แสดงชั่วคราว.*ยังบันทึกไม่ได้/);
-
-  app.authenticate();
-  await flush();
-  assert.equal(app.writes[0].photo, PHOTO_B);
-  app.complete();
-  await flush();
-  assert.equal(app.elements.get('officerPhotoStatus').hidden, true);
-  assert.equal(app.storage.has(PROFILE_KEY), false);
-
-  const reloaded = setup({ authMode: 'ready', storageValues: Object.fromEntries(app.storage) });
-  await flush();
-  assert.deepEqual(reloaded.writes, []);
-  reloaded.subscriptions.find((s) => s.doc === 'profile').receive(profileSnapshot(PHOTO_B));
-  assert.equal(reloaded.elements.get('officerPhoto').src, PHOTO_B);
-});
-
-test('rapid photo changes serialize cloud writes and older acknowledgements preserve the newest pending photo', async () => {
-  const app = setup({ authMode: 'ready' });
-  const toasts = [];
-  app.context.record = (message, type) => toasts.push({ message, type });
-  app.context.photoA = PHOTO_A;
-  app.context.photoB = PHOTO_B;
-  app.run('showToast = record; saveProfilePhoto(photoA)');
-  await flush();
-  app.run('saveProfilePhoto(photoB)');
-  await flush();
-  assert.equal(app.writes.length, 1);
-  assert.equal(app.writes[0].photo, PHOTO_A);
-
-  app.complete(0);
-  await flush();
-  assert.equal(app.writes.length, 2);
-  assert.equal(app.writes[1].photo, PHOTO_B);
-  app.subscriptions.find((s) => s.doc === 'profile').receive(profileSnapshot(PHOTO_A));
-  assert.equal(app.elements.get('officerPhoto').src, PHOTO_B);
-  assert.equal(savedProfile(app).photo, PHOTO_B);
-  assert.equal(savedProfile(app).pending, true);
-  assert.equal(toasts.filter((toast) => toast.type === 'success').length, 0);
-
-  app.complete(1);
-  await flush();
-  assert.equal(savedProfile(app).photo, PHOTO_B);
-  assert.equal(savedProfile(app).pending, false);
-  assert.equal(app.elements.get('officerPhotoStatus').hidden, true);
-  assert.equal(toasts.filter((toast) => toast.type === 'success').length, 1);
-});
-
-test('a removal waits for an older photo upload and remains removed when that upload completes', async () => {
-  const app = setup({ authMode: 'ready' });
-  app.context.photo = PHOTO_A;
-  app.run('saveProfilePhoto(photo)');
-  await flush();
-  app.run('saveProfilePhoto(null)');
-  await flush();
-  assert.deepEqual(app.deletes, []);
-  assert.equal(app.elements.get('officerPhotoBtn').classList.contains('has-photo'), false);
-  assert.equal(savedProfile(app).pending, true);
-
-  app.complete();
-  await flush();
-  assert.deepEqual(app.deletes, ['settings/profile']);
-  assert.equal(app.elements.get('officerPhotoBtn').classList.contains('has-photo'), false);
-  assert.equal(savedProfile(app).photo, null);
-  assert.equal(savedProfile(app).pending, false);
-});
-
-test('a failed upload keeps its local change and retries successfully when connectivity returns', async () => {
-  const app = setup({ authMode: 'ready' });
-  app.context.photo = PHOTO_A;
-  app.run('saveProfilePhoto(photo)');
-  await flush();
-  app.rejectWrite(Object.assign(new Error('Unavailable'), { code: 'unavailable' }));
-  await flush();
-  assert.equal(savedProfile(app).pending, true);
-  assert.equal(app.elements.get('officerPhoto').src, PHOTO_A);
-
-  app.fireWindow('online');
-  await flush();
-  assert.equal(app.writes.length, 2);
-  assert.equal(app.writes[1].photo, PHOTO_A);
-  app.complete(1);
-  await flush();
-  assert.equal(savedProfile(app).pending, false);
-  assert.equal(app.elements.get('officerPhotoStatus').hidden, true);
-});
-
-test('cached and optimistic snapshots preserve a saved photo until a confirmed server change arrives', async () => {
-  const app = setup({
-    storageValues: { [PROFILE_KEY]: JSON.stringify({ photo: PHOTO_A, updatedAt: 100, pending: false }) },
-  });
-  await flush();
-  const stream = app.subscriptions.find((s) => s.doc === 'profile');
-  assert.equal(stream.options.includeMetadataChanges, true);
-  stream.receive(profileSnapshot(null, { fromCache: true }));
-  stream.receive(profileSnapshot(PHOTO_B, { fromCache: true }));
-  stream.receive(profileSnapshot(null, { hasPendingWrites: true }));
-  assert.equal(app.elements.get('officerPhoto').src, PHOTO_A);
-  assert.equal(savedProfile(app).photo, PHOTO_A);
-
-  stream.receive(profileSnapshot(PHOTO_B));
-  assert.equal(app.elements.get('officerPhoto').src, PHOTO_B);
-  assert.equal(savedProfile(app).photo, PHOTO_B);
-  stream.receive(profileSnapshot(null));
-  assert.equal(app.elements.get('officerPhotoBtn').classList.contains('has-photo'), false);
-  assert.equal(savedProfile(app).photo, null);
+  assert.equal(app.subscriptions.length, 6);
+  assert.equal(app.subscriptions.slice(0, 3).every((s) => !s.active), true);
+  assert.equal(app.subscriptions.filter((s) => s.active).length, 3);
 });
 
 test('global search opens results and tolerates legacy numeric metadata', async () => {

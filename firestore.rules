@@ -73,25 +73,13 @@ service cloud.firestore {
         && request.resource.data.name.size() <= 100
         && request.resource.data.createdAt is number;
 
-      allow update: if false; // the app never edits an existing category
-      allow delete: if signedIn();
-    }
-
-    // Sidebar profile photo. The app downsizes the picture to a 256px square
-    // JPEG before writing, so the stored data URL stays far below the 1MB
-    // Firestore document ceiling.
-    match /settings/profile {
-      allow read: if signedIn();
-
-      allow create, update: if signedIn()
-        && request.resource.data.keys().hasOnly(['photo', 'updatedAt'])
-        && request.resource.data.updatedAt is number
-        && request.resource.data.photo is string
-        && request.resource.data.photo.matches('^data:image/(png|jpeg|webp);base64,.*')
-        && request.resource.data.photo.size() <= 700000;
-
-      // Removing the photo deletes the document, so the app falls back to the
-      // default avatar icon.
+      // The only edit the app makes is renaming a built-in category
+      // (RENAMED_CATEGORIES in script.js), which keeps its id so documents stay linked.
+      allow update: if signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100;
       allow delete: if signedIn();
     }
 
