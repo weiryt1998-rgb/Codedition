@@ -371,22 +371,23 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 }
 .nav-item.is-active .nav-badge { background: rgba(255, 255, 255, .2); color: #fff; }
 
-.side-foot { display: flex; flex-direction: column; gap: 12px; padding-top: 14px; }
-.officer-card {
-  display: flex; align-items: center; gap: 11px;
-  background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .1);
-  border-radius: 16px; padding: 12px 14px; backdrop-filter: blur(8px);
+.side-foot { display: flex; flex-direction: column; gap: 12px; margin-inline: -16px; padding-top: 14px; }
+.officer-banner {
+  position: relative; isolation: isolate; overflow: hidden;
+  width: 100%; padding: 15px 26px; text-align: center;
+  background: linear-gradient(110deg, #C9A227 0%, #F8E7A6 48%, #D8B64C 100%);
+  border-block: 1px solid rgba(255, 244, 203, .75);
+  box-shadow: 0 5px 16px -8px rgba(0, 0, 0, .45);
 }
-.officer-avatar {
-  flex-shrink: 0; width: 40px; height: 40px; border-radius: 50%;
-  display: grid; place-items: center;
-  border: 1px solid rgba(255, 255, 255, .22);
-  background: var(--grad-gold); color: #23180A;
+.officer-banner::before, .officer-banner::after {
+  content: ""; position: absolute; inset-block: 0; width: 18px;
+  background: rgba(80, 52, 8, .16); pointer-events: none; z-index: -1;
 }
-.officer-avatar-ico { width: 22px; height: 22px; fill: currentColor; stroke: none; }
-.officer-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.officer-text strong { font-size: 12.5px; font-weight: 600; color: rgba(255, 255, 255, .92); line-height: 1.35; }
-.officer-text span { font-size: 11px; color: rgba(255, 255, 255, .5); line-height: 1.35; }
+.officer-banner::before { left: 0; clip-path: polygon(0 0, 100% 0, 35% 50%, 100% 100%, 0 100%); }
+.officer-banner::after { right: 0; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 65% 50%); }
+.officer-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.officer-text strong { font-size: 14px; font-weight: 700; color: #352507; line-height: 1.5; }
+.officer-text span { font-size: 11px; color: #604719; line-height: 1.5; }
 
 
 .scrim { display: none; }
@@ -533,6 +534,33 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 }
 .panel canvas { display: block; width: 100% !important; height: 220px !important; }
 .panel-wide canvas { height: 150px !important; }
+
+/* Thai kanok accents stay at the edges and beside headings, away from chart data. */
+#view-dashboard { --kanok-pattern: url("assets/kanok.svg"); }
+#view-dashboard .hero::after,
+#view-dashboard .stat-card:nth-child(odd)::after,
+#view-dashboard .panel-title h3::after {
+  content: ""; background: var(--accent); pointer-events: none;
+  -webkit-mask: var(--kanok-pattern) center / contain no-repeat;
+  mask: var(--kanok-pattern) center / contain no-repeat;
+}
+#view-dashboard .hero::after {
+  inset: auto -18px -28px auto; width: 250px; height: 250px;
+  opacity: .23; transform: rotate(-12deg);
+}
+#view-dashboard .stat-card:nth-child(odd)::after {
+  top: auto; right: 8px; bottom: 16px; width: 86px; height: 86px;
+  border-radius: 0; opacity: .14; transform: none; transition: none;
+}
+#view-dashboard .panel-title h3::after {
+  display: inline-block; width: 26px; height: 26px;
+  margin-inline-start: 8px; vertical-align: -6px; opacity: .5;
+}
+@media (max-width: 640px) {
+  #view-dashboard .hero::after { right: -12px; bottom: -20px; width: 160px; height: 160px; opacity: .14; }
+  #view-dashboard .stat-card:nth-child(odd)::after { width: 72px; height: 72px; opacity: .11; }
+  #view-dashboard .panel-title h3::after { width: 22px; height: 22px; vertical-align: -5px; opacity: .4; }
+}
 
 /* =========================== Table =========================== */
 .table-scroll { overflow-x: auto; }
