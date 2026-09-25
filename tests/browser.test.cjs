@@ -5,10 +5,61 @@ const path = require('node:path');
 const os = require('node:os');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
+const { randomUUID } = require('node:crypto');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 const output = path.join(__dirname, 'artifacts');
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const STORAGE_KEY = /^documents\/\d{4}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.pdf$/;
+
+// Stand-in for the Cloudflare Worker + R2 (worker/src/index.js has its own tests in worker.test.mjs).
+const r2 = new Map();        // storageKey -> bytes
+const registry = new Map();  // document id -> { storageKey, fileName, deleted }, mirrored from the fixture
+const apiLog = [];
+function readBody(req, limit = Infinity) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => { size += chunk.length; if (size <= limit) chunks.push(chunk); });
+    req.on('end', () => resolve(size > limit ? null : Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+async function fakeWorker(req, res, url) {
+  apiLog.push(`${req.method} ${url.pathname}`);
+  const send = (status, body, type = 'application/json') => {
+    res.writeHead(status, { 'Content-Type': type });
+    res.end(type === 'application/json' ? JSON.stringify(body) : body);
+  };
+  if (req.headers.authorization !== 'Bearer browser-test-token') return send(401, { error: 'invalid-token' });
+  const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  if (req.method === 'POST' && url.pathname === '/api/files') {
+    if (req.headers['content-type'] !== 'application/pdf') return send(415, { error: 'not-pdf' });
+    const body = await readBody(req, 20 * 1024 * 1024);
+    if (!body) return send(413, { error: 'file-too-large' });
+    if (body.subarray(0, 5).toString('latin1') !== '%PDF-') return send(415, { error: 'not-pdf' });
+    const storageKey = `documents/${new Date().getUTCFullYear()}/${randomUUID()}.pdf`;
+    r2.set(storageKey, body);
+    return send(201, { storageKey, size: body.length });
+  }
+  if (parts[1] === 'documents' && parts[3] === 'file') {
+    const doc = registry.get(parts[2]);
+    if (!doc) return send(404, { error: 'document-not-found' });
+    if (req.method === 'GET') return r2.has(doc.storageKey) ? send(200, r2.get(doc.storageKey), 'application/pdf') : send(404, { error: 'file-not-found' });
+    if (req.method === 'DELETE') {
+      if (!doc.deleted) return send(409, { error: 'not-in-trash' });
+      r2.delete(doc.storageKey);
+      return send(200, { deleted: true });
+    }
+  }
+  if (req.method === 'DELETE' && parts[1] === 'files') {
+    const key = parts.slice(2).join('/');
+    if ([...registry.values()].some((d) => d.storageKey === key)) return send(409, { error: 'file-in-use' });
+    r2.delete(key);
+    return send(200, { deleted: true });
+  }
+  return send(404, { error: 'not-found' });
+}
 
 async function main() {
   await fs.mkdir(output, { recursive: true });
@@ -24,7 +75,12 @@ async function main() {
     const files = { '/style.css': 'style.css', '/script.js': 'script.js', '/fixture.js': 'tests/browser-fixture.js' };
     const url = new URL(req.url, 'http://localhost');
     try {
-      if (url.pathname === '/') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(html); }
+      if (url.pathname === '/__fixture/documents' && req.method === 'POST') {
+        const info = JSON.parse(await readBody(req));
+        if (info.removed) registry.delete(info.id); else registry.set(info.id, info);
+        res.writeHead(204); res.end();
+      } else if (url.pathname.startsWith('/api/')) await fakeWorker(req, res, url);
+      else if (url.pathname === '/') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(html); }
       else if (url.pathname === '/chart.js') { res.setHeader('Content-Type', 'text/javascript'); res.end(chart); }
       else if (files[url.pathname]) {
         res.setHeader('Content-Type', url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript');
@@ -132,6 +188,7 @@ async function main() {
       assert.equal(await evaluate(`document.activeElement.id`), 'addDocBtn');
       assert.equal(await evaluate(`document.getElementById('app').inert`), false);
     });
+    let createdKey;
     await check('Invalid PDF is rejected; valid PDF can be added and edited', async () => {
       await click('#addDocBtn');
       await evaluate(`handleFile(new File(['invalid'], 'invalid.pdf', {type:'application/pdf'}))`);
@@ -139,6 +196,14 @@ async function main() {
       await evaluate(`document.getElementById('docTitle').value='Browser created'; document.getElementById('docNumber').value='TEST/100'; handleFile(new File([fixturePdf], 'test.pdf', {type:'application/pdf'}))`);
       await click('#docSaveBtn');
       await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.length===13`);
+      // The PDF went to R2 through the Worker; Firestore got metadata only.
+      const saved = await evaluate(`(() => { const d = fixtureStore.documents.find((x) => x.title === 'Browser created'); return { storageKey: d.storageKey, hasFileData: 'fileData' in d, mimeType: d.mimeType, createdBy: d.createdBy, fileName: d.fileName }; })()`);
+      assert.match(saved.storageKey, STORAGE_KEY);
+      assert.equal(saved.hasFileData, false);
+      assert.deepEqual([saved.mimeType, saved.createdBy, saved.fileName], ['application/pdf', 'browser-test', 'test.pdf']);
+      assert.ok(r2.get(saved.storageKey).subarray(0, 5).toString('latin1') === '%PDF-');
+      assert.ok(apiLog.includes('POST /api/files'));
+      createdKey = saved.storageKey;
       await evaluate(`document.getElementById('globalSearch').value='Browser created'; document.getElementById('globalSearch').dispatchEvent(new Event('input'))`);
       await click('[data-edit]');
       await evaluate(`document.getElementById('docTitle').value='Browser edited'`);
@@ -149,7 +214,9 @@ async function main() {
     await check('PDF preview opens a Blob URL and releases it when closed', async () => {
       await evaluate(`(() => {const range=document.createRange(); range.selectNode(document.getElementById('previewFrame')); const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range);})()`);
       await click('[data-preview]');
-      assert.ok(await evaluate(`document.getElementById('previewFrame').src.startsWith('blob:')`));
+      // The first row is the document just added, so its PDF comes from R2 through the Worker.
+      await waitFor(`document.getElementById('previewFrame').src.startsWith('blob:')`);
+      assert.ok(apiLog.some((line) => /^GET \/api\/documents\/[^/]+\/file$/.test(line)));
       assert.equal(await evaluate(`window.getSelection().isCollapsed`), true);
       assert.equal(await evaluate(`getComputedStyle(document.getElementById('previewFrame')).userSelect`), 'none');
       await pause(1500);
@@ -175,6 +242,16 @@ async function main() {
       assert.ok(downloaded, 'PDF downloaded');
       assert.ok((await fs.readFile(path.join(downloads, downloaded), 'utf8')).startsWith('%PDF-'));
     });
+    await check('Legacy base64 documents still open without the Worker', async () => {
+      const calls = apiLog.length;
+      await evaluate(`document.getElementById('globalSearch').value='ทดสอบ/5'; document.getElementById('globalSearch').dispatchEvent(new Event('input'))`);
+      assert.equal(await evaluate(`document.querySelectorAll('#docsTableBody tr').length`), 1);
+      await click('[data-preview]');
+      await waitFor(`document.getElementById('previewFrame').src.startsWith('blob:')`);
+      assert.equal(apiLog.length, calls);
+      await click('#previewModalOverlay [data-close-modal]');
+      await click('#clearFilters');
+    });
     await check('Trash, restore, and permanent deletion update the interface', async () => {
       await click('[data-delete]');
       await click('#confirmActionBtn');
@@ -187,9 +264,13 @@ async function main() {
       await click('#confirmActionBtn');
       await waitFor('allTrash.length===1');
       await click('[data-view="trash"]');
+      assert.equal(await evaluate('allTrash[0].storageKey'), createdKey);
       await click('[data-purge]');
       await click('#confirmActionBtn');
       await waitFor('allTrash.length===0 && allDocuments.length===12');
+      // The R2 file went first (through the Worker), then the Firestore record.
+      assert.ok(apiLog.some((line) => /^DELETE \/api\/documents\/[^/]+\/file$/.test(line)));
+      assert.equal(r2.has(createdKey), false);
     });
     await check('Categories can be added and removed without deleting documents', async () => {
       await click('[data-view="categories"]');

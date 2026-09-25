@@ -1,0 +1,19 @@
+# Cloudflare Worker สำหรับรับ/ส่งไฟล์ PDF ระหว่างเว็บกับ R2
+# ไฟล์นี้ไม่มี secret และไม่ต้องมี: R2 เข้าถึงผ่าน binding, Firebase ID token ตรวจด้วย public key ของ Google
+# ช่องที่เว้นว่างไว้ต้องกรอกเองก่อน deploy (ดู worker/README.md)
+
+name = "govdocs-pdf-api"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+[vars]
+# Firebase project ของเว็บนี้ (ค่าเดียวกับ projectId ใน firebase-config.js และ .firebaserc)
+FIREBASE_PROJECT_ID = "project2-ff906"
+# Origin ของหน้าเว็บที่อนุญาตให้เรียก Worker คั่นด้วยจุลภาค (โดเมนเริ่มต้นของ Firebase Hosting ของโปรเจกต์นี้)
+# ถ้าเปิดเว็บจากที่อื่นด้วย ต้องเพิ่ม origin นั้นแล้ว deploy Worker ใหม่ — เว้นว่าง = ปฏิเสธทุกคำขอจากเบราว์เซอร์
+ALLOWED_ORIGINS = "https://project2-ff906.web.app,https://project2-ff906.firebaseapp.com"
+
+[[r2_buckets]]
+binding = "PDF_BUCKET"
+# R2 bucket (private, Standard, ปิด Public Access) — Worker เข้าถึงผ่าน binding นี้เท่านั้น ไม่ใช้ Access Key
+bucket_name = "government-documents"

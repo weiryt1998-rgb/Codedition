@@ -3,7 +3,8 @@
 /* =========================================================
    CONSTANTS
    ========================================================= */
-const MAX_FILE_BYTES = 700 * 1024; // ~700KB — keeps base64 doc under Firestore's 1MiB limit
+const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB — ต้องตรงกับ worker/src/index.js และ firestore.rules
+const PDF_MIME = "application/pdf";
 const PAGE_SIZE = 8;
 const STATUS_LABEL = { approved: "อนุมัติแล้ว", pending: "รอดำเนินการ", rejected: "ไม่อนุมัติ" };
 
@@ -17,13 +18,14 @@ let allCategories = [];
 let sortKey = "date";
 let sortDir = "desc";
 let currentPage = 1;
-let pendingFileData = null; // { name, size, dataUrl }
+let pendingFileData = null; // { file, name, size } — ตัวไฟล์ส่งไป R2 ตอนบันทึก
 let confirmCallback = null;
 let charts = {};
 let fileReadVersion = 0;
 let fileReading = false;
 let fileInvalid = false;
 let previewUrl = null;
+let previewRequest = 0;
 
 /* =========================================================
    THEME & APPEARANCE
@@ -461,6 +463,7 @@ function closeModal(id) {
   if (id === "docModalOverlay") { fileReadVersion++; fileReading = false; }
   if (id === "confirmModalOverlay") confirmCallback = null;
   if (id === "previewModalOverlay") {
+    previewRequest++; // ไฟล์ที่ยังโหลดไม่เสร็จจะไม่เปิดหน้าต่างขึ้นมาอีกหลังปิดไปแล้ว
     document.getElementById("previewFrame").removeAttribute("src");
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     previewUrl = null;
@@ -557,7 +560,7 @@ function attachFirestoreListeners() {
 }
 
 /* หมวดหมู่ที่ระบบต้องมีเสมอ สร้างให้อัตโนมัติถ้ายังไม่มีในฐานข้อมูล */
-const DEFAULT_CATEGORIES = ["คำสั่ง"];
+const DEFAULT_CATEGORIES = ["คำสั่ง", "บันทึกข้อความ", "คำร้อง"];
 /* ชื่อหมวดหมู่เดิม → ชื่อใหม่ เปลี่ยนชื่อใน doc เดิม (id ไม่เปลี่ยน เอกสารที่อ้างถึงจึงไม่หลุด) */
 const RENAMED_CATEGORIES = { "หนังสือคำสั่ง": "คำสั่ง" };
 let defaultCategoriesChecked = false;
@@ -637,10 +640,12 @@ function chartColors() {
   const cs = getComputedStyle(document.documentElement);
   const v = (name, fallback) => cs.getPropertyValue(name).trim() || fallback;
   const primary = v("--primary", dark ? "#5B93DD" : "#0B3D91");
+  const primaryRgb = v("--primary-rgb", dark ? "91, 147, 221" : "11, 61, 145");
   return {
     text: v("--text-muted", dark ? "#93A9C4" : "#5B7089"),
     grid: v("--border", dark ? "#223B59" : "#D5E3F4"),
-    fill: `rgba(${v("--primary-rgb", dark ? "91, 147, 221" : "11, 61, 145")}, ${dark ? 0.18 : 0.12})`,
+    fill: `rgba(${primaryRgb}, ${dark ? 0.18 : 0.12})`,
+    primaryRgb,
     tooltipBg: dark ? v("--surface-2", "#14243A") : v("--text", "#10233A"),
     tooltipText: dark ? v("--text", "#E8F1FB") : "#FFFFFF",
     palette: [
@@ -668,6 +673,294 @@ function chartTooltip(c) {
   };
 }
 
+/* =========================================================
+   3D CHARTS
+   Chart.js ไม่มีกราฟ 3 มิติในตัว จึงวาดหน้าตาเองตามตำแหน่งที่ Chart.js คำนวณไว้
+   แท่ง = กล่องมีด้านบน/ด้านข้าง, เส้น = พื้นที่ทึบมีความหนา, โดนัท = วงแหวนเอียงมีความหนา
+   hover, tooltip และแอนิเมชันยังเป็นของ Chart.js ทั้งหมด
+   ========================================================= */
+const TAU = Math.PI * 2;
+const DEPTH_SLOPE = 0.62; // ความลึกชี้ไปทางขวาบน: ขึ้น 0.62px ต่อการเลื่อนขวา 1px
+const DOUGHNUT_TILT = 0.56; // มองโดนัทจากมุมเฉียง: ความสูงเหลือ 56% ของความกว้าง
+
+let colorProbe;
+/* แปลงสีรูปแบบใดก็ได้ที่ canvas รู้จัก (hex, rgb, ชื่อสี) เป็น [r, g, b] */
+function toRgb(color) {
+  if (typeof color !== "string") return [128, 128, 128];
+  colorProbe = colorProbe || document.createElement("canvas").getContext("2d");
+  colorProbe.fillStyle = "#808080";
+  colorProbe.fillStyle = color;
+  const s = colorProbe.fillStyle;
+  if (s[0] === "#") return [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16));
+  return (s.match(/[\d.]+/g) || [128, 128, 128]).slice(0, 3).map(Number);
+}
+
+/* amount > 0 ผสมขาว, < 0 ผสมดำ (0–1) ใช้ทำด้านสว่าง/ด้านเงาของรูปทรง */
+function shade(color, amount, alpha = 1) {
+  const target = amount < 0 ? 0 : 255;
+  const [r, g, b] = toRgb(color).map((ch) => Math.round(ch + (target - ch) * Math.abs(amount)));
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function fillPolygon(ctx, points, fill) {
+  ctx.beginPath();
+  points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+
+/* เงานุ่ม ๆ รูปวงรีที่ตกบนพื้นใต้รูปทรง; hollow = สัดส่วนรูตรงกลางที่ไม่มีเงา (ใช้กับโดนัท) */
+function floorShadow(ctx, x, y, rx, ry, strength, hollow = 0) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(1, ry / rx);
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+  g.addColorStop(hollow, `rgba(6, 18, 38, ${hollow ? 0 : strength})`);
+  g.addColorStop(hollow ? (hollow + 1) / 2 : 0.35, `rgba(6, 18, 38, ${strength})`);
+  g.addColorStop(1, "rgba(6, 18, 38, 0)");
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(0, 0, rx, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+}
+
+function barDepth(width) { return Math.min(14, Math.max(6, width * 0.36)); }
+
+function drawBarFloor(chart, opts) {
+  const bar = chart.getDatasetMeta(0).data[0];
+  if (!bar || !chart.scales.y) return;
+  const { ctx, chartArea: a } = chart;
+  const dx = barDepth(bar.width), dy = dx * DEPTH_SLOPE;
+  const base = chart.scales.y.getPixelForValue(0);
+  ctx.save();
+  fillPolygon(ctx, [[a.left, base], [a.right, base], [a.right + dx, base - dy], [a.left + dx, base - dy]], opts.floor);
+  ctx.beginPath();
+  ctx.moveTo(a.left + dx, base - dy);
+  ctx.lineTo(a.right + dx, base - dy);
+  ctx.strokeStyle = opts.edge;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBars3d(chart, meta) {
+  const { ctx } = chart;
+  meta.data.forEach((el) => {
+    const { x, y, base, width } = el;
+    const top = Math.min(y, base), bottom = Math.max(y, base);
+    if (!(width > 0) || bottom - top < 0.5) return;
+    const color = el.options.backgroundColor;
+    const dx = barDepth(width), dy = dx * DEPTH_SLOPE;
+    const left = x - width / 2, right = x + width / 2;
+
+    floorShadow(ctx, x + dx / 2, bottom - dy / 2, width * 0.95, width * 0.3, 0.28);
+
+    const side = ctx.createLinearGradient(0, top, 0, bottom);
+    side.addColorStop(0, shade(color, -0.22));
+    side.addColorStop(1, shade(color, -0.45));
+    fillPolygon(ctx, [[right, top], [right + dx, top - dy], [right + dx, bottom - dy], [right, bottom]], side);
+    fillPolygon(ctx, [[left, top], [left + dx, top - dy], [right + dx, top - dy], [right, top]], shade(color, 0.38));
+
+    const front = ctx.createLinearGradient(left, 0, right, 0);
+    front.addColorStop(0, shade(color, 0.2));
+    front.addColorStop(0.5, shade(color, 0));
+    front.addColorStop(1, shade(color, -0.1));
+    ctx.fillStyle = front;
+    ctx.fillRect(left, top, width, bottom - top);
+    // สันขอบบนสว่าง ทำให้กล่องดูคม
+    ctx.fillStyle = "rgba(255, 255, 255, .45)";
+    ctx.fillRect(left, top, width, 1);
+  });
+}
+
+/* ไล่สีพื้นที่ใต้เส้น (หน้าตัดด้านหน้าของก้อน 3 มิติ) */
+function areaGradient(chart, rgb) {
+  const a = chart.chartArea;
+  if (!a) return `rgba(${rgb}, .15)`;
+  const g = chart.ctx.createLinearGradient(0, a.top, 0, a.bottom);
+  g.addColorStop(0, `rgba(${rgb}, .38)`);
+  g.addColorStop(1, `rgba(${rgb}, .04)`);
+  return g;
+}
+
+/* พื้นที่ใต้เส้น (Filler ของ Chart.js วาดไว้แล้ว) เป็นหน้าตัดด้านหน้า
+   ตรงนี้เติมผิวด้านบนเป็นริบบอน ด้านข้างปลายขวา และแสงเรืองใต้เส้น
+   ตัวเส้นให้ Chart.js วาดเองต่อจากนี้ เพราะมันคำนวณจุดควบคุมเส้นโค้งใหม่ทุกเฟรมระหว่างแอนิเมชัน */
+function drawLineDepth(chart, meta) {
+  const { ctx, chartArea: a } = chart;
+  const pts = meta.data.filter((p) => !p.skip);
+  if (!pts.length || !chart.scales.y) return;
+  meta.dataset.updateControlPoints(a); // ไม่ทำอะไรถ้าเฟรมนี้คำนวณไว้แล้ว
+  const line = meta.dataset.options;
+  const color = line.borderColor;
+  const dx = 10, dy = dx * DEPTH_SLOPE;
+  const base = Math.min(a.bottom, chart.scales.y.getPixelForValue(0));
+  // จุดควบคุมเส้นโค้งที่ Chart.js คำนวณไว้ ถ้าไม่มี (tension 0) ใช้ตัวจุดเอง
+  const cp = (p, name) => p[name] ?? p[name.slice(-1)];
+  const forward = (p, q, ox = 0, oy = 0) => ctx.bezierCurveTo(
+    cp(p, "cp2x") + ox, cp(p, "cp2y") + oy, cp(q, "cp1x") + ox, cp(q, "cp1y") + oy, q.x + ox, q.y + oy);
+  const backward = (q, p, ox, oy) => ctx.bezierCurveTo(
+    cp(q, "cp1x") + ox, cp(q, "cp1y") + oy, cp(p, "cp2x") + ox, cp(p, "cp2y") + oy, p.x + ox, p.y + oy);
+
+  // ผิวด้านบน: ช่วงที่เส้นลงหันเข้าหาผู้ดูจึงสว่างกว่า ช่วงที่ขึ้นจะเข้มกว่า
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i - 1], q = pts[i];
+    const rise = Math.max(-1, Math.min(1, Math.atan2(p.y - q.y, q.x - p.x) / (Math.PI / 3)));
+    const fill = shade(color, 0.42 - 0.32 * rise);
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    forward(p, q);
+    ctx.lineTo(q.x + dx, q.y - dy);
+    backward(q, p, dx, -dy);
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = fill;
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x + dx, pts[0].y - dy);
+  for (let i = 1; i < pts.length; i++) forward(pts[i - 1], pts[i], dx, -dy);
+  ctx.strokeStyle = shade(color, 0.65);
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  const last = pts[pts.length - 1];
+  const side = ctx.createLinearGradient(0, last.y, 0, base);
+  side.addColorStop(0, shade(color, -0.15, 0.45));
+  side.addColorStop(1, shade(color, -0.15, 0.06));
+  fillPolygon(ctx, [[last.x, last.y], [last.x + dx, last.y - dy], [last.x + dx, base - dy], [last.x, base]], side);
+
+  ctx.save();
+  ctx.shadowColor = shade(color, 0, 0.45);
+  ctx.shadowBlur = 12;
+  ctx.shadowOffsetY = 6;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) forward(pts[i - 1], pts[i]);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = line.borderWidth;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* จุดข้อมูลเป็นทรงกลมมันวาว วาดทับจุดแบนของ Chart.js ด้วยรัศมีเดียวกัน (รวมตอน hover) */
+function drawLineSpheres(chart, meta) {
+  const { ctx } = chart;
+  meta.data.filter((p) => !p.skip).forEach((p) => {
+    const r = p.options.radius;
+    if (!(r > 0)) return;
+    const tone = p.options.backgroundColor;
+    const g = ctx.createRadialGradient(p.x - r * 0.35, p.y - r * 0.4, r * 0.1, p.x, p.y, r);
+    g.addColorStop(0, shade(tone, 0.8));
+    g.addColorStop(0.45, shade(tone, 0.05));
+    g.addColorStop(1, shade(tone, -0.4));
+    ctx.save();
+    ctx.shadowColor = "rgba(6, 18, 38, .35)";
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetY = 3;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, TAU);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+/* โดนัทเอียง: วาดชิ้นส่วนเดิมของ Chart.js ผ่านการย่อแนวตั้ง แล้วซ้อนสำเนาที่เข้มกว่าลงด้านล่างเป็นความหนา
+   การชี้เมาส์/ตำแหน่ง tooltip ถูกแปลงพิกัดกลับให้ตรงกับรูปที่เอียง */
+function drawDoughnut3d(chart, meta) {
+  const { ctx, chartArea: a } = chart;
+  const arcs = meta.data.filter((el) => el.circumference > 0.0001);
+  if (!arcs.length || !(arcs[0].outerRadius > 0)) { chart.$tilt = null; return; }
+  const { x: cx, y: cy, outerRadius: R } = arcs[0];
+  const depth = Math.max(8, Math.min(18, R * 0.16));
+  const sx = Math.max(0.2, Math.min((a.width - 16) / (2 * R), (a.height - depth - 10) / (2 * R * DOUGHNUT_TILT)));
+  const t = chart.$tilt = { cx, cy, sx, sy: sx * DOUGHNUT_TILT, oy: -depth / 2 };
+  const tilt = (down = 0) => {
+    ctx.translate(cx, cy + t.oy + down);
+    ctx.scale(t.sx, t.sy);
+    ctx.translate(-cx, -cy);
+  };
+  // วาดชิ้นด้วยสีอื่นโดยไม่แตะ options จริงของ Chart.js
+  const paint = (el, fill) => {
+    const face = Object.create(el);
+    face.options = { ...el.options, backgroundColor: fill, borderWidth: 0 };
+    face.draw(ctx);
+  };
+
+  meta.data.forEach((el) => {
+    if (el.$tilted) return;
+    const proto = Object.getPrototypeOf(el);
+    const toScreen = (p) => {
+      const s = chart.$tilt;
+      return s ? { x: s.cx + (p.x - s.cx) * s.sx, y: s.cy + s.oy + (p.y - s.cy) * s.sy } : p;
+    };
+    el.inRange = (mx, my, useFinal) => {
+      const s = chart.$tilt;
+      return s
+        ? proto.inRange.call(el, s.cx + (mx - s.cx) / s.sx, s.cy + (my - s.cy - s.oy) / s.sy, useFinal)
+        : proto.inRange.call(el, mx, my, useFinal);
+    };
+    el.tooltipPosition = (useFinal) => toScreen(proto.tooltipPosition.call(el, useFinal));
+    el.getCenterPoint = (useFinal) => toScreen(proto.getCenterPoint.call(el, useFinal));
+    el.$tilted = true;
+  });
+
+  floorShadow(ctx, cx, cy + t.oy + depth + 4, R * t.sx * 1.06, R * t.sy * 1.06, 0.24, arcs[0].innerRadius / R);
+
+  // ผนังด้านข้าง: ชิ้นที่อยู่ด้านหลังวาดก่อน ชิ้นด้านหน้าวาดทีหลัง
+  const backToFront = [...arcs].sort((p, q) =>
+    Math.sin((p.startAngle + p.endAngle) / 2) - Math.sin((q.startAngle + q.endAngle) / 2));
+  backToFront.forEach((el) => {
+    const color = el.options.backgroundColor;
+    for (let k = Math.ceil(depth); k >= 1; k--) {
+      ctx.save();
+      tilt(k);
+      paint(el, shade(color, -0.2 - 0.25 * (k / depth)));
+      ctx.restore();
+    }
+  });
+
+  arcs.forEach((el) => {
+    const color = el.options.backgroundColor;
+    ctx.save();
+    tilt();
+    const top = ctx.createLinearGradient(cx, cy - R, cx, cy + R);
+    top.addColorStop(0, shade(color, 0.3));
+    top.addColorStop(1, shade(color, -0.06));
+    paint(el, top);
+    ctx.restore();
+  });
+}
+
+const chart3d = {
+  id: "chart3d",
+  beforeDatasetsDraw(chart, _args, opts) {
+    if (chart.config.type === "bar") drawBarFloor(chart, opts);
+  },
+  beforeDatasetDraw(chart, { meta }) {
+    const type = chart.config.type;
+    const draw = { bar: drawBars3d, line: drawLineDepth, doughnut: drawDoughnut3d }[type];
+    if (!draw) return;
+    chart.ctx.save();
+    draw(chart, meta);
+    chart.ctx.restore();
+    if (type !== "line") return false; // แท่งและโดนัทวาดเองทั้งหมด ไม่ให้ Chart.js วาดแบบ 2 มิติซ้ำ
+  },
+  afterDatasetDraw(chart, { meta }) {
+    if (chart.config.type !== "line") return;
+    chart.ctx.save();
+    drawLineSpheres(chart, meta);
+    chart.ctx.restore();
+  },
+};
+
 function renderCharts() {
   if (typeof Chart === "undefined") return;
   const c = chartColors();
@@ -686,13 +979,15 @@ function renderCharts() {
     datasets: [{
       data: Object.values(catCounts),
       backgroundColor: Object.keys(catCounts).map((_, i) => c.palette[i % c.palette.length]),
-      borderRadius: 8, borderSkipped: false, maxBarThickness: 32, hoverOffset: 4,
+      maxBarThickness: 52,
     }],
   }, {
-    plugins: { legend: { display: false }, tooltip: chartTooltip(c) },
+    // เว้นขอบบน/ขวาให้ด้านบนและด้านข้างของกล่อง 3 มิติ
+    layout: { padding: { top: 10, right: 16 } },
+    plugins: { legend: { display: false }, tooltip: chartTooltip(c), chart3d: { floor: c.fill, edge: c.grid } },
     scales: {
       x: { grid: { display: false }, border: { display: false } },
-      y: { grid: { color: c.grid }, border: { display: false }, beginAtZero: true, ticks: { precision: 0 } },
+      y: { grid: { color: c.grid }, border: { display: false }, beginAtZero: true, grace: "12%", ticks: { precision: 0 } },
     },
   });
 
@@ -704,13 +999,14 @@ function renderCharts() {
     datasets: [{
       data: [statusCounts.approved, statusCounts.pending, statusCounts.rejected],
       backgroundColor: [c.palette[2], c.palette[5], c.palette[3]],
-      borderWidth: 0, spacing: 3, hoverOffset: 8,
+      borderWidth: 0, spacing: 2, hoverOffset: 10,
     }],
   }, {
-    cutout: "72%",
+    // วงหนาขึ้นให้เห็นความเป็นก้อน 3 มิติ; คำอธิบายไว้ด้านขวา โดนัทเอียงจึงกว้างได้เต็มที่
+    cutout: "58%",
     plugins: {
       tooltip: chartTooltip(c),
-      legend: { position: "bottom", labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: "circle", padding: 16 } },
+      legend: { position: "right", labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: "circle", padding: 16 } },
     },
   });
 
@@ -730,22 +1026,23 @@ function renderCharts() {
     datasets: [{
       data: trendData,
       borderColor: c.palette[0],
-      backgroundColor: c.fill,
+      backgroundColor: (context) => areaGradient(context.chart, c.primaryRgb),
       borderWidth: 2.5,
       fill: true,
       tension: 0.4,
-      pointRadius: 4,
-      pointHoverRadius: 7,
+      pointRadius: 5,
+      pointHoverRadius: 8,
+      pointHitRadius: 12,
+      pointBorderWidth: 0,
       pointBackgroundColor: c.palette[0],
-      pointBorderColor: "rgba(255,255,255,.85)",
-      pointBorderWidth: 2,
     }],
   }, {
+    layout: { padding: { top: 10, right: 14 } },
     plugins: { legend: { display: false }, tooltip: chartTooltip(c) },
     interaction: { mode: "index", intersect: false },
     scales: {
       x: { grid: { display: false }, border: { display: false } },
-      y: { grid: { color: c.grid }, border: { display: false }, beginAtZero: true, ticks: { precision: 0 } },
+      y: { grid: { color: c.grid }, border: { display: false }, beginAtZero: true, grace: "12%", ticks: { precision: 0 } },
     },
   });
 }
@@ -754,7 +1051,10 @@ function paintChart(canvasId, type, data, extraOptions) {
   const ctx = document.getElementById(canvasId);
   if (!ctx) return;
   if (charts[canvasId]) charts[canvasId].destroy();
-  charts[canvasId] = new Chart(ctx, { type, data, options: { responsive: true, maintainAspectRatio: false, ...extraOptions } });
+  charts[canvasId] = new Chart(ctx, {
+    type, data, plugins: [chart3d],
+    options: { responsive: true, maintainAspectRatio: false, ...extraOptions },
+  });
 }
 
 function renderRecentTable() {
@@ -853,7 +1153,109 @@ document.getElementById("categoryForm").addEventListener("submit", async (e) => 
 });
 
 /* =========================================================
-   DOCUMENT FILE HANDLING (PDF -> base64, stored in Firestore)
+   PDF STORAGE API (Cloudflare Worker → R2)
+   เอกสารใหม่: ไฟล์ PDF อยู่ใน R2, Firestore เก็บแค่ storageKey และรายละเอียด
+   ทุกคำขอแนบ Firebase ID token ให้ Worker ตรวจก่อนเสมอ ไม่มี key/secret ของ R2 ในเว็บ
+   ========================================================= */
+class PdfApiError extends Error {
+  constructor(message, code) {
+    super(message);
+    this.code = code;
+  }
+}
+const PDF_API_MESSAGES = {
+  "not-configured": "ยังไม่ได้ตั้งค่าระบบจัดเก็บไฟล์ PDF (PDF_API_URL) กรุณาติดต่อผู้ดูแลระบบ",
+  network: "เชื่อมต่อระบบจัดเก็บไฟล์ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่",
+  unauthenticated: "ยืนยันตัวตนไม่สำเร็จ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง",
+  forbidden: "ไม่มีสิทธิ์ดำเนินการกับไฟล์นี้",
+  "file-too-large": "ไฟล์มีขนาดเกิน 20 MB",
+  "not-pdf": "ไฟล์นี้ไม่ใช่ PDF",
+  "empty-file": "ไฟล์ว่างเปล่า",
+  "document-not-found": "ไม่พบเอกสารนี้ในระบบ",
+  "file-not-found": "ไม่พบไฟล์ PDF ของเอกสารนี้ในที่จัดเก็บ",
+  "no-stored-file": "เอกสารนี้ไม่มีไฟล์ในที่จัดเก็บ",
+  "not-in-trash": "ต้องย้ายเอกสารไปถังขยะก่อนลบถาวร",
+  "file-in-use": "ไฟล์นี้ยังถูกใช้งานโดยเอกสารอื่น",
+  "storage-error": "ที่จัดเก็บไฟล์ขัดข้อง กรุณาลองใหม่ภายหลัง",
+  "firestore-unavailable": "ระบบจัดเก็บไฟล์ติดต่อฐานข้อมูลไม่ได้ กรุณาลองใหม่ภายหลัง",
+};
+function pdfApiError(status, code) {
+  const key = status === 401 ? "unauthenticated" : status === 403 ? "forbidden" : code;
+  return new PdfApiError(PDF_API_MESSAGES[key] || `ระบบจัดเก็บไฟล์ขัดข้อง (รหัส ${status}) กรุณาลองใหม่`, key || `http-${status}`);
+}
+/* ข้อความภาษาไทยสำหรับข้อผิดพลาดทั้งจากระบบไฟล์และจาก Firestore */
+function friendlyError(err) {
+  if (err instanceof PdfApiError) return err.message;
+  if (err?.code === "permission-denied") return "ไม่มีสิทธิ์บันทึกหรือแก้ไขข้อมูลเอกสาร";
+  if (err?.code === "unavailable") return "เชื่อมต่อฐานข้อมูลไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่";
+  return err?.message || String(err);
+}
+
+function pdfApiUrl(path) {
+  const base = typeof PDF_API_URL === "string" ? PDF_API_URL.trim().replace(/\/+$/, "") : "";
+  if (!base) throw new PdfApiError(PDF_API_MESSAGES["not-configured"], "not-configured");
+  return base + path;
+}
+async function currentIdToken() {
+  const user = (await databaseReady) && typeof auth !== "undefined" && auth ? auth.currentUser : null;
+  if (!user) throw new PdfApiError(PDF_API_MESSAGES.unauthenticated, "unauthenticated");
+  try { return await user.getIdToken(); }
+  catch { throw new PdfApiError(PDF_API_MESSAGES.network, "network"); }
+}
+async function pdfApiFetch(path, init = {}) {
+  const url = pdfApiUrl(path);
+  const token = await currentIdToken();
+  let res;
+  try { res = await fetch(url, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` } }); }
+  catch { throw new PdfApiError(PDF_API_MESSAGES.network, "network"); }
+  if (!res.ok) throw pdfApiError(res.status, (await res.json().catch(() => null))?.error);
+  return res;
+}
+const documentFilePath = (docId) => `/api/documents/${encodeURIComponent(docId)}/file`;
+
+/* ส่งไฟล์ไป R2 ผ่าน Worker (ใช้ XHR เพราะ fetch รายงานความคืบหน้าการอัปโหลดไม่ได้) → { storageKey, size } */
+async function uploadPdf(file, onProgress) {
+  const url = pdfApiUrl("/api/files");
+  const token = await currentIdToken();
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.setRequestHeader("Content-Type", PDF_MIME);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      let body = null;
+      try { body = JSON.parse(xhr.responseText); } catch { /* ตอบกลับไม่ใช่ JSON */ }
+      if (xhr.status === 201 && typeof body?.storageKey === "string") resolve(body);
+      else reject(pdfApiError(xhr.status, body?.error));
+    };
+    xhr.onerror = () => reject(new PdfApiError(PDF_API_MESSAGES.network, "network"));
+    xhr.send(file);
+  });
+}
+async function fetchStoredPdf(doc) {
+  const res = await pdfApiFetch(documentFilePath(doc.id));
+  let blob;
+  try { blob = await res.blob(); }
+  catch { throw new PdfApiError(PDF_API_MESSAGES.network, "network"); }
+  return blob.type === PDF_MIME ? blob : new Blob([blob], { type: PDF_MIME });
+}
+/* ลบไฟล์ของเอกสารในถังขยะ: Worker อ่าน storageKey จาก Firestore เอง เว็บส่งแค่ id เอกสาร */
+function deleteStoredPdf(docId) {
+  return pdfApiFetch(documentFilePath(docId), { method: "DELETE" });
+}
+/* ลบไฟล์ที่ไม่มีเอกสารใดอ้างถึงแล้ว (Worker ตรวจซ้ำก่อนลบ) */
+function discardStoredPdf(storageKey) {
+  return pdfApiFetch(`/api/files/${storageKey.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" });
+}
+
+function formatFileSize(bytes) {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1).replace(/\.0$/, "")} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+/* =========================================================
+   DOCUMENT FILE HANDLING (เลือกไฟล์ PDF → ส่งไป R2 ตอนบันทึก)
    ========================================================= */
 const fileDrop = document.getElementById("fileDrop");
 const fileInput = document.getElementById("docFile");
@@ -881,16 +1283,16 @@ async function handleFile(file) {
   fileInvalid = true;
   saveBtn.disabled = false;
   fileDrop.classList.remove("has-file");
-  fileDropText.textContent = "เลือกไฟล์ PDF ใหม่ (สูงสุด 700KB)";
+  fileDropText.textContent = `เลือกไฟล์ PDF ใหม่ (สูงสุด ${formatFileSize(MAX_FILE_BYTES)})`;
   fileInput.value = "";
   errEl.hidden = true;
-  if (file.type !== "application/pdf" && (file.type || !/\.pdf$/i.test(file.name))) {
+  if (file.type !== PDF_MIME && (file.type || !/\.pdf$/i.test(file.name))) {
     errEl.textContent = "รองรับเฉพาะไฟล์ PDF เท่านั้น";
     errEl.hidden = false;
     return;
   }
   if (file.size > MAX_FILE_BYTES) {
-    errEl.textContent = `ไฟล์ใหญ่เกินไป (${(file.size / 1024).toFixed(0)}KB) กรุณาใช้ไฟล์ไม่เกิน ${(MAX_FILE_BYTES / 1024).toFixed(0)}KB`;
+    errEl.textContent = `ไฟล์นี้มีขนาด ${formatFileSize(file.size)} เกินขนาดสูงสุด ${formatFileSize(MAX_FILE_BYTES)} กรุณาลดขนาดไฟล์ก่อนแนบ`;
     errEl.hidden = false;
     return;
   }
@@ -898,15 +1300,14 @@ async function handleFile(file) {
   saveBtn.disabled = true;
   fileDropText.textContent = `กำลังอ่านไฟล์ ${file.name}…`;
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    // อ่านแค่ 5 ไบต์แรกเพื่อยืนยันว่าเป็น PDF จริง ไม่ต้องโหลดทั้งไฟล์เข้าหน่วยความจำ
+    const head = new Uint8Array(await file.slice(0, 5).arrayBuffer());
     if (version !== fileReadVersion) return;
-    if (String.fromCharCode(...bytes.subarray(0, 5)) !== "%PDF-") throw new Error("ไฟล์นี้ไม่ใช่ PDF ที่ถูกต้อง");
-    let binary = "";
-    for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
-    pendingFileData = { name: file.name, size: bytes.length, dataUrl: "data:application/pdf;base64," + btoa(binary) };
+    if (String.fromCharCode(...head) !== "%PDF-") throw new Error("ไฟล์นี้ไม่ใช่ PDF ที่ถูกต้อง");
+    pendingFileData = { file, name: file.name, size: file.size };
     fileInvalid = false;
     fileDrop.classList.add("has-file");
-    fileDropText.textContent = `${file.name} (${(file.size / 1024).toFixed(0)}KB) — คลิกเพื่อเปลี่ยนไฟล์`;
+    fileDropText.textContent = `${file.name} (${formatFileSize(file.size)}) — คลิกเพื่อเปลี่ยนไฟล์`;
   } catch (err) {
     if (version !== fileReadVersion) return;
     errEl.textContent = "อ่านไฟล์ไม่สำเร็จ: " + err.message;
@@ -932,7 +1333,7 @@ function openDocModal(doc = null) {
   fileInput.value = "";
   pendingFileData = null;
   fileDrop.classList.remove("has-file");
-  fileDropText.textContent = "ลากไฟล์ PDF มาวาง หรือคลิกเพื่อเลือกไฟล์ (สูงสุด " + (MAX_FILE_BYTES / 1024).toFixed(0) + "KB)";
+  fileDropText.textContent = `ลากไฟล์ PDF มาวาง หรือคลิกเพื่อเลือกไฟล์ (สูงสุด ${formatFileSize(MAX_FILE_BYTES)})`;
 
   if (doc) {
     document.getElementById("docModalTitle").textContent = "แก้ไขเอกสาร";
@@ -984,34 +1385,61 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
     errEl.hidden = false;
     return;
   }
-  if (pendingFileData) {
-    payload.fileName = pendingFileData.name;
-    payload.fileSize = pendingFileData.size;
-    payload.fileData = pendingFileData.dataUrl;
-  } else if (!id) {
+  const upload = pendingFileData;
+  if (!upload && !id) {
     errEl.textContent = "กรุณาแนบไฟล์ PDF";
     errEl.hidden = false;
     return;
   }
+  const existing = id ? findDoc(id) : null;
 
   const saveBtn = document.getElementById("docSaveBtn");
   setModalBusy("docModalOverlay", true);
   saveBtn.textContent = "กำลังบันทึก...";
+  let stored = null;
+  let saved = false;
   try {
+    // 1) ส่งไฟล์ไป R2 ก่อน ถ้าไม่สำเร็จจะไม่มีการเขียน Firestore เลย
+    if (upload) {
+      saveBtn.textContent = "กำลังอัปโหลด 0%";
+      stored = await uploadPdf(upload.file, (ratio) => {
+        const percent = Math.round(ratio * 100);
+        saveBtn.textContent = `กำลังอัปโหลด ${percent}%`;
+        fileDropText.textContent = `กำลังอัปโหลด ${upload.name} — ${percent}%`;
+      });
+      payload.fileName = upload.name;
+      payload.fileSize = stored.size;
+      payload.mimeType = PDF_MIME;
+      payload.storageKey = stored.storageKey;
+      // เอกสารแบบเดิมที่ผู้ใช้เลือกแนบไฟล์ใหม่: เอา base64 เดิมออก ไฟล์ใหม่อยู่ใน R2 แทน
+      if (existing && "fileData" in existing) payload.fileData = firebase.firestore.FieldValue.delete();
+      saveBtn.textContent = "กำลังบันทึก...";
+    }
+    // 2) บันทึกรายละเอียดลง Firestore
     if (id) {
       await db.collection("documents").doc(id).update(payload);
-      showToast("แก้ไขเอกสารสำเร็จ", "success");
     } else {
       payload.createdAt = Date.now();
       payload.createdAtMs = Date.now();
+      payload.createdBy = auth.currentUser.uid;
       await db.collection("documents").add(payload);
-      showToast("เพิ่มเอกสารสำเร็จ", "success");
+    }
+    saved = true;
+    showToast(id ? "แก้ไขเอกสารสำเร็จ" : "เพิ่มเอกสารสำเร็จ", "success");
+    // ไฟล์เดิมใน R2 ถูกแทนที่แล้ว ลบทิ้ง (ถ้าไม่สำเร็จ เอกสารยังถูกต้อง แค่มีไฟล์เก่าค้าง)
+    if (stored && existing?.storageKey && existing.storageKey !== stored.storageKey) {
+      discardStoredPdf(existing.storageKey).catch((err) => console.warn("ลบไฟล์ PDF เดิมใน R2 ไม่สำเร็จ:", existing.storageKey, err));
     }
     setModalBusy("docModalOverlay", false);
     closeModal("docModalOverlay");
   } catch (err) {
-    errEl.textContent = "บันทึกไม่สำเร็จ: " + err.message;
+    // อัปโหลดสำเร็จแต่บันทึก Firestore ไม่สำเร็จ: ลบไฟล์ที่เพิ่งอัปโหลด ไม่ให้ค้างใน R2
+    if (stored && !saved) {
+      discardStoredPdf(stored.storageKey).catch((e) => console.warn("ลบไฟล์ที่อัปโหลดค้างไม่สำเร็จ:", stored.storageKey, e));
+    }
+    errEl.textContent = (upload && !stored ? "อัปโหลดไฟล์ไม่สำเร็จ: " : "บันทึกข้อมูลไม่สำเร็จ: ") + friendlyError(err);
     errEl.hidden = false;
+    if (upload && !saved) fileDropText.textContent = `${upload.name} (${formatFileSize(upload.size)}) — กดบันทึกเพื่อลองใหม่`;
   } finally {
     setModalBusy("docModalOverlay", false);
     saveBtn.textContent = "บันทึกเอกสาร";
@@ -1033,15 +1461,31 @@ function restoreDoc(id) {
 }
 function permanentlyDeleteDoc(id) {
   askConfirm("ลบเอกสารนี้ถาวร? ไม่สามารถกู้คืนได้", async () => {
+    const hasStoredFile = Boolean(findDoc(id)?.storageKey);
+    // 1) ลบไฟล์ใน R2 ก่อน ถ้าไม่สำเร็จ เอกสารยังอยู่ในถังขยะให้ลองใหม่ได้ (ไม่มีไฟล์กำพร้า)
+    if (hasStoredFile) {
+      try { await deleteStoredPdf(id); }
+      catch (err) {
+        showToast("ลบไฟล์ PDF ไม่สำเร็จ เอกสารยังอยู่ในถังขยะ: " + friendlyError(err), "error");
+        return;
+      }
+    }
+    // 2) ลบข้อมูลใน Firestore (ถ้าพลาด กดลบถาวรซ้ำได้ การลบไฟล์ที่ไม่มีแล้วถือว่าสำเร็จ)
     try {
       await db.collection("documents").doc(id).delete();
       showToast("ลบเอกสารถาวรแล้ว", "success");
-    } catch (err) { showToast(err.message, "error"); }
+    } catch (err) {
+      showToast((hasStoredFile ? "ลบไฟล์แล้ว แต่ลบข้อมูลเอกสารไม่สำเร็จ กรุณากดลบถาวรอีกครั้ง: " : "") + friendlyError(err), "error");
+    }
   });
 }
 
-function downloadDoc(doc) {
-  const blob = attachmentBlob(doc);
+/* ไฟล์ของเอกสาร: แบบใหม่ (มี storageKey) โหลดจาก R2 ผ่าน Worker
+   แบบเดิม (fileData base64 ใน Firestore) ใช้วิธีเดิม และทำงานทันทีไม่ต้องรอเครือข่าย */
+async function downloadDoc(doc) {
+  let blob;
+  try { blob = doc?.storageKey ? await fetchStoredPdf(doc) : attachmentBlob(doc); }
+  catch (err) { showToast("ดาวน์โหลดไม่สำเร็จ: " + friendlyError(err), "error"); return; }
   if (!blob) return;
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1052,9 +1496,12 @@ function downloadDoc(doc) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-function previewDoc(doc) {
-  const blob = attachmentBlob(doc);
-  if (!blob) return;
+async function previewDoc(doc) {
+  const request = ++previewRequest;
+  let blob;
+  try { blob = doc?.storageKey ? await fetchStoredPdf(doc) : attachmentBlob(doc); }
+  catch (err) { showToast("เปิดเอกสารไม่สำเร็จ: " + friendlyError(err), "error"); return; }
+  if (!blob || request !== previewRequest) return;
   // A selection in the host page can tint the entire embedded PDF viewer blue.
   // Clear only the host selection; the PDF document keeps its own text selection.
   window.getSelection()?.removeAllRanges();
@@ -1158,7 +1605,7 @@ function renderDocsTable() {
       <td>${escapeHtml(categoryName(d.category) || "-")}</td>
       <td>${escapeHtml(d.agency || "-")}</td>
       <td class="mono">${formatDate(d.date)}</td>
-      <td class="mono">${d.fileSize ? (d.fileSize / 1024).toFixed(0) + " KB" : "-"}</td>
+      <td class="mono">${d.fileSize ? formatFileSize(d.fileSize) : "-"}</td>
       <td>${statusStamp(d.status)}</td>
       <td class="col-actions">
         <div class="row-actions">
@@ -1245,6 +1692,7 @@ function createdAtMillis(doc) {
   if (Number.isFinite(value?.seconds)) return value.seconds * 1000;
   return 0;
 }
+/* เอกสารแบบเดิมเท่านั้น: PDF เก็บเป็น base64 ในช่อง fileData ของ Firestore (ไม่มีการเขียนแบบนี้อีกแล้ว) */
 function attachmentBlob(doc) {
   try {
     if (!doc?.fileData || !/^data:application\/pdf;base64,/i.test(doc.fileData)) throw new Error("ไม่พบไฟล์แนบ PDF ที่ถูกต้อง");

@@ -1,11 +1,23 @@
 // Test backend. In-memory only, so every reload starts from the same seed data.
+// The PDF Worker is faked by the test server on this same origin (see browser.test.cjs).
+const PDF_API_URL = location.origin;
 const auth = {
   currentUser: null,
   async signInAnonymously() {
-    this.currentUser = { uid: 'browser-test' };
+    this.currentUser = { uid: 'browser-test', getIdToken: async () => 'browser-test-token' };
     return { user: this.currentUser };
   },
 };
+const fixtureFieldDelete = { __fieldDelete: true };
+const firebase = { firestore: { FieldValue: { delete: () => fixtureFieldDelete } } };
+// Tells the fake Worker which documents point at which R2 key, as Firestore would for the real one.
+function syncFixtureFile(record, removed = false) {
+  if (!removed && !record.storageKey) return Promise.resolve();
+  return fetch('/__fixture/documents', {
+    method: 'POST',
+    body: JSON.stringify({ id: record.id, storageKey: record.storageKey, fileName: record.fileName, deleted: record.deleted, removed }),
+  });
+}
 const fixturePdf = (() => {
   let pdf = '%PDF-1.4\n';
   const objects = [
@@ -55,7 +67,9 @@ const db = {
       },
       async add(payload) {
         await new Promise((resolve) => setTimeout(resolve, 30));
-        fixtureStore[name].push({ ...payload, id: `added-${++fixtureId}` });
+        const record = { ...payload, id: `added-${++fixtureId}` };
+        fixtureStore[name].push(record);
+        await syncFixtureFile(record);
         emitFixture();
       },
       doc(id) {
@@ -64,12 +78,18 @@ const db = {
             await new Promise((resolve) => setTimeout(resolve, 30));
             const record = fixtureStore[name].find((d) => d.id === id);
             if (!record) throw new Error('Missing test record');
-            Object.assign(record, payload);
+            for (const [key, value] of Object.entries(payload)) {
+              if (value === fixtureFieldDelete) delete record[key];
+              else record[key] = value;
+            }
+            await syncFixtureFile(record);
             emitFixture();
           },
           async delete() {
             await new Promise((resolve) => setTimeout(resolve, 30));
+            const record = fixtureStore[name].find((d) => d.id === id);
             fixtureStore[name] = fixtureStore[name].filter((d) => d.id !== id);
+            if (record?.storageKey) await syncFixtureFile(record, true);
             emitFixture();
           },
         };

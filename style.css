@@ -435,16 +435,20 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 .view-head-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 
 /* =========================== Hero =========================== */
+/* เนื้อหาทั้งหมดอยู่กึ่งกลางแบนเนอร์ ภาพวงกลมอยู่ซ้ายและลายกนกอยู่ขวาเป็นเครื่องประดับคู่กัน
+   padding ด้านข้างเว้นที่ให้ภาพวงกลม (ซ้าย 34 + กว้าง 170 + ช่องว่าง) และเท่ากันสองข้างเพื่อให้เนื้อหาอยู่กลางจริง */
 .hero {
   position: relative; overflow: hidden;
-  display: flex; align-items: center; justify-content: space-between; gap: 24px;
-  border-radius: var(--radius-lg); padding: 30px 34px; margin-bottom: 22px;
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  border-radius: var(--radius-lg); padding: 34px 220px 36px; margin-bottom: 22px;
   background: var(--grad-primary); color: #EAF1FC;
   box-shadow: var(--shadow);
 }
 .hero::before {
   content: ""; position: absolute; inset: 0;
-  background: radial-gradient(70% 120% at 88% 10%, rgba(201, 162, 39, .22), transparent 60%);
+  background:
+    radial-gradient(26% 70% at 10% 50%, rgba(201, 162, 39, .14), transparent 70%),
+    radial-gradient(70% 120% at 88% 10%, rgba(201, 162, 39, .22), transparent 60%);
 }
 .hero::after {
   content: ""; position: absolute; inset: 0; opacity: .5;
@@ -452,26 +456,34 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
   background-size: 46px 46px;
   mask-image: radial-gradient(90% 90% at 20% 30%, #000, transparent 75%);
 }
-.hero-copy { position: relative; z-index: 1; max-width: 560px; }
+.hero-copy {
+  position: relative; z-index: 1; max-width: 640px;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+}
 .pill {
   display: inline-block; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; font-weight: 600;
   padding: 5px 12px; border-radius: 999px; color: var(--accent);
   background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .14);
 }
-.hero-copy h2 { font-size: 27px; font-weight: 700; margin: 14px 0 8px; line-height: 1.3; }
-.hero-title { display: flex; flex-direction: column; gap: 2px; text-wrap: balance; }
+.hero-title {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; text-wrap: balance;
+  font-size: 27px; font-weight: 700; margin: 14px 0 10px; line-height: 1.3;
+}
 .hero-title-main { font-size: 25px; letter-spacing: -.01em; }
 .hero-title-org {
   font-size: 20px; font-weight: 600; white-space: nowrap;
   color: var(--accent); text-shadow: 0 1px 12px rgba(201, 162, 39, .28);
 }
-.hero-copy p { color: rgba(233, 240, 250, .72); font-size: 14.5px; line-height: 1.7; max-width: 46ch; }
-.hero-actions { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+.hero-copy p { color: rgba(233, 240, 250, .72); font-size: 14.5px; line-height: 1.7; }
+.hero-actions { display: flex; justify-content: center; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
 .hero-actions .btn-primary { background: var(--grad-gold); color: #241A05; box-shadow: 0 12px 26px -14px rgba(201, 162, 39, .9); }
 .hero-actions .btn-ghost { background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .18); color: #fff; }
 .hero-actions .btn-ghost:hover { background: rgba(255, 255, 255, .16); color: #fff; }
-.hero-art { position: relative; z-index: 1; color: var(--accent); opacity: .85; flex-shrink: 0; }
-.hero-art svg { width: 190px; height: 190px; animation: spin 60s linear infinite; }
+.hero-art {
+  position: absolute; z-index: 1; left: 34px; top: 50%; transform: translateY(-50%);
+  color: var(--accent); opacity: .85;
+}
+.hero-art svg { display: block; width: 170px; height: 170px; animation: spin 60s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* =========================== Stat cards =========================== */
@@ -523,7 +535,8 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
   padding: 20px 22px 22px; box-shadow: var(--shadow-sm); margin-bottom: 22px;
 }
 .panel-flush { padding: 8px 10px 12px; }
-.chart-grid .panel { margin-bottom: 0; }
+/* min-width: 0 ให้คอลัมน์หดตามจอได้ ไม่ถูกความกว้าง px ที่ Chart.js ตั้งให้ canvas ค้ำไว้ */
+.chart-grid .panel { margin-bottom: 0; min-width: 0; }
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .panel-flush .panel-head { padding: 12px 12px 0; }
 .panel-title h3 { font-size: 16px; font-weight: 700; }
@@ -532,8 +545,10 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
   font-size: 11px; font-weight: 600; padding: 5px 11px; border-radius: 999px;
   background: var(--primary-100); color: var(--primary);
 }
-.panel canvas { display: block; width: 100% !important; height: 220px !important; }
-.panel-wide canvas { height: 150px !important; }
+/* Chart.js วัดขนาดจากกล่องที่ครอบ canvas จึงกำหนดความสูงที่กล่อง
+   (ถ้าบังคับที่ canvas ตรง ๆ Chart.js จะวาดสูงกว่าที่แสดงจริง ภาพจะถูกบีบแนวตั้ง) */
+.chart-box { position: relative; height: 220px; }
+.panel-wide .chart-box { height: 190px; }
 
 /* Thai kanok accents stay at the edges and beside headings, away from chart data. */
 #view-dashboard { --kanok-pattern: url("assets/kanok.svg"); }
@@ -847,7 +862,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 
 /* =========================== Responsive =========================== */
 @media (max-width: 1180px) {
-  .hero-art svg { width: 140px; height: 140px; }
+  .hero { padding-inline: 164px; }
+  .hero-art { left: 24px; }
+  .hero-art svg { width: 124px; height: 124px; }
   .search-wrap { max-width: 320px; }
 }
 @media (max-width: 980px) {
@@ -862,8 +879,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .topbar-title { display: none; }
   .scrim.is-visible { display: block; position: fixed; inset: 0; background: rgba(4, 10, 20, .55); backdrop-filter: blur(2px); z-index: 39; animation: fadeIn .2s var(--ease); }
   .search-wrap { max-width: none; }
-  .hero { flex-direction: column; align-items: flex-start; padding: 26px; }
-  .hero-art { align-self: center; }
+  /* จอแคบ: ย้ายภาพวงกลมขึ้นไปเป็นตราเล็ก ๆ เหนือหัวเรื่อง แทนการกินที่ด้านข้าง */
+  .hero { flex-direction: column; padding: 28px 26px; }
+  .hero-art { position: static; transform: none; order: -1; }
+  .hero-art svg { width: 92px; height: 92px; }
 }
 @media (max-width: 640px) {
   .modal-overlay { padding: 10px; }
@@ -875,7 +894,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .content { padding: 18px 14px 56px; }
   .topbar { padding: 12px 14px; gap: 10px; }
   .search-kbd, .hide-sm, .hero-art { display: none; }
-  .hero-copy h2 { font-size: 22px; }
+  .hero-title { font-size: 22px; }
   .hero-title-main { font-size: 20px; }
   .hero-title-org { font-size: 16.5px; }
   .view-head h2 { font-size: 21px; }

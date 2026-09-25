@@ -3,9 +3,14 @@ rules_version = '2';
 // Security rules for the government document system (ระบบจัดเก็บเอกสารราชการ).
 // The app signs every visitor in anonymously and relies entirely on these rules
 // to keep the "documents" and "categories" collections safe — none of the
-// client-side checks in script.js (PDF magic bytes, 700KB limit, required
-// fields) are enforced unless mirrored here, since anyone can call the
-// Firestore REST/SDK API directly with the public web config.
+// client-side checks in script.js (required fields, attachment format) are
+// enforced unless mirrored here, since anyone can call the Firestore REST/SDK
+// API directly with the public web config.
+//
+// PDF files: new documents keep the file in Cloudflare R2 (uploaded through
+// the Worker in worker/) and store only `storageKey` here. Older documents
+// still carry the PDF as base64 in `fileData`; they stay readable/editable,
+// but no write may add or change base64 anymore.
 //
 // This file has no effect until you deploy it:
 //   firebase deploy --only firestore:rules
@@ -25,11 +30,34 @@ service cloud.firestore {
         && value.size() <= 960000;
     }
 
+    // Key the Worker generates for every upload: documents/<year>/<UUID>.pdf
+    function isStorageKey(value) {
+      return value is string
+        && value.matches('^documents/[0-9]{4}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.]pdf$');
+    }
+
+    // Exactly one attachment kind: an R2 file (never mixed with base64), or a
+    // legacy base64 PDF from before the move to R2.
+    function validAttachment(data) {
+      return (
+          'storageKey' in data
+          && isStorageKey(data.storageKey)
+          && !('fileData' in data)
+          && data.mimeType == 'application/pdf'
+          && data.fileSize is number && data.fileSize > 0 && data.fileSize <= 20971520 // 20 * 1024 * 1024
+        ) || (
+          !('storageKey' in data)
+          && isPdfDataUrl(data.fileData)
+          && data.fileSize is number && data.fileSize > 0 && data.fileSize <= 716800 // 700 * 1024
+        );
+    }
+
     function validDocument(data) {
       return data.keys().hasOnly([
           'title', 'docNumber', 'date', 'agency', 'category', 'status',
           'description', 'deleted', 'deletedAt', 'createdAt', 'createdAtMs',
-          'updatedAt', 'fileName', 'fileSize', 'fileData'
+          'updatedAt', 'fileName', 'fileSize', 'fileData',
+          'storageKey', 'mimeType', 'createdBy'
         ])
         && data.title is string && data.title.size() > 0 && data.title.size() <= 300
         && data.docNumber is string && data.docNumber.size() > 0 && data.docNumber.size() <= 100
@@ -40,23 +68,35 @@ service cloud.firestore {
         && data.description is string && data.description.size() <= 5000
         && data.deleted is bool
         && data.fileName is string && data.fileName.size() <= 260
-        && data.fileSize is number && data.fileSize > 0 && data.fileSize <= 716800 // 700 * 1024
-        && isPdfDataUrl(data.fileData);
+        && validAttachment(data);
     }
 
     match /documents/{docId} {
       allow read: if signedIn();
 
+      // New documents always point at R2; base64 PDFs can no longer be created.
+      // createdBy must be the caller's own uid, never a value the client picked.
       allow create: if signedIn()
         && validDocument(request.resource.data)
-        && request.resource.data.deleted == false;
+        && request.resource.data.deleted == false
+        && !('fileData' in request.resource.data)
+        && request.resource.data.createdBy == request.auth.uid;
 
       // A full add/edit resends every field (validated above). Soft-delete
       // and restore only ever touch deleted/deletedAt, so they're allowed
       // through a narrower check instead of the full schema.
+      // Legacy base64 may only be kept untouched or removed (when the user
+      // attaches a new file to R2), and createdBy never changes.
       allow update: if signedIn()
         && (
-          validDocument(request.resource.data)
+          (
+            validDocument(request.resource.data)
+            && (
+              !('fileData' in request.resource.data)
+              || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fileData'])
+            )
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['createdBy'])
+          )
           || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'deletedAt'])
         );
 

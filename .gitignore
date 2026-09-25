@@ -1,1 +1,9 @@
 /tests/artifacts/
+
+# Cloudflare Worker: ไฟล์ค่าลับสำหรับรันในเครื่อง และไฟล์ที่ wrangler สร้างเอง ห้าม commit
+.dev.vars*
+.env
+.env.*
+!.env.example
+.wrangler/
+node_modules/

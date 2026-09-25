@@ -266,11 +266,12 @@
           <div class="panel">
             <div class="panel-head">
               <div class="panel-title">
-                <h3>เอกสารตามหมวดหมู่</h3>
-                <p>จำนวนเอกสารที่จัดเก็บในแต่ละหมวด</p>
+                <h3>แนวโน้มการนำเข้าเอกสาร</h3>
+                <p>ย้อนหลัง 6 เดือนล่าสุด</p>
               </div>
+              <span class="panel-tag">รายเดือน</span>
             </div>
-            <canvas id="chartCategory" height="220"></canvas>
+            <div class="chart-box"><canvas id="chartTrend"></canvas></div>
           </div>
 
           <div class="panel">
@@ -280,18 +281,17 @@
                 <p>สัดส่วนตามสถานะการพิจารณา</p>
               </div>
             </div>
-            <canvas id="chartStatus" height="220"></canvas>
+            <div class="chart-box"><canvas id="chartStatus"></canvas></div>
           </div>
 
           <div class="panel panel-wide">
             <div class="panel-head">
               <div class="panel-title">
-                <h3>แนวโน้มการนำเข้าเอกสาร</h3>
-                <p>ย้อนหลัง 6 เดือนล่าสุด</p>
+                <h3>เอกสารตามหมวดหมู่</h3>
+                <p>จำนวนเอกสารที่จัดเก็บในแต่ละหมวด</p>
               </div>
-              <span class="panel-tag">รายเดือน</span>
             </div>
-            <canvas id="chartTrend" height="140"></canvas>
+            <div class="chart-box"><canvas id="chartCategory"></canvas></div>
           </div>
         </div>
 
@@ -466,7 +466,7 @@
         <div class="span-2 field-block"><span id="fileLabel">ไฟล์ PDF</span>
           <div class="file-drop" id="fileDrop" role="button" tabindex="0" aria-labelledby="fileLabel fileDropText" aria-describedby="docFormError">
             <svg viewBox="0 0 24 24" class="file-ico"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
-            <span id="fileDropText">ลากไฟล์ PDF มาวาง หรือคลิกเพื่อเลือกไฟล์ (สูงสุด 700KB)</span>
+            <span id="fileDropText">ลากไฟล์ PDF มาวาง หรือคลิกเพื่อเลือกไฟล์ (สูงสุด 20 MB)</span>
             <input type="file" id="docFile" accept="application/pdf" hidden>
           </div>
         </div>
