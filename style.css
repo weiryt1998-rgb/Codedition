@@ -772,6 +772,22 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .preview-frame { width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 /* Prevent selecting the iframe as a single object without affecting PDF text. */
 .preview-frame { -webkit-user-select: none; user-select: none; }
+/* มือถือ: ทุกหน้าของ PDF วาดเป็นภาพเรียงต่อกัน เลื่อนขึ้นลงดูได้ครบ ในกรอบขนาดเดียวกับ iframe เดิม */
+.preview-pages {
+  height: 70vh; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 10px; padding: 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.preview-page {
+  position: relative; flex: none; width: 100%; background: #fff;
+  border-radius: 4px; box-shadow: var(--shadow-sm); overflow: hidden;
+}
+.preview-page canvas { display: block; width: 100%; height: 100%; }
+.preview-page::after {
+  content: attr(data-label); position: absolute; right: 8px; bottom: 8px;
+  padding: 2px 8px; border-radius: 999px; font-size: 11px; color: #fff; background: rgba(16, 35, 58, .6);
+}
+.preview-status { margin: auto; padding: 24px; text-align: center; font-size: 14px; color: var(--text-muted); }
 
 /* ===================== Appearance customizer ===================== */
 .tune-group { margin-bottom: 24px; }

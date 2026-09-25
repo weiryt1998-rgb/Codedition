@@ -239,6 +239,27 @@ test('a document PDF streams from R2 after Firestore confirms the document with 
   assert.deepEqual(firestoreCalls.map((c) => [c.method, c.auth]), [['GET', `Bearer ${token}`]]);
 });
 
+test('a multi-page PDF comes back byte for byte, not just its first page', async () => {
+  // A real 3-page PDF (each page its own object), so a truncated or partial response would show.
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>'];
+  for (let i = 0; i < 3; i++) objects.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>');
+  let text = '%PDF-1.4\n';
+  objects.forEach((body, i) => { text += `${i + 1} 0 obj\n${body}\nendobj\n`; });
+  const original = new TextEncoder().encode(`${text}trailer\n<< /Size 6 /Root 1 0 R >>\n%%EOF` + ' '.repeat(300_000));
+
+  const token = await idToken();
+  const stored = await upload(original);
+  assert.equal(stored.status, 201);
+  firestoreDocs.set('doc-3p', { storageKey: stored.json.storageKey, fileName: 'three-pages.pdf', deleted: false });
+  const { status, response } = await call('GET', '/api/documents/doc-3p/file', { token });
+  assert.equal(status, 200);
+  assert.equal(response.headers.get('Content-Length'), String(original.byteLength));
+  const received = new Uint8Array(await response.arrayBuffer());
+  assert.equal(received.byteLength, original.byteLength);
+  assert.deepEqual(received, original);
+  assert.match(new TextDecoder().decode(received.subarray(0, 400)), /\/Count 3/);
+});
+
 test('files are not served for legacy, missing, forbidden or orphaned documents', async () => {
   const token = await idToken();
   firestoreDocs.set('legacy', { fileName: 'old.pdf', deleted: false });

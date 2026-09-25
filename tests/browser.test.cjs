@@ -236,6 +236,7 @@ async function main() {
       // The first row is the document just added, so its PDF comes from R2 through the Worker.
       await waitFor(`document.getElementById('previewFrame').src.startsWith('blob:')`);
       assert.ok(apiLog.some((line) => /^GET \/api\/documents\/[^/]+\/file$/.test(line)));
+      assert.equal(await evaluate(`document.getElementById('previewPages').hidden`), true, 'desktop keeps the browser PDF viewer');
       assert.equal(await evaluate(`window.getSelection().isCollapsed`), true);
       assert.equal(await evaluate(`getComputedStyle(document.getElementById('previewFrame')).userSelect`), 'none');
       await pause(1500);
@@ -325,6 +326,36 @@ async function main() {
       assert.ok(await evaluate(`(() => {const r=document.querySelector('#docModalOverlay .modal').getBoundingClientRect(); return r.x>=0 && r.right<=innerWidth && r.bottom<=innerHeight;})()`));
       await screenshot('mobile-form.png');
     });
+    // Phones can't page through a PDF inside an iframe, so every page is drawn with PDF.js instead.
+    async function checkPhonePdf(userAgent, shot) {
+      await cdp('Emulation.setUserAgentOverride', { userAgent });
+      await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });
+      await reloadApp();
+      assert.equal(await evaluate('needsPageViewer()'), true);
+      await evaluate(`switchView('documents'); document.getElementById('globalSearch').value='ทดสอบ/5'; document.getElementById('globalSearch').dispatchEvent(new Event('input'))`);
+      await click('[data-preview]');
+      await waitFor(`document.querySelectorAll('#previewPages .preview-page').length === 3`);
+      assert.equal(await evaluate(`document.getElementById('previewFrame').hidden && !document.getElementById('previewFrame').hasAttribute('src')`), true);
+      await waitFor(`!!document.querySelector('#previewPages .preview-page canvas')`);
+      assert.ok(await evaluate(`[...document.querySelectorAll('#previewPages .preview-page')].every((p) => p.getBoundingClientRect().right <= innerWidth)`), 'pages fit the phone width');
+      await screenshot(shot);
+      // Scroll to the end: the last page is drawn, and it is the blue third page rather than a copy of page one.
+      await evaluate(`(() => { const c = document.getElementById('previewPages'); c.scrollTop = c.scrollHeight; })()`);
+      await waitFor(`!!document.querySelector('#previewPages .preview-page:last-child canvas')`);
+      const colour = (n) => evaluate(`(() => { const c = document.querySelector('#previewPages .preview-page:nth-child(${n}) canvas'); const d = c.getContext('2d').getImageData(c.width >> 1, c.height >> 1, 1, 1).data; return [d[0], d[1], d[2]]; })()`);
+      const last = await colour(3);
+      assert.ok(last[2] > 200 && last[0] < 80 && last[1] < 80, `page 3 should be blue, got ${last}`);
+      assert.equal(await evaluate(`document.querySelector('#previewPages .preview-page:last-child').dataset.label`), 'หน้า 3 / 3');
+      await click('#previewModalOverlay [data-close-modal]');
+      assert.equal(await evaluate(`document.getElementById('previewPages').children.length`), 0);
+      assert.equal(await evaluate('previewUrl'), null);
+    }
+    await check('iPhone shows every page of a multi-page PDF and scrolls through them', () => checkPhonePdf(
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+      'mobile-pdf-iphone.png'));
+    await check('Android shows every page of a multi-page PDF and scrolls through them', () => checkPhonePdf(
+      'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
+      'mobile-pdf-android.png'));
     await check('No uncaught JavaScript errors', async () => assert.deepEqual(errors, []));
   } finally {
     await fs.writeFile(path.join(output, 'results.json'), JSON.stringify({ results, errors }, null, 2));

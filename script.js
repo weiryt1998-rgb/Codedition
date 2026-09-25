@@ -464,6 +464,7 @@ function closeModal(id) {
   if (id === "confirmModalOverlay") confirmCallback = null;
   if (id === "previewModalOverlay") {
     previewRequest++; // ไฟล์ที่ยังโหลดไม่เสร็จจะไม่เปิดหน้าต่างขึ้นมาอีกหลังปิดไปแล้ว
+    closePageViewer();
     document.getElementById("previewFrame").removeAttribute("src");
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     previewUrl = null;
@@ -1496,6 +1497,128 @@ async function downloadDoc(doc) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+/* =========================================================
+   PDF VIEWER
+   เดสก์ท็อป: ใช้ตัวแสดง PDF ของเบราว์เซอร์ใน iframe เหมือนเดิม (ซูม ค้นหา พิมพ์ได้)
+   มือถือ: iOS Safari แสดง PDF ใน iframe ได้แค่หน้าแรกเป็นภาพนิ่ง และ Chrome บน Android ไม่มีตัวแสดง PDF ใน iframe
+   จึงวาดทุกหน้าเองด้วย PDF.js เรียงต่อกันให้เลื่อนดูได้ครบ โดยวาดเฉพาะหน้าที่อยู่ใกล้จอ
+   และคืนหน่วยความจำของหน้าที่เลื่อนผ่านไปแล้ว เอกสารหลายสิบหน้าจึงไม่ทำให้มือถือค้าง
+   ========================================================= */
+const PDFJS_BASE = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/";
+const PAGE_MAX_PIXELS = 4_000_000; // iOS ไม่ยอมวาด canvas ที่ใหญ่เกินไป จึงจำกัดความละเอียดต่อหน้า
+let pdfjsLoading = null;
+let pageViewer = null; // { loadingTask, tasks, observer } ของเอกสารที่เปิดอยู่
+
+function needsPageViewer() {
+  const ua = navigator.userAgent || "";
+  // iPadOS แจ้งตัวเป็น Mac จึงดูจากจอสัมผัสร่วมด้วย
+  const appleMobile = /iP(hone|ad|od)/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  return appleMobile || /Android/i.test(ua) || navigator.pdfViewerEnabled === false;
+}
+
+function loadPdfJs() {
+  if (!pdfjsLoading) {
+    pdfjsLoading = import(PDFJS_BASE + "pdf.min.mjs").then((lib) => {
+      lib.GlobalWorkerOptions.workerSrc = PDFJS_BASE + "pdf.worker.min.mjs";
+      return lib;
+    });
+    pdfjsLoading.catch(() => { pdfjsLoading = null; }); // โหลดไม่สำเร็จ (เช่น เน็ตหลุด) ครั้งหน้าลองใหม่
+  }
+  return pdfjsLoading;
+}
+
+function closePageViewer() {
+  if (!pageViewer) return;
+  pageViewer.observer?.disconnect();
+  pageViewer.tasks.forEach((task) => task.cancel());
+  pageViewer.loadingTask.destroy();
+  pageViewer = null;
+  document.getElementById("previewPages").replaceChildren();
+}
+
+async function showPdfPages(blob, request) {
+  closePageViewer();
+  const container = document.getElementById("previewPages");
+  const status = document.createElement("p");
+  status.className = "preview-status";
+  status.textContent = "กำลังเปิดเอกสาร…";
+  container.replaceChildren(status);
+
+  const lib = await loadPdfJs();
+  const data = new Uint8Array(await blob.arrayBuffer());
+  if (request !== previewRequest) return;
+  const viewer = pageViewer = {
+    loadingTask: lib.getDocument({ data, isEvalSupported: false }),
+    tasks: new Map(),
+    observer: null,
+  };
+  const pdf = await viewer.loadingTask.promise;
+  const pages = await Promise.all(Array.from({ length: pdf.numPages }, (_, i) => pdf.getPage(i + 1)));
+  if (viewer !== pageViewer) return;
+
+  const pageOf = new Map();
+  const holders = pages.map((page, i) => {
+    const { width, height } = page.getViewport({ scale: 1 });
+    const holder = document.createElement("div");
+    holder.className = "preview-page";
+    holder.style.aspectRatio = `${width} / ${height}`;
+    holder.dataset.label = `หน้า ${i + 1} / ${pages.length}`;
+    pageOf.set(holder, page);
+    return holder;
+  });
+  container.replaceChildren(...holders);
+
+  const draw = async (holder) => {
+    if (viewer.tasks.has(holder)) return;
+    const page = pageOf.get(holder);
+    const base = page.getViewport({ scale: 1 });
+    // คมชัดตามความละเอียดจอ (ไม่เกิน 2 เท่า) และไม่เกิน PAGE_MAX_PIXELS ต่อหน้า
+    let scale = ((holder.clientWidth || container.clientWidth) / base.width) * Math.min(window.devicePixelRatio || 1, 2);
+    const pixels = base.width * base.height * scale * scale;
+    if (pixels > PAGE_MAX_PIXELS) scale *= Math.sqrt(PAGE_MAX_PIXELS / pixels);
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    const task = page.render({ canvasContext: canvas.getContext("2d"), viewport });
+    viewer.tasks.set(holder, task);
+    try {
+      await task.promise;
+      if (viewer.tasks.get(holder) === task) holder.replaceChildren(canvas);
+    } catch (err) {
+      if (err?.name !== "RenderingCancelledException") console.warn("วาดหน้า PDF ไม่สำเร็จ", err);
+    }
+  };
+  const release = (holder) => {
+    const task = viewer.tasks.get(holder);
+    if (!task) return;
+    viewer.tasks.delete(holder);
+    task.cancel();
+    const canvas = holder.querySelector("canvas");
+    if (canvas) { canvas.width = 0; canvas.height = 0; }
+    holder.replaceChildren();
+  };
+
+  if (typeof IntersectionObserver === "undefined") { holders.forEach(draw); return; }
+  // วาดหน้าที่อยู่ในจอและห่างออกไปไม่เกินหนึ่งจอ ขึ้นหรือลง
+  viewer.observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => (entry.isIntersecting ? draw(entry.target) : release(entry.target)));
+  }, { root: container, rootMargin: "100% 0px" });
+  holders.forEach((holder) => viewer.observer.observe(holder));
+}
+
+/* PDF.js โหลดหรือเปิดไฟล์ไม่ได้ (เช่น iOS รุ่นเก่ามาก): กลับไปใช้ตัวแสดงของเบราว์เซอร์ อย่างน้อยยังเห็นเอกสาร */
+function showPdfFallback(err) {
+  console.warn("แสดง PDF แบบหลายหน้าไม่สำเร็จ ใช้ตัวแสดงของเบราว์เซอร์แทน", err);
+  closePageViewer();
+  document.getElementById("previewPages").hidden = true;
+  const frame = document.getElementById("previewFrame");
+  frame.hidden = false;
+  frame.src = previewUrl;
+  showToast("อุปกรณ์นี้อาจแสดงตัวอย่างได้ไม่ครบทุกหน้า กดดาวน์โหลดเพื่อดูเอกสารฉบับเต็ม", "info");
+}
+
 async function previewDoc(doc) {
   const request = ++previewRequest;
   let blob;
@@ -1508,7 +1631,16 @@ async function previewDoc(doc) {
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = URL.createObjectURL(blob);
   document.getElementById("previewTitle").textContent = doc.title;
-  document.getElementById("previewFrame").src = previewUrl;
+  const frame = document.getElementById("previewFrame");
+  const pageMode = needsPageViewer();
+  frame.hidden = pageMode;
+  document.getElementById("previewPages").hidden = !pageMode;
+  if (pageMode) {
+    frame.removeAttribute("src");
+    showPdfPages(blob, request).catch((err) => { if (request === previewRequest) showPdfFallback(err); });
+  } else {
+    frame.src = previewUrl;
+  }
   openModal("previewModalOverlay");
 }
 
