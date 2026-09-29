@@ -37,8 +37,8 @@ const RADIUS_BASE = { "--radius-xs": 8, "--radius-sm": 12, "--radius": 18, "--ra
 
 /* ค่าเริ่มต้น — ต้องตรงกับ :root และ [data-theme="dark"] ใน style.css */
 const APPEARANCE_DEFAULTS = {
-  light: { bg: "#EEF4FC", surface: "#FFFFFF", text: "#10233A", primary: "#0B3D91", accent: "#C9A227", success: "#17805A", warning: "#B5771A", danger: "#BE3535" },
-  dark:  { bg: "#060D18", surface: "#0F1B2D", text: "#E8F1FB", primary: "#5B93DD", accent: "#E9CB6B", success: "#46C68D", warning: "#E7B953", danger: "#EB7A7A" },
+  light: { bg: "#FAF6FD", surface: "#FFFFFF", text: "#30203F", primary: "#9250BA", accent: "#DDC6F3", success: "#17805A", warning: "#B5771A", danger: "#BE3535" },
+  dark:  { bg: "#150D20", surface: "#231730", text: "#F3EBFA", primary: "#C49AE8", accent: "#E1CFF5", success: "#46C68D", warning: "#E7B953", danger: "#EB7A7A" },
 };
 
 const COLOR_FIELDS = [
@@ -53,7 +53,7 @@ const COLOR_FIELDS = [
 ];
 
 const COLOR_PRESETS = [
-  { id: "default", name: "ราชการน้ำเงิน", primary: "#0B3D91", accent: "#C9A227" },
+  { id: "default", name: "ม่วงออร์คิด", primary: "#9250BA", accent: "#DDC6F3" },
   { id: "emerald", name: "เขียวมรกต",     primary: "#0F6B4F", accent: "#D2A02F" },
   { id: "royal",   name: "ม่วงราชสำนัก",  primary: "#4B2E83", accent: "#CFA23C" },
   { id: "crimson", name: "แดงชาด",        primary: "#A32330", accent: "#D8A13A" },
@@ -113,7 +113,7 @@ function deriveVars(b, dark) {
     "--danger": b.danger,
     "--danger-bg": tint(b.danger, dark ? 0.86 : 0.84),
     "--grad-primary": `linear-gradient(135deg, ${mixHex(b.primary, W, dark ? 0.06 : 0.1)} 0%, ${b.primary} 45%, ${mixHex(b.primary, K, dark ? 0.35 : 0.28)} 100%)`,
-    "--grad-gold": `linear-gradient(135deg, ${mixHex(b.accent, W, 0.22)}, ${b.accent})`,
+    "--grad-accent": `linear-gradient(135deg, ${mixHex(b.accent, W, 0.22)}, ${b.accent})`,
   };
 }
 
@@ -640,18 +640,18 @@ function chartColors() {
   const dark = document.documentElement.getAttribute("data-theme") === "dark";
   const cs = getComputedStyle(document.documentElement);
   const v = (name, fallback) => cs.getPropertyValue(name).trim() || fallback;
-  const primary = v("--primary", dark ? "#5B93DD" : "#0B3D91");
-  const primaryRgb = v("--primary-rgb", dark ? "91, 147, 221" : "11, 61, 145");
+  const primary = v("--primary", dark ? "#C49AE8" : "#9250BA");
+  const primaryRgb = v("--primary-rgb", dark ? "196, 154, 232" : "146, 80, 186");
   return {
-    text: v("--text-muted", dark ? "#93A9C4" : "#5B7089"),
-    grid: v("--border", dark ? "#223B59" : "#D5E3F4"),
+    text: v("--text-muted", dark ? "#B7A1C8" : "#77618A"),
+    grid: v("--border", dark ? "#4B355E" : "#E4D6EF"),
     fill: `rgba(${primaryRgb}, ${dark ? 0.18 : 0.12})`,
     primaryRgb,
-    tooltipBg: dark ? v("--surface-2", "#14243A") : v("--text", "#10233A"),
-    tooltipText: dark ? v("--text", "#E8F1FB") : "#FFFFFF",
+    tooltipBg: dark ? v("--surface-2", "#2C1E3B") : v("--text", "#30203F"),
+    tooltipText: dark ? v("--text", "#F3EBFA") : "#FFFFFF",
     palette: [
       primary,
-      v("--accent", "#C9A227"),
+      v("--accent", dark ? "#E1CFF5" : "#DDC6F3"),
       v("--success", "#17805A"),
       v("--danger", "#BE3535"),
       v("--primary-400", primary),
@@ -717,9 +717,9 @@ function floorShadow(ctx, x, y, rx, ry, strength, hollow = 0) {
   ctx.translate(x, y);
   ctx.scale(1, ry / rx);
   const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
-  g.addColorStop(hollow, `rgba(6, 18, 38, ${hollow ? 0 : strength})`);
-  g.addColorStop(hollow ? (hollow + 1) / 2 : 0.35, `rgba(6, 18, 38, ${strength})`);
-  g.addColorStop(1, "rgba(6, 18, 38, 0)");
+  g.addColorStop(hollow, `rgba(42, 20, 66, ${hollow ? 0 : strength})`);
+  g.addColorStop(hollow ? (hollow + 1) / 2 : 0.35, `rgba(42, 20, 66, ${strength})`);
+  g.addColorStop(1, "rgba(42, 20, 66, 0)");
   ctx.fillStyle = g;
   ctx.beginPath();
   ctx.arc(0, 0, rx, 0, TAU);
@@ -862,7 +862,7 @@ function drawLineSpheres(chart, meta) {
     g.addColorStop(0.45, shade(tone, 0.05));
     g.addColorStop(1, shade(tone, -0.4));
     ctx.save();
-    ctx.shadowColor = "rgba(6, 18, 38, .35)";
+    ctx.shadowColor = "rgba(42, 20, 66, .35)";
     ctx.shadowBlur = 6;
     ctx.shadowOffsetY = 3;
     ctx.beginPath();
@@ -1105,17 +1105,22 @@ function renderCategories() {
     const share = allDocuments.length ? Math.round((count / allDocuments.length) * 100) : 0;
     return `
       <div class="category-card">
-        <div class="cat-top">
-          <span class="cat-ico"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg></span>
-          <span class="stat-chip mono">${share}%</span>
-        </div>
-        <span class="cat-name">${escapeHtml(c.name)}</span>
-        <span class="cat-count">${count} เอกสาร</span>
-        <div class="meter"><span style="width:${(count / max) * 100}%"></span></div>
-        <div class="cat-actions">
-          <button class="icon-btn" data-del-cat="${escapeHtml(c.id)}" title="ลบหมวดหมู่">
-            <svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7z"/></svg>
-          </button>
+        <span class="cat-back" aria-hidden="true"></span>
+        <span class="cat-paper" aria-hidden="true"></span>
+        <span class="cat-paper cat-paper-front" aria-hidden="true"></span>
+        <div class="cat-front">
+          <div class="cat-top">
+            <span class="cat-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6V3zM14 3v5h4M9 12h6M9 16h4"/></svg></span>
+            <span class="stat-chip mono" title="สัดส่วนของเอกสารทั้งหมด">${share}%</span>
+          </div>
+          <span class="cat-name">${escapeHtml(c.name)}</span>
+          <span class="cat-count">${count} เอกสาร</span>
+          <div class="meter" aria-hidden="true"><span style="width:${(count / max) * 100}%"></span></div>
+          <div class="cat-actions">
+            <button class="icon-btn" data-del-cat="${escapeHtml(c.id)}" title="ลบหมวดหมู่" aria-label="ลบหมวดหมู่ ${escapeHtml(c.name)}">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7"/></svg>
+            </button>
+          </div>
         </div>
       </div>`;
   }).join("");
