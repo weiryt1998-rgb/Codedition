@@ -71,6 +71,11 @@ async function main() {
     .replace('https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js', '/chart.js')
     .replace('src="firebase-config.js"', 'src="/fixture.js"')
     .replace(/<link[^>]+https:\/\/fonts\.[^>]+>/g, '');
+  const assetsDir = path.join(root, 'assets');
+  const assetPath = (pathname) => {
+    const file = path.join(root, decodeURIComponent(pathname));
+    return file.startsWith(assetsDir + path.sep) ? file : null;
+  };
   const server = http.createServer(async (req, res) => {
     const files = { '/style.css': 'style.css', '/script.js': 'script.js', '/fixture.js': 'tests/browser-fixture.js' };
     const url = new URL(req.url, 'http://localhost');
@@ -85,6 +90,10 @@ async function main() {
       else if (files[url.pathname]) {
         res.setHeader('Content-Type', url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript');
         res.end(await fs.readFile(path.join(root, files[url.pathname])));
+      } else if (assetPath(url.pathname)) {
+        // CSS masks only accept SVG served as image/svg+xml, so the type must be right.
+        res.setHeader('Content-Type', { '.png': 'image/png', '.svg': 'image/svg+xml' }[path.extname(url.pathname)] || 'application/octet-stream');
+        res.end(await fs.readFile(assetPath(url.pathname)));
       } else { res.writeHead(204); res.end(); }
     } catch { res.writeHead(500); res.end(); }
   });
@@ -162,6 +171,12 @@ async function main() {
       assert.equal(await evaluate(`Object.keys(charts).length`), 3);
       assert.ok(await evaluate(`Object.values(charts).every(c=>c.width>0&&c.height>0)`));
       await screenshot('desktop.png');
+    });
+    await check('Logo loads in the loader, sidebar and banner', async () => {
+      await waitFor(`[...document.querySelectorAll('img[src="assets/logo.png"]')].every(img => img.complete)`);
+      const logos = await evaluate(`[...document.querySelectorAll('img[src="assets/logo.png"]')].map(img => img.naturalWidth)`);
+      assert.equal(logos.length, 3);
+      assert.ok(logos.every((width) => width > 0), 'every logo image decoded');
     });
     await check('Global search opens and filters document results', async () => {
       await click('#globalSearch');

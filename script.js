@@ -37,8 +37,8 @@ const RADIUS_BASE = { "--radius-xs": 8, "--radius-sm": 12, "--radius": 18, "--ra
 
 /* ค่าเริ่มต้น — ต้องตรงกับ :root และ [data-theme="dark"] ใน style.css */
 const APPEARANCE_DEFAULTS = {
-  light: { bg: "#FAF6FD", surface: "#FFFFFF", text: "#30203F", primary: "#9250BA", accent: "#DDC6F3", success: "#17805A", warning: "#B5771A", danger: "#BE3535" },
-  dark:  { bg: "#150D20", surface: "#231730", text: "#F3EBFA", primary: "#C49AE8", accent: "#E1CFF5", success: "#46C68D", warning: "#E7B953", danger: "#EB7A7A" },
+  light: { bg: "#F8F5FC", surface: "#FFFFFF", text: "#30203F", primary: "#7851A9", accent: "#D9C9EE", success: "#17805A", warning: "#B5771A", danger: "#BE3535" },
+  dark:  { bg: "#150D20", surface: "#231730", text: "#F3EBFA", primary: "#BC9AE0", accent: "#DFD1F1", success: "#46C68D", warning: "#E7B953", danger: "#EB7A7A" },
 };
 
 const COLOR_FIELDS = [
@@ -53,7 +53,7 @@ const COLOR_FIELDS = [
 ];
 
 const COLOR_PRESETS = [
-  { id: "default", name: "ม่วงออร์คิด", primary: "#9250BA", accent: "#DDC6F3" },
+  { id: "default", name: "ม่วงราชินี", primary: "#7851A9", accent: "#D9C9EE" },
   { id: "emerald", name: "เขียวมรกต",     primary: "#0F6B4F", accent: "#D2A02F" },
   { id: "royal",   name: "ม่วงราชสำนัก",  primary: "#4B2E83", accent: "#CFA23C" },
   { id: "crimson", name: "แดงชาด",        primary: "#A32330", accent: "#D8A13A" },
@@ -640,8 +640,8 @@ function chartColors() {
   const dark = document.documentElement.getAttribute("data-theme") === "dark";
   const cs = getComputedStyle(document.documentElement);
   const v = (name, fallback) => cs.getPropertyValue(name).trim() || fallback;
-  const primary = v("--primary", dark ? "#C49AE8" : "#9250BA");
-  const primaryRgb = v("--primary-rgb", dark ? "196, 154, 232" : "146, 80, 186");
+  const primary = v("--primary", dark ? "#BC9AE0" : "#7851A9");
+  const primaryRgb = v("--primary-rgb", dark ? "188, 154, 224" : "120, 81, 169");
   return {
     text: v("--text-muted", dark ? "#B7A1C8" : "#77618A"),
     grid: v("--border", dark ? "#4B355E" : "#E4D6EF"),
@@ -651,7 +651,7 @@ function chartColors() {
     tooltipText: dark ? v("--text", "#F3EBFA") : "#FFFFFF",
     palette: [
       primary,
-      v("--accent", dark ? "#E1CFF5" : "#DDC6F3"),
+      v("--accent", dark ? "#DFD1F1" : "#D9C9EE"),
       v("--success", "#17805A"),
       v("--danger", "#BE3535"),
       v("--primary-400", primary),

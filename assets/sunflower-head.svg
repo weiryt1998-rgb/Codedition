@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-70 -70 140 140">
+  <!-- Flower head of sunflower.svg alone, for small icons where the stem would be too thin to read. -->
+  <defs>
+    <path id="back" d="M0-26C8-35 9-49 0-68C-9-49-8-35 0-26Z"/>
+    <path id="front" d="M0-25C8.5-33 9-46 0-60C-9-46-8.5-33 0-25Z"/>
+    <mask id="cuts" maskUnits="userSpaceOnUse" x="-70" y="-70" width="140" height="140">
+      <rect x="-70" y="-70" width="140" height="140" fill="#fff"/>
+      <g fill="none" stroke="#000" stroke-width="5">
+        <use href="#front"/><use href="#front" transform="rotate(25.71)"/>
+        <use href="#front" transform="rotate(51.43)"/><use href="#front" transform="rotate(77.14)"/>
+        <use href="#front" transform="rotate(102.86)"/><use href="#front" transform="rotate(128.57)"/>
+        <use href="#front" transform="rotate(154.29)"/><use href="#front" transform="rotate(180)"/>
+        <use href="#front" transform="rotate(205.71)"/><use href="#front" transform="rotate(231.43)"/>
+        <use href="#front" transform="rotate(257.14)"/><use href="#front" transform="rotate(282.86)"/>
+        <use href="#front" transform="rotate(308.57)"/><use href="#front" transform="rotate(334.29)"/>
+      </g>
+    </mask>
+  </defs>
+  <g mask="url(#cuts)" fill="#000">
+    <use href="#back" transform="rotate(12.86)"/><use href="#back" transform="rotate(38.57)"/>
+    <use href="#back" transform="rotate(64.29)"/><use href="#back" transform="rotate(90)"/>
+    <use href="#back" transform="rotate(115.71)"/><use href="#back" transform="rotate(141.43)"/>
+    <use href="#back" transform="rotate(167.14)"/><use href="#back" transform="rotate(192.86)"/>
+    <use href="#back" transform="rotate(218.57)"/><use href="#back" transform="rotate(244.29)"/>
+    <use href="#back" transform="rotate(270)"/><use href="#back" transform="rotate(295.71)"/>
+    <use href="#back" transform="rotate(321.43)"/><use href="#back" transform="rotate(347.14)"/>
+    <use href="#front"/><use href="#front" transform="rotate(25.71)"/>
+    <use href="#front" transform="rotate(51.43)"/><use href="#front" transform="rotate(77.14)"/>
+    <use href="#front" transform="rotate(102.86)"/><use href="#front" transform="rotate(128.57)"/>
+    <use href="#front" transform="rotate(154.29)"/><use href="#front" transform="rotate(180)"/>
+    <use href="#front" transform="rotate(205.71)"/><use href="#front" transform="rotate(231.43)"/>
+    <use href="#front" transform="rotate(257.14)"/><use href="#front" transform="rotate(282.86)"/>
+    <use href="#front" transform="rotate(308.57)"/><use href="#front" transform="rotate(334.29)"/>
+    <circle r="22"/>
+  </g>
+</svg>

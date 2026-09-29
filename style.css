@@ -1,13 +1,13 @@
 /* =========================================================
    ระบบจัดเก็บเอกสารราชการ — Design system
-   Light : orchid purple from the reference with soft lavender accents
-   Dark  : deep violet with orchid and lavender highlights
+   Light : queen purple with soft lavender accents
+   Dark  : deep violet with queen purple and lavender highlights
    ========================================================= */
 
 :root {
   /* surfaces */
-  --bg: #FAF6FD;
-  --bg-deep: #F1E9F8;
+  --bg: #F8F5FC;
+  --bg-deep: #EDE6F6;
   --surface: #FFFFFF;
   --surface-2: #FAF7FD;
   --surface-3: #F1EAF8;
@@ -22,13 +22,13 @@
   --text-faint: #7A658B;
 
   /* brand */
-  --primary: #9250BA;
-  --primary-600: #753B96;
-  --primary-400: #AC74CC;
-  --primary-100: #F2E7FA;
-  --primary-rgb: 146, 80, 186;
+  --primary: #7851A9;
+  --primary-600: #5D3D85;
+  --primary-400: #9875BF;
+  --primary-100: #EEE6F7;
+  --primary-rgb: 120, 81, 169;
 
-  --accent: #DDC6F3;
+  --accent: #D9C9EE;
   --accent-soft: #F2EAFA;
 
   /* semantic */
@@ -40,9 +40,9 @@
   --danger-bg: #FBE6E6;
 
   /* gradients */
-  --grad-primary: linear-gradient(135deg, #9B58C3 0%, #9250BA 45%, #68338B 100%);
+  --grad-primary: linear-gradient(135deg, #8960B7 0%, #7851A9 45%, #533273 100%);
   --grad-sheen: linear-gradient(120deg, rgba(255,255,255,0) 25%, rgba(255,255,255,.45) 50%, rgba(255,255,255,0) 75%);
-  --grad-accent: linear-gradient(135deg, #EFE2FA, #DDC6F3);
+  --grad-accent: linear-gradient(135deg, #EDE4F8, #D9C9EE);
 
   /* shape */
   --radius-xs: 8px;
@@ -82,13 +82,13 @@
   --text-muted: #B7A1C8;
   --text-faint: #A58AB8;
 
-  --primary: #C49AE8;
-  --primary-600: #D4B4EF;
-  --primary-400: #B984DC;
+  --primary: #BC9AE0;
+  --primary-600: #CEB3EB;
+  --primary-400: #A980D0;
   --primary-100: #332044;
-  --primary-rgb: 196, 154, 232;
+  --primary-rgb: 188, 154, 224;
 
-  --accent: #E1CFF5;
+  --accent: #DFD1F1;
   --accent-soft: #362448;
 
   --success: #46C68D;
@@ -98,8 +98,8 @@
   --danger: #EB7A7A;
   --danger-bg: #351616;
 
-  --grad-primary: linear-gradient(135deg, #492D60 0%, #362348 55%, #241732 100%);
-  --grad-accent: linear-gradient(135deg, #EFE2FA, #E1CFF5);
+  --grad-primary: linear-gradient(135deg, #403057 0%, #302440 55%, #20182D 100%);
+  --grad-accent: linear-gradient(135deg, #EDE4F8, #DFD1F1);
   --grad-sheen: linear-gradient(120deg, rgba(255,255,255,0) 25%, rgba(255,255,255,.10) 50%, rgba(255,255,255,0) 75%);
 
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, .4);
@@ -170,7 +170,13 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
   box-shadow: 0 18px 55px -20px rgba(var(--primary-rgb), .4), inset 0 0 0 8px rgba(255, 255, 255, .04);
   animation: pageLoaderFloat 2.4s ease-in-out infinite;
 }
-.page-loader-seal svg { width: 120px; height: 120px; stroke-width: 1.5; }
+/* วงจุดหมุนซ้อนอยู่รอบตราโลโก้ในช่องกริดเดียวกัน */
+.page-loader-seal > * { grid-area: 1 / 1; }
+.page-loader-seal svg { width: 144px; height: 144px; stroke-width: 1.5; }
+.page-loader-seal img {
+  display: block; width: 112px; height: 112px; border-radius: 50%;
+  box-shadow: 0 10px 24px -12px rgba(20, 8, 33, .8);
+}
 .page-loader-orbit { transform-origin: 60px 60px; animation: pageLoaderOrbit 18s linear infinite; }
 .page-loader-title { font-size: clamp(24px, 5vw, 32px); font-weight: 700; line-height: 1.4; }
 .page-loader-org { margin-top: 8px; color: var(--text-muted); font-size: clamp(13px, 3.5vw, 15px); line-height: 1.7; }
@@ -217,6 +223,15 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 .b2 { width: 34vw; height: 34vw; right: -6vw; top: 8vh; background: color-mix(in srgb, var(--accent) 32%, transparent); animation: drift 32s ease-in-out infinite reverse; }
 .b3 { width: 40vw; height: 40vw; right: 12vw; bottom: -18vw; background: rgba(var(--primary-rgb), .18); animation: drift 38s ease-in-out infinite; }
 [data-theme="dark"] .aurora-blob { opacity: .34; }
+/* ลายน้ำตรา อบต. จาง ๆ กลางพื้นที่เนื้อหา เป็นเลเยอร์หลังสุด อยู่ใต้การ์ดและกล่องทั้งหมด
+   (ชั้นเดียวกับ .aurora แต่มาทีหลังใน HTML จึงอยู่เหนือแสงพื้นหลัง) */
+.watermark {
+  position: fixed; top: 0; bottom: 0; left: var(--sidebar-w); right: 0; z-index: -1;
+  pointer-events: none; opacity: .06;
+  background: url("assets/logo-watermark.png") center / min(64vmin, 580px) no-repeat;
+}
+[data-theme="dark"] .watermark { filter: brightness(0) invert(1); opacity: .05; }
+@media (max-width: 980px) { .watermark { left: 0; } }
 @keyframes drift {
   0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
   50% { transform: translate3d(3vw, 4vh, 0) scale(1.12); }
@@ -295,12 +310,10 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 
 .brand { display: flex; align-items: center; gap: 12px; padding: 4px 8px 24px; }
 .brand-seal {
-  color: var(--accent); display: grid; place-items: center;
-  width: 48px; height: 48px; border-radius: 16px;
-  background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .12);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 8px 20px -12px rgba(0,0,0,.8);
+  flex-shrink: 0; width: 48px; height: 48px; border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, .16), 0 8px 20px -12px rgba(0, 0, 0, .8);
 }
-.brand-seal svg { width: 28px; height: 28px; }
+.brand-seal img { display: block; width: 100%; height: 100%; border-radius: 50%; }
 .brand-text { display: flex; flex-direction: column; line-height: 1.3; }
 .brand-text strong { font-size: 16px; letter-spacing: .01em; }
 .brand-text span { font-size: 11px; opacity: .68; letter-spacing: .12em; text-transform: uppercase; }
@@ -373,22 +386,23 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 .nav-item.is-active .nav-badge { background: rgba(255, 255, 255, .2); color: #fff; }
 
 .side-foot { display: flex; flex-direction: column; gap: 12px; margin-inline: -16px; padding-top: 14px; }
+/* ป้ายชื่อใช้เหลืองทานตะวัน ซึ่งเป็นสีตรงข้ามของม่วง จึงเด่นบนแถบข้างทั้งโหมดสว่างและมืด */
 .officer-banner {
   position: relative; isolation: isolate; overflow: hidden;
   width: 100%; padding: 15px 26px; text-align: center;
-  background: linear-gradient(110deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 42%, #FFFFFF) 48%, var(--accent) 100%);
-  border-block: 1px solid rgba(247, 240, 255, .75);
+  background: linear-gradient(110deg, #F0AE1C 0%, #FFD85C 48%, #F0AE1C 100%);
+  border-block: 1px solid rgba(255, 240, 190, .85);
   box-shadow: 0 5px 16px -8px rgba(0, 0, 0, .45);
 }
 .officer-banner::before, .officer-banner::after {
   content: ""; position: absolute; inset-block: 0; width: 18px;
-  background: rgba(68, 34, 97, .16); pointer-events: none; z-index: -1;
+  background: rgba(122, 72, 0, .2); pointer-events: none; z-index: -1;
 }
 .officer-banner::before { left: 0; clip-path: polygon(0 0, 100% 0, 35% 50%, 100% 100%, 0 100%); }
 .officer-banner::after { right: 0; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 65% 50%); }
 .officer-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
 .officer-text strong { font-size: 14px; font-weight: 700; color: #38224E; line-height: 1.5; }
-.officer-text span { font-size: 11px; color: #624678; line-height: 1.5; }
+.officer-text span { font-size: 11px; color: #4F3366; line-height: 1.5; }
 
 
 .scrim { display: none; }
@@ -436,7 +450,7 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 .view-head-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 
 /* =========================== Hero =========================== */
-/* เนื้อหาทั้งหมดอยู่กึ่งกลางแบนเนอร์ ภาพวงกลมอยู่ซ้ายและลายกนกอยู่ขวาเป็นเครื่องประดับคู่กัน
+/* เนื้อหาทั้งหมดอยู่กึ่งกลางแบนเนอร์ ตราโลโก้อยู่ซ้ายและดอกทานตะวันอยู่ขวาเป็นเครื่องประดับคู่กัน
    padding ด้านข้างเว้นที่ให้ภาพวงกลม (ซ้าย 34 + กว้าง 170 + ช่องว่าง) และเท่ากันสองข้างเพื่อให้เนื้อหาอยู่กลางจริง */
 .hero {
   position: relative; overflow: hidden;
@@ -482,9 +496,15 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 .hero-actions .btn-ghost:hover { background: rgba(255, 255, 255, .16); color: #fff; }
 .hero-art {
   position: absolute; z-index: 1; left: 34px; top: 50%; transform: translateY(-50%);
-  color: var(--accent); opacity: .85;
+  display: grid; place-items: center; width: 170px; height: 170px; color: var(--accent);
 }
-.hero-art svg { display: block; width: 170px; height: 170px; animation: spin 60s linear infinite; }
+/* ตราโลโก้อยู่นิ่ง มีแค่วงเส้นประรอบนอกที่หมุน */
+.hero-art > * { grid-area: 1 / 1; }
+.hero-art svg { display: block; width: 100%; height: 100%; animation: spin 60s linear infinite; }
+.hero-art img {
+  display: block; width: 84%; height: 84%; border-radius: 50%;
+  box-shadow: 0 0 0 5px rgba(255, 255, 255, .12), 0 14px 30px -14px rgba(20, 8, 33, .8);
+}
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* =========================== Stat cards =========================== */
@@ -551,31 +571,46 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 .chart-box { position: relative; height: 220px; }
 .panel-wide .chart-box { height: 190px; }
 
-/* Thai kanok accents stay at the edges and beside headings, away from chart data. */
-#view-dashboard { --kanok-pattern: url("assets/kanok.svg"); }
+/* ลายฉลุดอกทานตะวันสีเดียว วางแค่มุมแบนเนอร์ การ์ดสลับใบ และข้างหัวข้อ ไม่ให้รกและไม่ทับข้อมูลกราฟ
+   รูปเป็นเงาดำล้วน ย้อมสีผ่าน mask จึงเปลี่ยนสีได้ด้วย --sunflower-ink ตัวเดียว */
+#view-dashboard {
+  --sunflower: url("assets/sunflower.svg");
+  --sunflower-head: url("assets/sunflower-head.svg");
+  --sunflower-ink: #E9AA1C;
+}
+[data-theme="dark"] #view-dashboard { --sunflower-ink: #F2C14E; }
 #view-dashboard .hero::after,
 #view-dashboard .stat-card:nth-child(odd)::after,
 #view-dashboard .panel-title h3::after {
-  content: ""; background: var(--accent); pointer-events: none;
-  -webkit-mask: var(--kanok-pattern) center / contain no-repeat;
-  mask: var(--kanok-pattern) center / contain no-repeat;
+  content: ""; background: var(--sunflower-ink); pointer-events: none;
+  -webkit-mask: var(--sunflower) center / contain no-repeat;
+  mask: var(--sunflower) center / contain no-repeat;
 }
+/* ดอกใหญ่ดอกเดียวทางขวาของแบนเนอร์ คู่กับตราวงกลมทางซ้าย ปล่อยให้ก้านล้นขอบล่าง
+   ใช้เหลืองสว่างกว่าปกติ เพราะเหลืองโปร่งแสงทับม่วงจะกลายเป็นสีน้ำตาลหม่น */
 #view-dashboard .hero::after {
-  inset: auto -18px -28px auto; width: 250px; height: 250px;
-  opacity: .23; transform: rotate(-12deg);
+  inset: auto 22px -64px auto; width: 190px; height: 285px;
+  background: #FFD45E; opacity: .6; transform: rotate(6deg);
 }
 #view-dashboard .stat-card:nth-child(odd)::after {
-  top: auto; right: 8px; bottom: 16px; width: 86px; height: 86px;
-  border-radius: 0; opacity: .14; transform: none; transition: none;
+  top: auto; right: 10px; bottom: -14px; width: 76px; height: 114px;
+  border-radius: 0; opacity: .22; transform: rotate(-8deg); transition: none;
 }
 #view-dashboard .panel-title h3::after {
-  display: inline-block; width: 26px; height: 26px;
-  margin-inline-start: 8px; vertical-align: -6px; opacity: .5;
+  display: inline-block; width: 20px; height: 20px;
+  margin-inline-start: 8px; vertical-align: -3px;
+  -webkit-mask-image: var(--sunflower-head);
+  mask-image: var(--sunflower-head);
+}
+@media (max-width: 1180px) {
+  #view-dashboard .hero::after { right: 12px; bottom: -50px; width: 150px; height: 225px; }
+}
+@media (max-width: 980px) {
+  #view-dashboard .hero::after { right: -10px; bottom: -60px; width: 120px; height: 180px; opacity: .3; }
 }
 @media (max-width: 640px) {
-  #view-dashboard .hero::after { right: -12px; bottom: -20px; width: 160px; height: 160px; opacity: .14; }
-  #view-dashboard .stat-card:nth-child(odd)::after { width: 72px; height: 72px; opacity: .11; }
-  #view-dashboard .panel-title h3::after { width: 22px; height: 22px; vertical-align: -5px; opacity: .4; }
+  #view-dashboard .stat-card:nth-child(odd)::after { width: 64px; height: 96px; bottom: -12px; opacity: .18; }
+  #view-dashboard .panel-title h3::after { width: 18px; height: 18px; }
 }
 
 /* =========================== Table =========================== */
@@ -964,8 +999,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 /* =========================== Responsive =========================== */
 @media (max-width: 1180px) {
   .hero { padding-inline: 164px; }
-  .hero-art { left: 24px; }
-  .hero-art svg { width: 124px; height: 124px; }
+  .hero-art { left: 24px; width: 124px; height: 124px; }
   .search-wrap { max-width: 320px; }
 }
 @media (max-width: 980px) {
@@ -982,8 +1016,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .search-wrap { max-width: none; }
   /* จอแคบ: ย้ายภาพวงกลมขึ้นไปเป็นตราเล็ก ๆ เหนือหัวเรื่อง แทนการกินที่ด้านข้าง */
   .hero { flex-direction: column; padding: 28px 26px; }
-  .hero-art { position: static; transform: none; order: -1; }
-  .hero-art svg { width: 92px; height: 92px; }
+  .hero-art { position: static; transform: none; order: -1; width: 92px; height: 92px; }
 }
 @media (max-width: 640px) {
   .modal-overlay { padding: 10px; }
