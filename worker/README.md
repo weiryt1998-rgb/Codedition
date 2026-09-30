@@ -41,7 +41,8 @@ Object key: `documents/<ปี ค.ศ.>/<UUID>.pdf` สร้างใน Worke
 3. `ALLOWED_ORIGINS` ใน `worker/wrangler.toml` ตั้งเป็นโดเมนของ Firebase Hosting แล้ว
    (`https://project2-ff906.web.app`, `https://project2-ff906.firebaseapp.com`)
    ถ้าเปิดเว็บจากโดเมนอื่นด้วย ให้เพิ่มคั่นด้วย `,` แล้ว deploy Worker ใหม่
-4. Deploy Worker แล้วจด URL ที่ได้ (เช่น `https://govdocs-pdf-api.<subdomain>.workers.dev`)
+4. Deploy Worker แล้วจด URL ที่ได้ (ปัจจุบันคือ `https://myproject-pdf-api.govdocs-sukhothai.workers.dev`)
+   ชื่อ Worker ใน `wrangler.toml` ต้องไม่ซ้ำกับโปรเจกต์อื่นในบัญชีเดียวกัน เพราะ deploy ชื่อเดียวกันจะทับของเดิมทันที
    ```
    npx wrangler deploy
    ```

@@ -7,9 +7,9 @@ const firebaseConfig = {
   appId: "1:319198063949:web:99e308e2c0e899022a9b04"
 };
 
-// ที่อยู่ Cloudflare Worker (govdocs-pdf-api) ที่รับ/ส่งไฟล์ PDF กับ R2 bucket government-documents
+// ที่อยู่ Cloudflare Worker (myproject-pdf-api) ที่รับ/ส่งไฟล์ PDF กับ R2 bucket government-documents
 // ไม่ใช่ข้อมูลลับ ห้ามใส่ key/secret ใด ๆ ที่นี่
-const PDF_API_URL = "https://govdocs-pdf-api.govdocs-sukhothai.workers.dev";
+const PDF_API_URL = "https://myproject-pdf-api.govdocs-sukhothai.workers.dev";
 
 let app = null;
 let auth = null;

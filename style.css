@@ -395,18 +395,18 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 .nav-item.is-active .nav-badge { background: rgba(255, 255, 255, .2); color: var(--on-primary); }
 
 .side-foot { display: flex; flex-direction: column; gap: 12px; padding-top: 78px; }
-/* ป้ายชื่อเป็นบัตรเขียวหัวเป็ดขอบทอง มีต้นทานตะวันขึ้นอยู่บนป้าย
-   เขียวหัวเป็ดตัดกับม่วงทุกเฉดที่ผู้ใช้ปรับได้ ทั้งม่วงอ่อน ม่วงเข้ม และโหมดมืด ส่วนขอบทองแยกบัตรออกจากพื้นหลัง */
+/* ป้ายชื่อเป็นบัตรน้ำตาลขอบทอง มีต้นทานตะวันขึ้นอยู่บนป้าย
+   น้ำตาลตัดกับม่วงทุกเฉดที่ผู้ใช้ปรับได้ ทั้งม่วงอ่อน ม่วงเข้ม และโหมดมืด ส่วนขอบทองแยกบัตรออกจากพื้นหลัง */
 .officer-banner {
   position: relative; isolation: isolate;
   padding: 18px 16px 16px; text-align: center;
   border: 1.5px solid transparent; border-radius: 18px;
   background:
-    linear-gradient(160deg, #139A8F 0%, #0B6F6A 50%, #084B4A 100%) padding-box,
+    linear-gradient(160deg, #A0693A 0%, #744524 50%, #4A2A15 100%) padding-box,
     linear-gradient(135deg, #FFEAA8, #E2A43A 40%, #FFF3C9 65%, #C98A26) border-box;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, .25), inset 0 -3px 0 rgba(0, 0, 0, .16),
-    0 16px 30px -16px rgba(3, 38, 38, .9), 0 0 24px -6px rgba(255, 200, 90, .5);
+    0 16px 30px -16px rgba(38, 20, 5, .9), 0 0 24px -6px rgba(255, 200, 90, .5);
 }
 .officer-banner::before {
   content: ""; position: absolute; inset: 0 0 55%; z-index: -1; pointer-events: none;
