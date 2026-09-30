@@ -327,6 +327,118 @@ async function main() {
       await reloadApp();
       assert.notEqual(await evaluate('activeMode()'), previous);
     });
+    await check('Purple gradients update real surfaces, stay separate by mode, and persist', async () => {
+      const surfaceStyles = () => evaluate(`(() => {
+        const probe = document.createElement('span');
+        probe.style.backgroundImage = 'var(--grad-primary)';
+        probe.style.color = 'var(--on-primary)';
+        document.body.appendChild(probe);
+        const expected = getComputedStyle(probe);
+        const button = getComputedStyle(document.querySelector('#appearanceModalOverlay .btn-primary'));
+        const result = {
+          background: button.backgroundImage, ink: button.color,
+          expectedBackground: expected.backgroundImage, expectedInk: expected.color,
+          preview: getComputedStyle(document.getElementById('gradientPreview')).backgroundImage,
+          variable: getComputedStyle(document.documentElement).getPropertyValue('--grad-primary').trim(),
+        };
+        probe.remove();
+        return result;
+      })()`);
+      await click('#appearanceBtn');
+      await pause(300);
+      await click('#modeSegment [data-mode="light"]');
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#presetGrid button')].map(b=>b.dataset.preset)`),
+        ['default', 'lavender', 'lilac', 'violet', 'amethyst', 'orchid', 'royal', 'plum', 'midnight']);
+      assert.equal(await evaluate(`document.querySelectorAll('#appearanceModalOverlay input[type="color"]').length`), 0);
+      const originalDark = await evaluate('appearance.dark');
+      await click('#presetGrid [data-preset="lavender"]');
+      assert.equal(await evaluate(`document.querySelector('#presetGrid [data-preset="lavender"]').getAttribute('aria-pressed')`), 'true');
+      let surface = await surfaceStyles();
+      assert.equal(surface.background, surface.expectedBackground, 'button renders the selected CSS gradient');
+      assert.equal(surface.ink, surface.expectedInk);
+      assert.equal(surface.ink, 'rgb(32, 16, 46)', 'light lavender uses dark text');
+      assert.equal(surface.preview, surface.background, 'preview matches the applied gradient');
+      assert.equal(await evaluate('document.activeElement.dataset.preset'), 'lavender', 'selected preset keeps keyboard focus');
+      await evaluate(`document.querySelector('#appearanceModalOverlay .modal-body').scrollTop=0`);
+      await screenshot('purple-appearance.png');
+      for (const [id, value, expectedOutput] of [
+        ['gradientStartHue', 290, '290°'], ['gradientStartSaturation', 82, '82%'],
+        ['gradientStartLightness', 62, '62%'], ['gradientAngle', 225, '225°'],
+      ]) {
+        const before = surface;
+        await evaluate(`(() => {
+          const input = document.getElementById(${JSON.stringify(id)});
+          input.focus(); input.value = ${value}; input.dispatchEvent(new Event('input', {bubbles:true}));
+        })()`);
+        surface = await surfaceStyles();
+        assert.notEqual(surface.preview, before.preview, `${id} updates preview on input`);
+        assert.notEqual(surface.variable, before.variable, `${id} updates the page gradient on input`);
+        assert.equal(surface.background, surface.expectedBackground);
+        assert.equal(surface.preview, surface.background, 'edited preview matches the page gradient');
+        assert.equal(surface.ink, surface.expectedInk);
+        assert.equal(await evaluate('document.activeElement.id'), id, 'slider retains focus');
+        assert.equal(await evaluate(`document.getElementById(${JSON.stringify(id + 'Value')}).textContent`), expectedOutput);
+        await evaluate(`document.getElementById(${JSON.stringify(id)}).dispatchEvent(new Event('change', {bubbles:true}))`);
+      }
+      assert.equal(await evaluate(`document.querySelectorAll('#presetGrid [aria-pressed="true"]').length`), 0);
+      const beforeReverse = await evaluate('appearance.light');
+      await click('#reverseGradientBtn');
+      const editedLight = await evaluate('appearance.light');
+      assert.deepEqual(editedLight, { start: beforeReverse.end, end: beforeReverse.start, angle: 225 });
+      await click('#modeSegment [data-mode="dark"]');
+      assert.deepEqual(await evaluate('appearance.dark'), originalDark, 'editing light mode preserves dark mode');
+      await click('#presetGrid [data-preset="midnight"]');
+      const editedDark = await evaluate('appearance.dark');
+      surface = await surfaceStyles();
+      assert.equal(surface.background, surface.expectedBackground, 'dark buttons use the selected gradient');
+      assert.equal(surface.preview, surface.background, 'dark preview matches the page gradient');
+      assert.equal(surface.ink, surface.expectedInk);
+      await click('#modeSegment [data-mode="light"]');
+      assert.deepEqual(await evaluate('appearance.light'), editedLight, 'dark preset preserves light edits');
+      const saved = await evaluate('appearance');
+      assert.deepEqual(await evaluate(`JSON.parse(localStorage.getItem('govdocs-appearance'))`), saved);
+      await click('#appearanceModalOverlay [data-close-modal]');
+      await reloadApp();
+      assert.deepEqual(await evaluate('appearance'), saved, 'reload restores both exact endpoint sets and angle');
+      assert.deepEqual(await evaluate('appearance.dark'), editedDark);
+      await click('#appearanceBtn');
+      await pause(300);
+      assert.equal(await evaluate(`document.getElementById('gradientStartHue').value`), String(editedLight.start.h));
+      assert.equal(await evaluate(`document.getElementById('gradientEndLightness').value`), String(editedLight.end.l));
+      assert.equal(await evaluate(`document.getElementById('gradientAngle').value`), '225');
+      await click('#resetAppearanceBtn');
+      assert.deepEqual(await evaluate('appearance'), await evaluate(`({version:2,mode:'light',radius:100,light:presetGradient(COLOR_PRESETS[0],'light'),dark:presetGradient(COLOR_PRESETS[0],'dark')})`));
+      assert.equal(await evaluate(`document.querySelector('#presetGrid [data-preset="default"]').getAttribute('aria-pressed')`), 'true');
+      await click('#appearanceModalOverlay [data-close-modal]');
+    });
+    await check('Purple gradient controls fit and scroll within a 390px modal', async () => {
+      await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+      await click('#appearanceBtn');
+      await pause(300);
+      await click('#presetGrid [data-preset="lavender"]');
+      assert.ok(await evaluate(`(() => {
+        const modal=document.querySelector('#appearanceModalOverlay .modal');
+        const body=modal.querySelector('.modal-body'); const r=modal.getBoundingClientRect();
+        return r.x>=0 && r.right<=innerWidth && r.y>=0 && r.bottom<=innerHeight && body.scrollWidth<=body.clientWidth;
+      })()`), 'modal fits viewport without horizontal scrolling');
+      assert.ok(await evaluate(`[...document.querySelectorAll('#gradientEditor input, #gradientEditor button')].every(el => {
+        const r=el.getBoundingClientRect(); return r.width>0 && r.x>=0 && r.right<=innerWidth;
+      })`), 'all endpoint, direction, and reverse controls fit horizontally');
+      assert.ok(await evaluate(`(() => {
+        const [start,end]=document.querySelectorAll('.gradient-stop');
+        return end.getBoundingClientRect().top>=start.getBoundingClientRect().bottom;
+      })()`), 'endpoint cards stack on a phone');
+      await evaluate(`document.getElementById('gradientAngle').scrollIntoView({block:'center'})`);
+      assert.ok(await evaluate(`(() => {
+        const r=document.getElementById('gradientAngle').getBoundingClientRect();
+        const body=document.querySelector('#appearanceModalOverlay .modal-body').getBoundingClientRect();
+        return r.top>=body.top && r.bottom<=body.bottom;
+      })()`), 'lower controls are reachable by scrolling');
+      await evaluate(`document.querySelector('#appearanceModalOverlay .modal-body').scrollTop=0`);
+      await screenshot('purple-appearance-mobile.png');
+      await click('#resetAppearanceBtn');
+      await click('#appearanceModalOverlay [data-close-modal]');
+    });
     await check('Mobile navigation and form fit a 390px viewport', async () => {
       await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
       await pause(350);

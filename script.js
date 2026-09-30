@@ -29,37 +29,45 @@ let previewRequest = 0;
 
 /* =========================================================
    THEME & APPEARANCE
-   ผู้ใช้เลือกโหมดสี ชุดสีสำเร็จรูป และกำหนดสีของแต่ละส่วนเองได้
+   ผู้ใช้เลือกโหมดสีและปรับไล่ระดับเฉดสีม่วงได้
    ค่าที่ตั้งไว้ถูกเขียนทับลงบนตัวแปร CSS ของ :root แล้วบันทึกใน localStorage
    ========================================================= */
 const APPEARANCE_KEY = "govdocs-appearance";
 const RADIUS_BASE = { "--radius-xs": 8, "--radius-sm": 12, "--radius": 18, "--radius-lg": 24 };
 
-/* ค่าเริ่มต้น — ต้องตรงกับ :root และ [data-theme="dark"] ใน style.css */
+/* สีพื้นฐานและสีสถานะของแต่ละโหมด */
 const APPEARANCE_DEFAULTS = {
   light: { bg: "#F8F5FC", surface: "#FFFFFF", text: "#30203F", primary: "#7851A9", accent: "#D9C9EE", success: "#17805A", warning: "#B5771A", danger: "#BE3535" },
   dark:  { bg: "#150D20", surface: "#231730", text: "#F3EBFA", primary: "#BC9AE0", accent: "#DFD1F1", success: "#46C68D", warning: "#E7B953", danger: "#EB7A7A" },
 };
 
-const COLOR_FIELDS = [
-  { key: "bg",      label: "พื้นหลังหน้าจอ" },
-  { key: "surface", label: "พื้นการ์ด / แผง" },
-  { key: "text",    label: "สีตัวอักษร" },
-  { key: "primary", label: "สีหลัก / ปุ่มหลัก" },
-  { key: "accent",  label: "สีเน้น" },
-  { key: "success", label: "สถานะอนุมัติแล้ว" },
-  { key: "warning", label: "สถานะรอดำเนินการ" },
-  { key: "danger",  label: "สถานะไม่อนุมัติ" },
-];
-
 const COLOR_PRESETS = [
-  { id: "default", name: "ม่วงราชินี", primary: "#7851A9", accent: "#D9C9EE" },
-  { id: "emerald", name: "เขียวมรกต",     primary: "#0F6B4F", accent: "#D2A02F" },
-  { id: "royal",   name: "ม่วงราชสำนัก",  primary: "#4B2E83", accent: "#CFA23C" },
-  { id: "crimson", name: "แดงชาด",        primary: "#A32330", accent: "#D8A13A" },
-  { id: "ocean",   name: "ฟ้าคราม",       primary: "#0F6C9E", accent: "#EFA93B" },
-  { id: "slate",   name: "เทาสุขุม",       primary: "#37485C", accent: "#8C9BAC" },
+  { id: "default", name: "ม่วงราชินี", start: [270, 38, 55], end: [272, 39, 32] },
+  { id: "lavender", name: "ลาเวนเดอร์", start: [260, 65, 88], end: [272, 52, 70] },
+  { id: "lilac", name: "ไลแลค", start: [280, 48, 85], end: [290, 40, 65] },
+  { id: "violet", name: "ไวโอเล็ต", start: [260, 80, 67], end: [275, 65, 40] },
+  { id: "amethyst", name: "อเมทิสต์", start: [272, 58, 65], end: [283, 52, 38] },
+  { id: "orchid", name: "กล้วยไม้", start: [292, 62, 75], end: [285, 64, 44] },
+  { id: "royal", name: "ม่วงราชสำนัก", start: [260, 50, 48], end: [275, 58, 25] },
+  { id: "plum", name: "ม่วงพลัม", start: [290, 35, 48], end: [295, 42, 22] },
+  { id: "midnight", name: "ม่วงราตรี", start: [255, 45, 32], end: [275, 48, 12] },
 ];
+const PURPLE_CHANNELS = { h: [250, 300], s: [10, 100], l: [5, 95] };
+
+function presetGradient(preset, mode) {
+  const stop = ([h, s, l]) => ({ h, s, l: mode === "dark" ? Math.max(5, Math.round(l * 0.65)) : l });
+  return { start: stop(preset.start), end: stop(preset.end), angle: 135 };
+}
+
+function cleanGradient(value, fallback) {
+  const stop = (key) => Object.fromEntries(Object.entries(PURPLE_CHANNELS).map(([channel, [min, max]]) => [
+    channel, Number.isFinite(value?.[key]?.[channel]) ? Math.round(Math.min(max, Math.max(min, value[key][channel]))) : fallback[key][channel],
+  ]));
+  return {
+    start: stop("start"), end: stop("end"),
+    angle: Number.isFinite(value?.angle) ? Math.round(Math.min(360, Math.max(0, value.angle)) / 5) * 5 : fallback.angle,
+  };
+}
 
 /* ---------- color helpers ---------- */
 const isHex = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
@@ -82,7 +90,62 @@ function mixHex(a, b, t) {
 function rgbList(hex) { const c = parseHex(hex); return `${c.r}, ${c.g}, ${c.b}`; }
 function rgbaHex(hex, alpha) { const c = parseHex(hex); return `rgba(${c.r}, ${c.g}, ${c.b}, ${alpha})`; }
 
-/** สร้างตัวแปร CSS ทั้งชุดจากสีหลัก 8 สีที่ผู้ใช้เลือก */
+function purpleHex({ h, s, l }) {
+  s /= 100;
+  l /= 100;
+  const a = s * Math.min(l, 1 - l);
+  const channel = (n) => {
+    const k = (n + h / 30) % 12;
+    return 255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)));
+  };
+  return toHex({ r: channel(0), g: channel(8), b: channel(4) });
+}
+
+// Keep valid purple choices from the previous color picker; discard other hues.
+function legacyPurple(hex) {
+  if (!isHex(hex)) return null;
+  const { r, g, b } = parseHex(hex);
+  const max = Math.max(r, g, b) / 255, min = Math.min(r, g, b) / 255;
+  const delta = max - min, l = (max + min) / 2;
+  if (!delta) return null;
+  const h = ((max === r / 255 ? (g - b) / (255 * delta) : max === g / 255 ? (b - r) / (255 * delta) + 2 : (r - g) / (255 * delta) + 4) * 60 + 360) % 360;
+  if (h < 250 || h > 300) return null;
+  return { h, s: delta / (1 - Math.abs(2 * l - 1)) * 100, l: l * 100 };
+}
+
+function gradientCSS(gradient, start = purpleHex(gradient.start), end = purpleHex(gradient.end)) {
+  return `linear-gradient(${gradient.angle}deg, ${start} 0%, ${end} 100%)`;
+}
+
+function luminance(hex) {
+  const linear = Object.values(parseHex(hex)).map((n) => {
+    n /= 255;
+    return n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4;
+  });
+  return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+}
+
+// Pick readable text, adjusting the surface only for gradients that span light and dark.
+function readableGradient(gradient) {
+  const start = purpleHex(gradient.start), end = purpleHex(gradient.end);
+  const contrast = (ink, a, b) => {
+    const text = luminance(ink);
+    return Math.min(...Array.from({ length: 17 }, (_, i) => {
+      const bg = luminance(mixHex(a, b, i / 16));
+      return (Math.max(text, bg) + 0.05) / (Math.min(text, bg) + 0.05);
+    }));
+  };
+  const ink = contrast("#20102E", start, end) >= contrast("#FFFFFF", start, end) ? "#20102E" : "#FFFFFF";
+  const target = ink === "#FFFFFF" ? "#000000" : "#FFFFFF";
+  let a = start, b = end;
+  for (let step = 1; contrast(ink, a, b) < 4.5 && step <= 20; step++) {
+    a = mixHex(start, target, step / 20);
+    b = mixHex(end, target, step / 20);
+  }
+  return { background: gradientCSS(gradient, a, b), ink, start: a, end: b };
+}
+
+/** สร้างตัวแปร CSS ทั้งชุดจากโทนม่วงและสีสถานะ */
 function deriveVars(b, dark) {
   const W = "#FFFFFF", K = "#000000";
   const tint = (c, t) => mixHex(c, dark ? b.bg : W, t);
@@ -113,35 +176,42 @@ function deriveVars(b, dark) {
     "--danger": b.danger,
     "--danger-bg": tint(b.danger, dark ? 0.86 : 0.84),
     "--grad-primary": `linear-gradient(135deg, ${mixHex(b.primary, W, dark ? 0.06 : 0.1)} 0%, ${b.primary} 45%, ${mixHex(b.primary, K, dark ? 0.35 : 0.28)} 100%)`,
+    "--grad-start": mixHex(b.primary, W, dark ? 0.06 : 0.1),
+    "--grad-end": mixHex(b.primary, K, dark ? 0.35 : 0.28),
     "--grad-accent": `linear-gradient(135deg, ${mixHex(b.accent, W, 0.22)}, ${b.accent})`,
   };
 }
 
-const MANAGED_VARS = [...Object.keys(deriveVars(APPEARANCE_DEFAULTS.light, false)), ...Object.keys(RADIUS_BASE)];
+const MANAGED_VARS = [...Object.keys(deriveVars(APPEARANCE_DEFAULTS.light, false)), "--on-primary", "--on-primary-muted", ...Object.keys(RADIUS_BASE)];
 
 /* ---------- state ---------- */
 let appearance = loadAppearance();
 
 function loadAppearance() {
   let fallbackMode = "system";
-  const blank = { mode: fallbackMode, preset: null, radius: 100, light: {}, dark: {} };
+  const blank = {
+    version: 2, mode: fallbackMode, radius: 100,
+    light: presetGradient(COLOR_PRESETS[0], "light"), dark: presetGradient(COLOR_PRESETS[0], "dark"),
+  };
   try {
     const legacyMode = localStorage.getItem("govdocs-theme");
     if (["light", "dark", "system"].includes(legacyMode)) fallbackMode = legacyMode;
     blank.mode = fallbackMode;
     const saved = JSON.parse(localStorage.getItem(APPEARANCE_KEY) || "null");
     if (!saved || typeof saved !== "object") return blank;
-    const clean = (obj) => {
-      const out = {};
-      COLOR_FIELDS.forEach(({ key }) => { if (isHex(obj?.[key])) out[key] = obj[key].toUpperCase(); });
-      return out;
+    const clean = (mode) => {
+      if (saved.version === 2) return cleanGradient(saved[mode], blank[mode]);
+      const start = legacyPurple(saved[mode]?.primary);
+      if (!start) return blank[mode];
+      const end = legacyPurple(saved[mode]?.accent) || { ...start, l: start.l * 0.65 };
+      return cleanGradient({ start, end, angle: 135 }, blank[mode]);
     };
     return {
+      version: 2,
       mode: ["light", "dark", "system"].includes(saved.mode) ? saved.mode : fallbackMode,
-      preset: typeof saved.preset === "string" ? saved.preset : null,
       radius: Number.isFinite(saved.radius) ? Math.min(200, Math.max(0, saved.radius)) : 100,
-      light: clean(saved.light),
-      dark: clean(saved.dark),
+      light: clean("light"),
+      dark: clean("dark"),
     };
   } catch {
     return blank;
@@ -157,7 +227,19 @@ function saveAppearance() {
 
 const systemMode = () => (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 const activeMode = () => (appearance.mode === "system" ? systemMode() : appearance.mode);
-const baseColors = (mode) => ({ ...APPEARANCE_DEFAULTS[mode], ...appearance[mode] });
+function baseColors(mode) {
+  const dark = mode === "dark";
+  const { start, end } = appearance[mode];
+  const middle = { h: (start.h + end.h) / 2, s: (start.s + end.s) / 2, l: (start.l + end.l) / 2 };
+  const primary = purpleHex({ ...middle, l: dark ? Math.max(65, Math.min(82, middle.l)) : Math.max(30, Math.min(47, middle.l)) });
+  return {
+    ...APPEARANCE_DEFAULTS[mode], primary,
+    accent: purpleHex({ ...middle, s: Math.min(60, middle.s), l: dark ? 84 : 86 }),
+    bg: purpleHex({ h: middle.h, s: 35, l: dark ? 8 : 97 }),
+    surface: dark ? purpleHex({ h: middle.h, s: 30, l: 14 }) : "#FFFFFF",
+    text: purpleHex({ h: middle.h, s: 30, l: dark ? 95 : 19 }),
+  };
+}
 
 /** ใส่ค่าสีทั้งหมดลง :root ตามโหมดปัจจุบัน */
 function applyAppearance({ repaintCharts = false } = {}) {
@@ -167,10 +249,14 @@ function applyAppearance({ repaintCharts = false } = {}) {
 
   MANAGED_VARS.forEach((prop) => root.style.removeProperty(prop));
 
-  if (Object.keys(appearance[mode]).length) {
-    const vars = deriveVars(baseColors(mode), mode === "dark");
-    Object.entries(vars).forEach(([prop, value]) => root.style.setProperty(prop, value));
-  }
+  const vars = deriveVars(baseColors(mode), mode === "dark");
+  const readable = readableGradient(appearance[mode]);
+  vars["--grad-primary"] = readable.background;
+  vars["--grad-start"] = readable.start;
+  vars["--grad-end"] = readable.end;
+  vars["--on-primary"] = readable.ink;
+  vars["--on-primary-muted"] = readable.ink;
+  Object.entries(vars).forEach(([prop, value]) => root.style.setProperty(prop, value));
   if (appearance.radius !== 100) {
     Object.entries(RADIUS_BASE).forEach(([prop, px]) => root.style.setProperty(prop, `${Math.round((px * appearance.radius) / 100)}px`));
   }
@@ -180,95 +266,68 @@ function applyAppearance({ repaintCharts = false } = {}) {
 /* ---------- UI ---------- */
 function renderPresets() {
   const grid = document.getElementById("presetGrid");
+  const focusedPreset = document.activeElement?.dataset?.preset;
   grid.innerHTML = "";
+  const mode = activeMode();
   COLOR_PRESETS.forEach((p) => {
     const btn = document.createElement("button");
+    const gradient = presetGradient(p, mode);
+    const selected = JSON.stringify(appearance[mode]) === JSON.stringify(gradient);
     btn.type = "button";
-    btn.className = `preset-btn${appearance.preset === p.id || (!appearance.preset && p.id === "default" && !Object.keys(appearance[activeMode()]).length) ? " is-active" : ""}`;
-    btn.innerHTML = `<span class="preset-dots"><i style="background:${p.primary}"></i><i style="background:${p.accent}"></i></span><span></span>`;
-    btn.lastElementChild.textContent = p.name;
+    btn.className = `preset-btn${selected ? " is-active" : ""}`;
+    btn.dataset.preset = p.id;
+    btn.setAttribute("aria-pressed", String(selected));
+    btn.innerHTML = `<span class="preset-gradient" aria-hidden="true" style="background:${readableGradient(gradient).background}"></span><span>${p.name}</span>`;
     btn.addEventListener("click", () => applyPreset(p));
     grid.appendChild(btn);
+    if (focusedPreset === p.id) btn.focus({ preventScroll: true });
   });
 }
 
-function presetColors(p, mode) {
-  const dark = mode === "dark";
-  const primary = dark ? mixHex(p.primary, "#FFFFFF", 0.34) : p.primary;
-  return {
-    ...APPEARANCE_DEFAULTS[mode],
-    primary,
-    accent: dark ? mixHex(p.accent, "#FFFFFF", 0.28) : p.accent,
-    bg: dark ? mixHex(p.primary, "#03060B", 0.9) : mixHex(p.primary, "#FFFFFF", 0.93),
-    surface: dark ? mixHex(p.primary, "#0A1119", 0.86) : "#FFFFFF",
-    text: dark ? APPEARANCE_DEFAULTS.dark.text : mixHex(p.primary, "#0A121C", 0.72),
-  };
-}
-
 function applyPreset(p) {
-  if (p.id === "default") {
-    appearance.light = {};
-    appearance.dark = {};
-  } else {
-    appearance.light = presetColors(p, "light");
-    appearance.dark = presetColors(p, "dark");
-  }
-  appearance.preset = p.id;
+  appearance[activeMode()] = presetGradient(p, activeMode());
   saveAppearance();
   applyAppearance({ repaintCharts: true });
   syncAppearanceUI();
   showToast(`ใช้ชุดสี “${p.name}” แล้ว`, "success");
 }
 
-function renderSwatches() {
-  const grid = document.getElementById("swatchGrid");
-  const mode = activeMode();
-  const colors = baseColors(mode);
-  grid.innerHTML = "";
-  COLOR_FIELDS.forEach(({ key, label }) => {
-    const item = document.createElement("div");
-    item.className = "swatch";
-    item.innerHTML = `
-      <span class="swatch-chip"><input type="color" data-color-key="${key}" aria-label="${label}"></span>
-      <span class="swatch-text"><strong></strong><span class="mono" data-hex-for="${key}"></span></span>
-      <button type="button" class="swatch-reset" data-reset-key="${key}" aria-label="คืนค่าเดิมของ${label}" title="คืนค่าเดิม">
-        <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/></svg>
-      </button>`;
-    item.querySelector("strong").textContent = label;
-    item.querySelector("input").value = colors[key].toLowerCase();
-    item.querySelector("[data-hex-for]").textContent = colors[key];
-    grid.appendChild(item);
+function syncGradientUI() {
+  const gradient = appearance[activeMode()];
+  const channels = { h: "Hue", s: "Saturation", l: "Lightness" };
+  ["start", "end"].forEach((stop) => {
+    const prefix = `gradient${stop === "start" ? "Start" : "End"}`;
+    const color = purpleHex(gradient[stop]);
+    document.getElementById(`${prefix}Chip`).style.background = color;
+    document.getElementById(`${prefix}Hex`).textContent = color;
+    Object.entries(channels).forEach(([channel, suffix]) => {
+      const input = document.getElementById(prefix + suffix);
+      input.value = gradient[stop][channel];
+      document.getElementById(`${prefix}${suffix}Value`).textContent = `${input.value}${channel === "h" ? "°" : "%"}`;
+      const [min, max] = PURPLE_CHANNELS[channel];
+      const samples = Array.from({ length: 7 }, (_, i) => purpleHex({ ...gradient[stop], [channel]: min + (max - min) * i / 6 }));
+      input.style.background = `linear-gradient(90deg, ${samples.join(", ")})`;
+    });
   });
+  document.getElementById("gradientAngle").value = gradient.angle;
+  document.getElementById("gradientAngleValue").textContent = `${gradient.angle}°`;
+  document.getElementById("gradientPreview").style.background = readableGradient(gradient).background;
 }
 
 function syncAppearanceUI() {
   const mode = activeMode();
-  const colors = baseColors(mode);
-
   document.querySelectorAll("#modeSegment button").forEach((b) => {
     b.classList.toggle("is-active", b.dataset.mode === appearance.mode);
+    b.setAttribute("aria-pressed", String(b.dataset.mode === appearance.mode));
   });
   document.getElementById("tuneModeNote").textContent =
     `กำลังแก้ไขสีของโหมด${mode === "dark" ? "มืด" : "สว่าง"}`;
 
-  document.querySelectorAll("#swatchGrid input[type=color]").forEach((input) => {
-    const key = input.dataset.colorKey;
-    input.value = colors[key].toLowerCase();
-    const hex = document.querySelector(`[data-hex-for="${key}"]`);
-    if (hex) hex.textContent = colors[key];
-  });
+  syncGradientUI();
 
   document.getElementById("radiusRange").value = appearance.radius;
   document.getElementById("radiusValue").textContent = `${appearance.radius}%`;
   renderPresets();
-}
-
-function setColor(key, value) {
-  const mode = activeMode();
-  appearance[mode] = { ...appearance[mode], [key]: value.toUpperCase() };
-  appearance.preset = null;
-  saveAppearance();
-  applyAppearance();
 }
 
 function setMode(mode) {
@@ -279,7 +338,10 @@ function setMode(mode) {
 }
 
 function resetAppearance() {
-  appearance = { mode: appearance.mode, preset: "default", radius: 100, light: {}, dark: {} };
+  appearance = {
+    version: 2, mode: appearance.mode, radius: 100,
+    light: presetGradient(COLOR_PRESETS[0], "light"), dark: presetGradient(COLOR_PRESETS[0], "dark"),
+  };
   saveAppearance();
   applyAppearance({ repaintCharts: true });
   syncAppearanceUI();
@@ -290,7 +352,6 @@ function resetAppearance() {
 applyAppearance();
 
 document.getElementById("appearanceBtn").addEventListener("click", () => {
-  renderSwatches();
   syncAppearanceUI();
   openModal("appearanceModalOverlay");
 });
@@ -304,22 +365,28 @@ document.getElementById("modeSegment").addEventListener("click", (e) => {
   if (btn) setMode(btn.dataset.mode);
 });
 
-document.getElementById("swatchGrid").addEventListener("input", (e) => {
-  const input = e.target.closest("input[data-color-key]");
-  if (!input) return;
-  setColor(input.dataset.colorKey, input.value);
-  const hex = document.querySelector(`[data-hex-for="${input.dataset.colorKey}"]`);
-  if (hex) hex.textContent = input.value.toUpperCase();
-});
-document.getElementById("swatchGrid").addEventListener("change", (e) => {
-  if (e.target.closest("input[data-color-key]")) { renderCharts(); renderPresets(); }
-});
-document.getElementById("swatchGrid").addEventListener("click", (e) => {
-  const btn = e.target.closest("button[data-reset-key]");
-  if (!btn) return;
+document.getElementById("gradientEditor").addEventListener("input", (e) => {
+  const input = e.target.closest("input[type=range]");
+  if (!input || !Number.isFinite(Number(input.value))) return;
   const mode = activeMode();
-  delete appearance[mode][btn.dataset.resetKey];
-  appearance.preset = null;
+  const gradient = appearance[mode];
+  if (input.id === "gradientAngle") gradient.angle = Number(input.value);
+  else if (["start", "end"].includes(input.dataset.gradientStop) && Object.hasOwn(PURPLE_CHANNELS, input.dataset.gradientChannel)) {
+    gradient[input.dataset.gradientStop][input.dataset.gradientChannel] = Number(input.value);
+  } else return;
+  appearance[mode] = cleanGradient(gradient, presetGradient(COLOR_PRESETS[0], mode));
+  saveAppearance();
+  applyAppearance();
+  syncGradientUI();
+  // Preserve focus while dragging or using the arrow keys on a range control.
+  renderPresets();
+});
+document.getElementById("gradientEditor").addEventListener("change", (e) => {
+  if (e.target.closest("input[type=range]")) renderCharts();
+});
+document.getElementById("reverseGradientBtn").addEventListener("click", () => {
+  const gradient = appearance[activeMode()];
+  [gradient.start, gradient.end] = [gradient.end, gradient.start];
   saveAppearance();
   applyAppearance({ repaintCharts: true });
   syncAppearanceUI();

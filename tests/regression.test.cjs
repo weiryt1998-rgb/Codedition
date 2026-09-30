@@ -207,6 +207,40 @@ test('invalid legacy theme falls back to system mode', () => {
   assert.equal(setup({ legacyTheme: 'invalid' }).run('activeMode()'), 'light');
 });
 
+test('appearance migrates old palettes to purple while retaining mode and radius', () => {
+  const old = {
+    mode: 'dark', radius: 140, preset: 'emerald',
+    light: { primary: '#0F6B4F', accent: '#D2A02F', bg: '#00FF00' },
+    dark: { primary: '#BC9AE0', accent: '#CFA23C' },
+  };
+  const app = setup({ storageValues: { 'govdocs-appearance': JSON.stringify(old) } });
+  assert.equal(app.run('appearance.mode'), 'dark');
+  assert.equal(app.run('appearance.radius'), 140);
+  assert.equal(app.run('JSON.stringify(appearance.light) === JSON.stringify(presetGradient(COLOR_PRESETS[0], "light"))'), true);
+  assert.equal(app.run('appearance.dark.start.h >= 250 && appearance.dark.start.h <= 300'), true);
+  assert.equal(app.run('appearance.dark.end.h === appearance.dark.start.h'), true, 'gold accent becomes a shade of the saved purple');
+  assert.notEqual(app.run('baseColors("light").bg'), old.light.bg);
+  app.run('saveAppearance()');
+  const saved = JSON.parse(app.storage.get('govdocs-appearance'));
+  assert.equal(saved.version, 2);
+  assert.deepEqual(JSON.parse(setup({ storageValues: { 'govdocs-appearance': JSON.stringify(saved) } }).run('JSON.stringify(appearance)')), saved);
+});
+
+test('invalid stored gradient values are bounded and missing values use defaults', () => {
+  const app = setup({ storageValues: { 'govdocs-appearance': JSON.stringify({
+    version: 2, mode: 'invalid', radius: 900,
+    light: { start: { h: 120, s: 200, l: -10 }, end: { h: 500, s: '50', l: null }, angle: 725 },
+    dark: null,
+  }) } });
+  assert.equal(app.run('appearance.mode'), 'system');
+  assert.equal(app.run('appearance.radius'), 200);
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(appearance.light.start)')), { h: 250, s: 100, l: 5 });
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(appearance.light.end)')), { h: 300, s: 39, l: 32 });
+  assert.equal(app.run('appearance.light.angle'), 360);
+  assert.equal(app.run('JSON.stringify(appearance.dark) === JSON.stringify(presetGradient(COLOR_PRESETS[0], "dark"))'), true);
+  assert.equal(app.run('purpleHex({ h: 270, s: 100, l: 50 })'), '#8000FF');
+});
+
 test('category snapshots preserve selections and clear removed categories', () => {
   const { run, elements } = setup();
   run('allCategories = [{id:"a",name:"A"},{id:"b",name:"B"}]');
