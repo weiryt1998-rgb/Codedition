@@ -592,7 +592,7 @@ document.getElementById("confirmActionBtn").addEventListener("click", async () =
   const action = confirmCallback;
   setModalBusy("confirmModalOverlay", true);
   try { await action(); }
-  catch (err) { showToast(err.message, "error"); }
+  catch (err) { showToast(friendlyError(err), "error"); }
   finally {
     setModalBusy("confirmModalOverlay", false);
     closeModal("confirmModalOverlay");
@@ -637,6 +637,7 @@ let defaultCategoriesChecked = false;
 
 /* เทียบชื่อหมวดหมู่โดยไม่สนช่องว่างหัวท้ายและตัวพิมพ์ */
 const categoryKey = (name) => String(name).trim().normalize().toLocaleLowerCase("th");
+const isDefaultCategory = (name) => DEFAULT_CATEGORIES.some((d) => categoryKey(d) === categoryKey(name));
 
 function ensureDefaultCategories(snap) {
   // รอสแนปช็อตจริงจากเซิร์ฟเวอร์ก่อน ไม่งั้นข้อมูลจากแคชอาจทำให้สร้างซ้ำ
@@ -1190,6 +1191,10 @@ function renderCategories() {
   grid.innerHTML = allCategories.map((c) => {
     const count = allDocuments.filter((d) => d.category === c.id).length;
     const share = allDocuments.length ? Math.round((count / allDocuments.length) * 100) : 0;
+    // หมวดหมู่หลักลบไม่ได้: ensureDefaultCategories จะสร้างกลับมาเป็น id ใหม่ เอกสารเดิมจึงหลุดหมวดหมู่
+    const deleteAttrs = isDefaultCategory(c.name)
+      ? `disabled title="หมวดหมู่หลักของระบบ ลบไม่ได้" aria-label="หมวดหมู่หลักของระบบ ${escapeHtml(c.name)} ลบไม่ได้"`
+      : `data-del-cat="${escapeHtml(c.id)}" title="ลบหมวดหมู่" aria-label="ลบหมวดหมู่ ${escapeHtml(c.name)}"`;
     return `
       <div class="category-card">
         <span class="cat-back" aria-hidden="true"></span>
@@ -1204,7 +1209,7 @@ function renderCategories() {
           <span class="cat-count">${count} เอกสาร</span>
           <div class="meter" aria-hidden="true"><span style="width:${(count / max) * 100}%"></span></div>
           <div class="cat-actions">
-            <button class="icon-btn" data-del-cat="${escapeHtml(c.id)}" title="ลบหมวดหมู่" aria-label="ลบหมวดหมู่ ${escapeHtml(c.name)}">
+            <button class="icon-btn" ${deleteAttrs}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7"/></svg>
             </button>
           </div>
@@ -1217,7 +1222,7 @@ function renderCategories() {
         try {
           await db.collection("categories").doc(btn.dataset.delCat).delete();
           showToast("ลบหมวดหมู่แล้ว", "success");
-        } catch (err) { showToast(err.message, "error"); }
+        } catch (err) { showToast(friendlyError(err), "error"); }
       });
     });
   });
@@ -1230,8 +1235,13 @@ document.getElementById("addCategoryBtn").addEventListener("click", () => {
 document.getElementById("categoryForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = document.getElementById("categoryName").value.trim();
-  if (!name || document.getElementById("categoryModalOverlay").getAttribute("aria-busy") === "true") return;
-  if (allCategories.some((c) => String(c.name).normalize().toLocaleLowerCase("th") === name.normalize().toLocaleLowerCase("th"))) {
+  if (document.getElementById("categoryModalOverlay").getAttribute("aria-busy") === "true") return;
+  // ช่องว่างล้วนผ่าน required ของเบราว์เซอร์ได้ จึงต้องบอกเอง ไม่ใช่กดแล้วเงียบ
+  if (!name) {
+    showToast("กรุณากรอกชื่อหมวดหมู่", "error");
+    return;
+  }
+  if (allCategories.some((c) => categoryKey(c.name) === categoryKey(name))) {
     showToast("มีหมวดหมู่นี้แล้ว กรุณาใช้ชื่ออื่น", "error");
     return;
   }
@@ -1241,7 +1251,7 @@ document.getElementById("categoryForm").addEventListener("submit", async (e) => 
     showToast("เพิ่มหมวดหมู่แล้ว", "success");
     setModalBusy("categoryModalOverlay", false);
     closeModal("categoryModalOverlay");
-  } catch (err) { showToast(err.message, "error"); }
+  } catch (err) { showToast(friendlyError(err), "error"); }
   finally { setModalBusy("categoryModalOverlay", false); }
 });
 
@@ -1281,6 +1291,8 @@ function friendlyError(err) {
   if (err instanceof PdfApiError) return err.message;
   if (err?.code === "permission-denied") return "ไม่มีสิทธิ์บันทึกหรือแก้ไขข้อมูลเอกสาร";
   if (err?.code === "unavailable") return "เชื่อมต่อฐานข้อมูลไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่";
+  // แก้ไข/กู้คืนรายการที่มีคนลบถาวรไปแล้วระหว่างที่หน้านี้เปิดอยู่
+  if (err?.code === "not-found") return "ไม่พบข้อมูลนี้แล้ว อาจถูกลบไปแล้ว";
   return err?.message || String(err);
 }
 
@@ -1546,13 +1558,13 @@ function softDeleteDoc(id) {
     try {
       await db.collection("documents").doc(id).update({ deleted: true, deletedAt: Date.now() });
       showToast("ย้ายไปถังขยะแล้ว", "success");
-    } catch (err) { showToast(err.message, "error"); }
+    } catch (err) { showToast(friendlyError(err), "error"); }
   });
 }
 function restoreDoc(id) {
   db.collection("documents").doc(id).update({ deleted: false, deletedAt: null })
     .then(() => showToast("กู้คืนเอกสารแล้ว", "success"))
-    .catch((err) => showToast(err.message, "error"));
+    .catch((err) => showToast(friendlyError(err), "error"));
 }
 function permanentlyDeleteDoc(id) {
   askConfirm("ลบเอกสารนี้ถาวร? ไม่สามารถกู้คืนได้", async () => {
@@ -1782,7 +1794,8 @@ function getFilteredDocs() {
     const matchesQuery = !q || [d.title, d.docNumber, d.agency, categoryName(d.category), URGENCY_LABEL[d.urgency]]
       .some((f) => String(f ?? "").toLowerCase().includes(q));
     const matchesCat = !catFilter || d.category === catFilter;
-    const matchesStatus = !statusFilter || d.status === statusFilter;
+    const matchesStatus = !statusFilter
+      || (statusFilter === "none" ? !Object.hasOwn(STATUS_LABEL, d.status) : d.status === statusFilter);
     const matchesDate = !dateFilter || d.date === dateFilter;
     return matchesQuery && matchesCat && matchesStatus && matchesDate;
   });
@@ -1892,7 +1905,9 @@ function renderTrash() {
   document.getElementById("trashTable").style.display = allTrash.length === 0 ? "none" : "table";
   document.getElementById("navCountTrash").textContent = allTrash.length;
 
-  tbody.innerHTML = allTrash.map((d) => `
+  // ที่เพิ่งลบอยู่บนสุด (Firestore ส่งมาเรียงตาม id ซึ่งเท่ากับไม่เรียงเลย)
+  const byDeletedAt = [...allTrash].sort((a, b) => (Number(b.deletedAt) || 0) - (Number(a.deletedAt) || 0));
+  tbody.innerHTML = byDeletedAt.map((d) => `
     <tr>
       <td class="mono">${escapeHtml(d.docNumber || "-")}</td>
       <td class="doc-title-cell">${escapeHtml(d.title || "-")}</td>

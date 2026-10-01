@@ -909,3 +909,79 @@ test('permanent delete removes the R2 file before the Firestore record', async (
   assert.equal(legacy.apiCalls.length, 0);
   assert.deepEqual(legacy.deletes, ['documents/old']);
 });
+
+/* =========================================================
+   Debug review 2026-10-02
+   ========================================================= */
+test('built-in categories cannot be deleted (they would come back empty), others still can', () => {
+  const app = setup();
+  app.run(`allCategories = [{ id: "order", name: "คำสั่ง" }, { id: "memo", name: " บันทึกข้อความ " }, { id: "own", name: "หนังสือเวียน" }]; renderCategories()`);
+  const markup = app.elements.get('categoryGrid').innerHTML;
+  assert.deepEqual([...markup.matchAll(/data-del-cat="([^"]*)"/g)].map((m) => m[1]), ['own']);
+  assert.equal((markup.match(/disabled title="หมวดหมู่หลักของระบบ ลบไม่ได้"/g) || []).length, 2);
+});
+
+test('the status filter can find documents saved without a status', () => {
+  const { run, elements } = setup();
+  run(`allDocuments = [
+    { id: "a", title: "ไม่ระบุ", status: "" },
+    { id: "b", title: "เดิมไม่มีช่องสถานะ" },
+    { id: "c", title: "อนุมัติ", status: "approved" },
+  ]`);
+  const titles = () => JSON.parse(run('JSON.stringify(getFilteredDocs().map((d) => d.title))')).sort();
+  elements.get('filterStatus').value = 'none';
+  assert.deepEqual(titles(), ['ไม่ระบุ', 'เดิมไม่มีช่องสถานะ'].sort());
+  elements.get('filterStatus').value = 'approved';
+  assert.deepEqual(titles(), ['อนุมัติ']);
+  assert.match(html.match(/<select id="filterStatus">([\s\S]*?)<\/select>/)[1], /<option value="none">ไม่ระบุสถานะ<\/option>/);
+});
+
+test('the trash lists the most recently deleted first', () => {
+  const { run, elements } = setup();
+  run(`allTrash = [
+    { id: "a", title: "ลบก่อน", deletedAt: 1000 },
+    { id: "b", title: "ลบล่าสุด", deletedAt: 3000 },
+    { id: "c", title: "ไม่มีเวลาลบ" },
+    { id: "d", title: "ลบกลาง", deletedAt: 2000 },
+  ]; renderTrash()`);
+  const titles = [...elements.get('trashTableBody').innerHTML.matchAll(/doc-title-cell">([^<]*)</g)].map((m) => m[1]);
+  assert.deepEqual(titles, ['ลบล่าสุด', 'ลบกลาง', 'ลบก่อน', 'ไม่มีเวลาลบ']);
+});
+
+test('failed trash, restore and category actions are explained in Thai, not raw Firestore text', async () => {
+  const notFound = Object.assign(new Error('No document to update: projects/x'), { code: 'not-found' });
+  const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+
+  const trash = setup({ authMode: 'ready' });
+  const trashToasts = recordToasts(trash);
+  trash.run('softDeleteDoc("gone")');
+  const moving = trash.elements.get('confirmActionBtn').fire('click');
+  await flush();
+  trash.rejectWrite(notFound);
+  await moving;
+  trash.run('restoreDoc("gone")');
+  await flush();
+  trash.rejectWrite(denied);
+  await flush();
+  assert.deepEqual(trashToasts.map((t) => [t.type, t.message]), [
+    ['error', 'ไม่พบข้อมูลนี้แล้ว อาจถูกลบไปแล้ว'],
+    ['error', 'ไม่มีสิทธิ์บันทึกหรือแก้ไขข้อมูลเอกสาร'],
+  ]);
+
+  const cat = setup({ authMode: 'ready' });
+  const catToasts = recordToasts(cat);
+  cat.run('allCategories = [{ id: "x", name: "หนังสือเวียน" }]');
+  for (const name of ['   ', ' หนังสือเวียน ']) {
+    cat.elements.get('categoryName').value = name;
+    await cat.elements.get('categoryForm').fire('submit');
+  }
+  assert.equal(cat.writes.length, 0);
+  cat.elements.get('categoryName').value = 'หนังสือใหม่';
+  const adding = cat.elements.get('categoryForm').fire('submit');
+  await flush();
+  cat.rejectWrite(denied);
+  await adding;
+  assert.deepEqual(catToasts.map((t) => t.message), [
+    'กรุณากรอกชื่อหมวดหมู่', 'มีหมวดหมู่นี้แล้ว กรุณาใช้ชื่ออื่น', 'ไม่มีสิทธิ์บันทึกหรือแก้ไขข้อมูลเอกสาร',
+  ]);
+});

@@ -333,16 +333,20 @@ async function main() {
     });
     await check('PDF download produces an actual PDF file', async () => {
       const downloads = await fs.mkdtemp(path.join(output, 'download-'));
-      await cdp('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
-      await click('[data-download]');
-      let downloaded;
-      for (let i = 0; i < 100; i++) {
-        downloaded = (await fs.readdir(downloads)).find((name) => name.endsWith('.pdf'));
-        if (downloaded) break;
-        await pause(50);
+      try {
+        await cdp('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
+        await click('[data-download]');
+        let downloaded;
+        for (let i = 0; i < 100; i++) {
+          downloaded = (await fs.readdir(downloads)).find((name) => name.endsWith('.pdf'));
+          if (downloaded) break;
+          await pause(50);
+        }
+        assert.ok(downloaded, 'PDF downloaded');
+        assert.ok((await fs.readFile(path.join(downloads, downloaded), 'utf8')).startsWith('%PDF-'));
+      } finally {
+        await fs.rm(downloads, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => {});
       }
-      assert.ok(downloaded, 'PDF downloaded');
-      assert.ok((await fs.readFile(path.join(downloads, downloaded), 'utf8')).startsWith('%PDF-'));
     });
     await check('Legacy base64 documents still open without the Worker', async () => {
       const calls = apiLog.length;
@@ -386,6 +390,11 @@ async function main() {
       await click('#confirmActionBtn');
       await waitFor(`allCategories.length===${count}`);
       assert.equal(await evaluate('allDocuments.length'), 12);
+      // built-in categories are recreated on every load, so their delete button is switched off
+      const builtIn = await evaluate(`[...document.querySelectorAll('.category-card')]
+        .filter((card) => ['คำสั่ง', 'บันทึกข้อความ', 'คำร้อง'].includes(card.querySelector('.cat-name').textContent))
+        .map((card) => card.querySelector('.cat-actions button').disabled)`);
+      assert.deepEqual(builtIn, [true, true, true]);
     });
     await check('Theme changes and persists across reload', async () => {
       const previous = await evaluate('activeMode()');
