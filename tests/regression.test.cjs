@@ -451,6 +451,7 @@ test('a document with blank details and no PDF is saved without any file fields'
   assert.equal(write.title, '');
   assert.equal(write.docNumber, '');
   assert.equal(write.date, '');
+  assert.equal(write.status, '', 'no status has to be chosen');
   assert.equal('urgency' in write, false, 'ปกติ is not written, so saving still works under rules that predate the field');
   assert.equal(write.createdBy, 'user-1');
   // firestore.rules accepts a record without a file only when none of the file fields are present.
@@ -508,6 +509,61 @@ test('the urgency choice is saved, restored when editing, shown before the title
   await elements.get('globalSearch').fire('input');
   assert.equal((elements.get('docsTableBody').innerHTML.match(/<tr>/g) || []).length, 1);
   assert.match(elements.get('docsTableBody').innerHTML, /ขอเชิญประชุม/);
+});
+
+test('the form, the labels and firestore.rules agree on the statuses, and none has to be chosen', () => {
+  const { run } = setup();
+  const select = html.match(/<select id="docStatus">([\s\S]*?)<\/select>/)[1];
+  const options = [...select.matchAll(/<option value="([^"]*)">([^<]*)<\/option>/g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(options, [['', 'ไม่ระบุสถานะ'], ['pending', 'รอดำเนินการ'], ['approved', 'อนุมัติแล้ว'], ['rejected', 'ไม่อนุมัติ']]);
+  assert.deepEqual(JSON.parse(run('JSON.stringify(STATUS_LABEL)')), Object.fromEntries(options.slice(1)));
+  const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
+  const allowed = [...rules.match(/data\.status in \[([^\]]*)\]/)[1].matchAll(/'([^']*)'/g)].map((m) => m[1]);
+  assert.deepEqual(allowed.sort(), options.map(([value]) => value).sort());
+});
+
+test('a chosen status is restored when editing; a blank one opens and shows as not specified', () => {
+  const { run, elements } = setup();
+  run('openDocModal({ id: "a", status: "rejected" })');
+  assert.equal(elements.get('docStatus').value, 'rejected');
+  for (const status of ['""', 'undefined', '"toString"']) {
+    run(`openDocModal({ id: "b", status: ${status} })`);
+    assert.equal(elements.get('docStatus').value, '', status);
+  }
+  assert.equal(run('statusStamp("approved")'), '<span class="stamp stamp-approved">อนุมัติแล้ว</span>');
+  for (const status of ['""', 'undefined', '"toString"', '"<b>x</b>"']) assert.equal(run(`statusStamp(${status})`), '-', status);
+});
+
+test('the คำสั่ง category calls the number field เลขคำสั่ง, in the form and the filtered table', async () => {
+  const { run, elements } = setup();
+  run(`allCategories = [{ id: "order", name: " คำสั่ง " }, { id: "memo", name: "บันทึกข้อความ" }, { id: "old", name: "หนังสือคำสั่ง" }]; renderCategoryOptions()`);
+  const label = () => [elements.get('docNumberLabel').textContent, elements.get('docNumber').placeholder];
+  const choose = (id) => { elements.get('docCategory').value = id; return elements.get('docCategory').fire('change'); };
+  run('openDocModal()');
+  assert.deepEqual(label(), ['เลขที่หนังสือ', 'เช่น ศธ 0001/2569']);
+  await choose('order');
+  assert.deepEqual(label(), ['เลขคำสั่ง', 'เช่น 123/2569']);
+  await choose('memo');
+  assert.deepEqual(label(), ['เลขที่หนังสือ', 'เช่น ศธ 0001/2569']);
+
+  run('openDocModal({ id: "a", category: "order" })');
+  assert.equal(label()[0], 'เลขคำสั่ง', 'editing an order shows its label straight away');
+  run('openDocModal({ id: "b", category: "memo" })');
+  assert.equal(label()[0], 'เลขที่หนังสือ');
+
+  // the built-in rename หนังสือคำสั่ง → คำสั่ง can arrive while the form is open
+  await choose('old');
+  assert.equal(label()[0], 'เลขที่หนังสือ');
+  run(`allCategories = [{ id: "old", name: "คำสั่ง" }]; renderCategoryOptions()`);
+  assert.equal(label()[0], 'เลขคำสั่ง');
+
+  run('allDocuments = []; renderDocsTable()');
+  assert.equal(elements.get('docNumberHead').textContent, 'เลขที่หนังสือ');
+  elements.get('filterCategory').value = 'old';
+  await elements.get('filterCategory').fire('change');
+  assert.equal(elements.get('docNumberHead').textContent, 'เลขคำสั่ง');
+  await elements.get('clearFilters').fire('click');
+  assert.equal(elements.get('docNumberHead').textContent, 'เลขที่หนังสือ');
 });
 
 test('editing writes urgency only when one is chosen or has to be cleared back to ปกติ', async () => {

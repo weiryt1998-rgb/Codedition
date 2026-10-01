@@ -635,20 +635,22 @@ const DEFAULT_CATEGORIES = ["คำสั่ง", "บันทึกข้อ�
 const RENAMED_CATEGORIES = { "หนังสือคำสั่ง": "คำสั่ง" };
 let defaultCategoriesChecked = false;
 
+/* เทียบชื่อหมวดหมู่โดยไม่สนช่องว่างหัวท้ายและตัวพิมพ์ */
+const categoryKey = (name) => String(name).trim().normalize().toLocaleLowerCase("th");
+
 function ensureDefaultCategories(snap) {
   // รอสแนปช็อตจริงจากเซิร์ฟเวอร์ก่อน ไม่งั้นข้อมูลจากแคชอาจทำให้สร้างซ้ำ
   if (defaultCategoriesChecked || snap.metadata.fromCache || snap.metadata.hasPendingWrites) return;
   defaultCategoriesChecked = true;
-  const key = (name) => String(name).trim().normalize().toLocaleLowerCase("th");
-  const existing = new Set(allCategories.map((c) => key(c.name)));
+  const existing = new Set(allCategories.map((c) => categoryKey(c.name)));
   Object.entries(RENAMED_CATEGORIES).forEach(([from, to]) => {
-    const old = allCategories.find((c) => key(c.name) === key(from));
-    if (!old || existing.has(key(to))) return;
-    existing.add(key(to));
+    const old = allCategories.find((c) => categoryKey(c.name) === categoryKey(from));
+    if (!old || existing.has(categoryKey(to))) return;
+    existing.add(categoryKey(to));
     db.collection("categories").doc(old.id).update({ name: to })
       .catch((err) => console.warn("เปลี่ยนชื่อหมวดหมู่ไม่สำเร็จ:", from, err));
   });
-  DEFAULT_CATEGORIES.filter((name) => !existing.has(key(name))).forEach((name) => {
+  DEFAULT_CATEGORIES.filter((name) => !existing.has(categoryKey(name))).forEach((name) => {
     db.collection("categories").add({ name, createdAt: Date.now() })
       .catch((err) => console.warn("สร้างหมวดหมู่เริ่มต้นไม่สำเร็จ:", name, err));
   });
@@ -1147,6 +1149,20 @@ function categoryName(id) {
   const cat = allCategories.find((c) => c.id === id);
   return cat ? cat.name : "";
 }
+/* หมวดคำสั่งเรียกช่องเลขที่หนังสือว่า "เลขคำสั่ง" (ยังเก็บใน docNumber เหมือนเดิม) */
+function isOrderCategory(id) {
+  return !!id && categoryKey(categoryName(id)) === categoryKey("คำสั่ง");
+}
+function docNumberLabel(categoryId) {
+  return isOrderCategory(categoryId) ? "เลขคำสั่ง" : "เลขที่หนังสือ";
+}
+function syncDocNumberLabel() {
+  const category = document.getElementById("docCategory").value;
+  document.getElementById("docNumberLabel").textContent = docNumberLabel(category);
+  document.getElementById("docNumber").placeholder = isOrderCategory(category) ? "เช่น 123/2569" : "เช่น ศธ 0001/2569";
+}
+document.getElementById("docCategory").addEventListener("change", syncDocNumberLabel);
+
 function renderCategoryOptions() {
   const docSelect = document.getElementById("docCategory");
   const filterSelect = document.getElementById("filterCategory");
@@ -1156,6 +1172,8 @@ function renderCategoryOptions() {
   filterSelect.innerHTML = `<option value="">หมวดหมู่ทั้งหมด</option>${opts}`;
   docSelect.value = allCategories.some((c) => c.id === selected) ? selected : "";
   filterSelect.value = allCategories.some((c) => c.id === filtered) ? filtered : "";
+  // ชื่อหมวดหมู่อาจเปลี่ยนระหว่างที่ฟอร์มเปิดอยู่ (เช่น หนังสือคำสั่ง → คำสั่ง)
+  syncDocNumberLabel();
 }
 function renderCategories() {
   const grid = document.getElementById("categoryGrid");
@@ -1423,7 +1441,7 @@ function openDocModal(doc = null) {
     document.getElementById("docDate").value = doc.date || "";
     document.getElementById("docAgency").value = doc.agency || "";
     document.getElementById("docCategory").value = allCategories.some((c) => c.id === doc.category) ? doc.category : "";
-    document.getElementById("docStatus").value = doc.status || "pending";
+    document.getElementById("docStatus").value = Object.hasOwn(STATUS_LABEL, doc.status) ? doc.status : "";
     document.getElementById("docUrgency").value = Object.hasOwn(URGENCY_LABEL, doc.urgency) ? doc.urgency : "";
     document.getElementById("docDescription").value = doc.description || "";
     if (doc.fileName) fileDropText.textContent = `ไฟล์ปัจจุบัน: ${doc.fileName} — คลิกเพื่อแทนที่`;
@@ -1436,6 +1454,7 @@ function openDocModal(doc = null) {
       .slice(0, 10);
     document.getElementById("docDate").value = localDate;
   }
+  syncDocNumberLabel();
   openModal("docModalOverlay");
 }
 
@@ -1789,6 +1808,9 @@ function renderDocsTable() {
   const emptyMessage = document.getElementById("docsEmptyMessage");
   const emptyAddButton = document.getElementById("docsEmptyAddBtn");
 
+  // กรองดูเฉพาะหมวดคำสั่ง คอลัมน์แรกจึงเป็นเลขคำสั่งทั้งหมด
+  document.getElementById("docNumberHead").textContent = docNumberLabel(document.getElementById("filterCategory").value);
+
   // sort direction indicator on the header
   document.querySelectorAll("#docsTable th[data-sort]").forEach((th) => {
     th.classList.toggle("is-sorted-asc", th.dataset.sort === sortKey && sortDir === "asc");
@@ -1890,9 +1912,10 @@ function renderTrash() {
 /* =========================================================
    HELPERS
    ========================================================= */
+/* สถานะไม่บังคับเลือก เอกสารที่ไม่ระบุสถานะแสดงเป็นขีดเหมือนช่องว่างอื่นในตาราง */
 function statusStamp(status) {
-  const cls = { approved: "stamp-approved", pending: "stamp-pending", rejected: "stamp-rejected" }[status] || "stamp-pending";
-  return `<span class="stamp ${cls}">${STATUS_LABEL[status] || "รอดำเนินการ"}</span>`;
+  if (!Object.hasOwn(STATUS_LABEL, status)) return "-";
+  return `<span class="stamp stamp-${status}">${STATUS_LABEL[status]}</span>`;
 }
 /* ป้ายชั้นความเร็วหน้าชื่อเอกสาร เอกสารปกติไม่มีป้าย */
 function urgencyBadge(urgency) {

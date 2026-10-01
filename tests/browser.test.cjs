@@ -281,8 +281,36 @@ async function main() {
       await screenshot('documents.png');
       await click('#addDocBtn');
       assert.equal(await evaluate(`document.getElementById('docUrgency').value`), '', 'a new document starts as ปกติ');
+      assert.equal(await evaluate(`document.getElementById('docStatus').value`), '', 'a new document starts with no status chosen');
       await screenshot('document-form.png');
       await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    });
+    await check('The คำสั่ง category labels the number เลขคำสั่ง in the form and the filtered table', async () => {
+      const chooseOrder = (select) => evaluate(`(() => {
+        const s = document.getElementById(${JSON.stringify(select)});
+        s.value = [...s.options].find((o) => o.textContent === 'คำสั่ง').value;
+        s.dispatchEvent(new Event('change'));
+      })()`);
+      const label = () => evaluate(`document.getElementById('docNumberLabel').textContent`);
+      const head = () => evaluate(`document.getElementById('docNumberHead').textContent`);
+      await waitFor(`document.getElementById('docModalOverlay').hidden`);
+      await click('#addDocBtn');
+      assert.equal(await label(), 'เลขที่หนังสือ');
+      await chooseOrder('docCategory');
+      assert.equal(await label(), 'เลขคำสั่ง');
+      assert.equal(await evaluate(`document.getElementById('docNumber').placeholder`), 'เช่น 123/2569');
+      await screenshot('document-form-order.png');
+      await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await waitFor(`document.getElementById('docModalOverlay').hidden`);
+      await click('#addDocBtn');
+      assert.equal(await label(), 'เลขที่หนังสือ', 'the next new document starts without a category');
+      await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await waitFor(`document.getElementById('docModalOverlay').hidden`);
+      assert.equal(await head(), 'เลขที่หนังสือ');
+      await chooseOrder('filterCategory');
+      assert.equal(await head(), 'เลขคำสั่ง');
+      await click('#clearFilters');
+      assert.equal(await head(), 'เลขที่หนังสือ');
     });
     await check('PDF preview opens a Blob URL and releases it when closed', async () => {
       await evaluate(`(() => {const range=document.createRange(); range.selectNode(document.getElementById('previewFrame')); const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range);})()`);
