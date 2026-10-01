@@ -319,6 +319,27 @@ test('document numbers sort naturally and pagination stays bounded', () => {
   assert.match(elements.get('pagination').innerHTML, /aria-current="page"/);
 });
 
+test('rows are numbered in save order, newest first, and keep their number under any sort', () => {
+  const { run, elements } = setup();
+  // issue dates deliberately run against the save order; the legacy record has no timestamp at all
+  run(`allDocuments = [
+    { id: "b", title: "บันทึกที่สอง", date: "2026-01-01", createdAtMs: 2000 },
+    { id: "c", title: "บันทึกล่าสุด", date: "2025-01-01", createdAtMs: 3000 },
+    { id: "a", title: "บันทึกแรก", date: "2026-06-01", createdAtMs: 1000 },
+    { id: "z", title: "เอกสารเก่าไม่มีเวลา", date: "2026-03-01" },
+  ]; renderDocsTable()`);
+  const rows = () => [...elements.get('docsTableBody').innerHTML.matchAll(/<td class="mono col-entry">(\d+)<\/td>[\s\S]*?<td class="doc-title-cell">([^<]*)/g)].map((m) => `${m[1]} ${m[2]}`);
+  assert.deepEqual(rows(), ['4 บันทึกล่าสุด', '3 บันทึกที่สอง', '2 บันทึกแรก', '1 เอกสารเก่าไม่มีเวลา']);
+  run('sortKey = "date"; sortDir = "desc"; renderDocsTable()');
+  assert.deepEqual(rows(), ['2 บันทึกแรก', '1 เอกสารเก่าไม่มีเวลา', '3 บันทึกที่สอง', '4 บันทึกล่าสุด']);
+  // documents issued on the same day appear in the order they were saved
+  run(`allDocuments = [
+    { id: "x", title: "บันทึกทีหลัง", date: "2026-09-10", createdAtMs: 20 },
+    { id: "y", title: "บันทึกก่อน", date: "2026-09-10", createdAtMs: 10 },
+  ]; sortDir = "asc"; renderDocsTable()`);
+  assert.deepEqual(rows(), ['1 บันทึกก่อน', '2 บันทึกทีหลัง']);
+});
+
 test('record IDs stay escaped in document, trash and category action attributes', () => {
   const app = setup();
   const id = 'record" data-id-marker="injected &quot;';
@@ -429,12 +450,109 @@ test('a document with blank details and no PDF is saved without any file fields'
   assert.equal(write.title, '');
   assert.equal(write.docNumber, '');
   assert.equal(write.date, '');
+  assert.equal('urgency' in write, false, 'ปกติ is not written, so saving still works under rules that predate the field');
   assert.equal(write.createdBy, 'user-1');
   // firestore.rules accepts a record without a file only when none of the file fields are present.
   for (const key of ['storageKey', 'fileData', 'fileName', 'fileSize', 'mimeType']) assert.equal(key in write, false, key);
   app.complete();
   await saving;
   assert.equal(app.elements.get('docModalOverlay').hidden, true);
+});
+
+test('the form, the labels and firestore.rules agree on the urgency levels', () => {
+  const { run } = setup();
+  const select = html.match(/<select id="docUrgency">([\s\S]*?)<\/select>/)[1];
+  const options = [...select.matchAll(/<option value="([^"]*)">([^<]*)<\/option>/g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(options, [['', 'ปกติ'], ['urgent', 'ด่วน'], ['very-urgent', 'ด่วนมาก'], ['most-urgent', 'ด่วนที่สุด']]);
+  assert.deepEqual(JSON.parse(run('JSON.stringify(URGENCY_LABEL)')), Object.fromEntries(options.slice(1)));
+  // a value the rules don't list would be refused with permission-denied on save
+  const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
+  const allowed = [...rules.match(/data\.urgency in \[([^\]]*)\]/)[1].matchAll(/'([^']*)'/g)].map((m) => m[1]);
+  assert.deepEqual(allowed, options.map(([value]) => value));
+});
+
+test('the urgency choice is saved, restored when editing, shown before the title and searchable', async () => {
+  const app = setup({ authMode: 'ready' });
+  const { run, elements } = app;
+  run('openDocModal()');
+  elements.get('docUrgency').value = 'most-urgent';
+  const saving = elements.get('docForm').fire('submit');
+  await flush();
+  assert.equal(app.writes[0].urgency, 'most-urgent');
+  app.complete();
+  await saving;
+
+  run('openDocModal({ id: "a", urgency: "very-urgent" })');
+  assert.equal(elements.get('docUrgency').value, 'very-urgent');
+  // records from before the field existed, or with a value the form doesn't offer, open as ปกติ
+  for (const urgency of ['undefined', '"toString"']) {
+    run(`openDocModal({ id: "b", urgency: ${urgency} })`);
+    assert.equal(elements.get('docUrgency').value, '');
+  }
+
+  run(`allDocuments = [
+    { id: "a", title: "ขอเชิญประชุม", urgency: "most-urgent" },
+    { id: "b", title: "ปกติ", urgency: "" },
+    { id: "c", title: "เอกสารเดิม" },
+    { id: "d", title: "ค่าแปลก", urgency: "<b>x</b>" },
+  ]; renderDocsTable()`);
+  const markup = elements.get('docsTableBody').innerHTML;
+  assert.ok(markup.includes('<span class="urgency urgency-most-urgent">ด่วนที่สุด</span>ขอเชิญประชุม'));
+  assert.equal((markup.match(/class="urgency /g) || []).length, 1, 'only the urgent record has a badge');
+  assert.ok(!markup.includes('<b>'));
+  assert.equal(run('urgencyBadge("urgent")'), '<span class="urgency urgency-urgent">ด่วน</span>');
+  assert.equal(run('urgencyBadge("very-urgent")'), '<span class="urgency urgency-very-urgent">ด่วนมาก</span>');
+
+  elements.get('globalSearch').value = 'ด่วนที่สุด';
+  await elements.get('globalSearch').fire('input');
+  assert.equal((elements.get('docsTableBody').innerHTML.match(/<tr>/g) || []).length, 1);
+  assert.match(elements.get('docsTableBody').innerHTML, /ขอเชิญประชุม/);
+});
+
+test('editing writes urgency only when one is chosen or has to be cleared back to ปกติ', async () => {
+  const edit = async (existing, choice) => {
+    const app = setup({ authMode: 'ready' });
+    app.context.existing = existing;
+    app.run('allDocuments = [existing]; openDocModal(existing)');
+    app.elements.get('docUrgency').value = choice;
+    const saving = app.elements.get('docForm').fire('submit');
+    await flush();
+    app.complete();
+    await saving;
+    return app.writes[0];
+  };
+  const old = { id: 'old', title: 'เอกสารเดิม' };
+  assert.equal('urgency' in await edit(old, ''), false, 'an older record saved as ปกติ is written exactly as before');
+  assert.equal((await edit(old, 'urgent')).urgency, 'urgent');
+  assert.equal((await edit({ ...old, urgency: 'most-urgent' }, '')).urgency, '', 'going back to ปกติ clears the stored level');
+});
+
+test('documents without a PDF or a title still read sensibly', () => {
+  const app = setup();
+  app.context.window.getSelection = () => ({ removeAllRanges() {} });
+  app.run(`allDocuments = [
+    { id: "none", title: "" },
+    { id: "r2", title: "ไฟล์ใน R2", storageKey: "${STORAGE_KEY}" },
+    { id: "legacy", title: "ไฟล์แบบเดิม", fileData: "data:application/pdf;base64,JVBERi0=" },
+  ]; allTrash = [{ id: "trashed", title: "" }]; renderDocsTable(); renderTrash()`);
+  assert.ok(app.elements.get('trashTableBody').innerHTML.includes('<td class="doc-title-cell">-</td>'));
+  const markup = app.elements.get('docsTableBody').innerHTML;
+  // no PDF: the buttons are disabled instead of reporting a broken file when pressed
+  assert.match(markup, /data-preview="none" title="ดูตัวอย่าง \(ไม่มีไฟล์ PDF\)" disabled>/);
+  assert.match(markup, /data-download="none" title="ดาวน์โหลด \(ไม่มีไฟล์ PDF\)" disabled>/);
+  for (const id of ['r2', 'legacy']) {
+    assert.match(markup, new RegExp(`data-preview="${id}" title="ดูตัวอย่าง">`));
+    assert.match(markup, new RegExp(`data-download="${id}" title="ดาวน์โหลด">`));
+  }
+  assert.ok(markup.includes('<td class="doc-title-cell">-</td>'), 'a missing title shows "-" like the other columns');
+
+  // the preview heading names the dialog, so it falls back instead of going blank
+  app.context.data = 'data:application/pdf;base64,' + btoa('%PDF-1.7');
+  for (const [doc, heading] of [['{ title: "", fileName: "คำสั่ง.pdf", fileData: data }', 'คำสั่ง.pdf'], ['{ title: "", fileData: data }', 'ดูตัวอย่างเอกสาร']]) {
+    app.run(`previewDoc(${doc})`);
+    assert.equal(app.elements.get('previewTitle').textContent, heading);
+    app.run('closeModal("previewModalOverlay")');
+  }
 });
 
 test('saving before the anonymous sign-in has finished is explained in Thai', async () => {

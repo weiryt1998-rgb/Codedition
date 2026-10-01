@@ -321,7 +321,7 @@
           <div class="table-scroll">
             <table class="doc-table" id="recentTable">
               <thead>
-                <tr><th>เลขที่หนังสือ</th><th>ชื่อเอกสาร</th><th>หมวดหมู่</th><th>วันที่</th><th>สถานะ</th></tr>
+                <tr><th class="col-entry" title="ลำดับที่บันทึกเข้าระบบ เลขน้อยบันทึกก่อน">ลำดับ</th><th>เลขที่หนังสือ</th><th>ชื่อเอกสาร</th><th>หมวดหมู่</th><th>วันที่</th><th>สถานะ</th></tr>
               </thead>
               <tbody></tbody>
             </table>
@@ -372,6 +372,7 @@
             <table class="doc-table" id="docsTable">
               <thead>
                 <tr>
+                  <th data-sort="entry" class="col-entry" title="ลำดับที่บันทึกเข้าระบบ เลขน้อยบันทึกก่อน">ลำดับ</th>
                   <th data-sort="docNumber">เลขที่หนังสือ</th>
                   <th data-sort="title">ชื่อเอกสาร</th>
                   <th data-sort="category">หมวดหมู่</th>
@@ -468,7 +469,15 @@
         <label>หมวดหมู่
           <select id="docCategory"><option value="">ไม่ระบุหมวดหมู่</option></select>
         </label>
-        <label class="span-2">สถานะ
+        <label>ชั้นความเร็ว
+          <select id="docUrgency">
+            <option value="">ปกติ</option>
+            <option value="urgent">ด่วน</option>
+            <option value="very-urgent">ด่วนมาก</option>
+            <option value="most-urgent">ด่วนที่สุด</option>
+          </select>
+        </label>
+        <label>สถานะ
           <select id="docStatus">
             <option value="pending">รอดำเนินการ</option>
             <option value="approved">อนุมัติแล้ว</option>

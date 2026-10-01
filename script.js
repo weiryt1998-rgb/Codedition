@@ -7,6 +7,8 @@ const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB — ต้องตรงกั
 const PDF_MIME = "application/pdf";
 const PAGE_SIZE = 8;
 const STATUS_LABEL = { approved: "อนุมัติแล้ว", pending: "รอดำเนินการ", rejected: "ไม่อนุมัติ" };
+// ชั้นความเร็วของหนังสือ — ค่าว่าง (หรือเอกสารเดิมที่ไม่มีช่องนี้) คือปกติ ต้องตรงกับ firestore.rules
+const URGENCY_LABEL = { urgent: "ด่วน", "very-urgent": "ด่วนมาก", "most-urgent": "ด่วนที่สุด" };
 
 /* =========================================================
    STATE
@@ -15,7 +17,7 @@ let allDocuments = [];   // live, non-deleted
 let allTrash = [];       // soft-deleted
 let allCategories = [];
 
-let sortKey = "date";
+let sortKey = "entry"; // ลำดับการบันทึก ฉบับที่เพิ่งบันทึกอยู่บนสุด
 let sortDir = "desc";
 let currentPage = 1;
 let pendingFileData = null; // { file, name, size } — ตัวไฟล์ส่งไป R2 ตอนบันทึก
@@ -1127,15 +1129,17 @@ function paintChart(canvasId, type, data, extraOptions) {
 
 function renderRecentTable() {
   const tbody = document.querySelector("#recentTable tbody");
-  const recent = [...allDocuments].sort((a, b) => createdAtMillis(b) - createdAtMillis(a)).slice(0, 5);
+  const numbers = entryNumbers();
+  const recent = [...allDocuments].sort((a, b) => byEntry(b, a)).slice(0, 5);
   tbody.innerHTML = recent.map((d) => `
     <tr>
+      <td class="mono col-entry">${numbers.get(d.id)}</td>
       <td class="mono">${escapeHtml(d.docNumber || "-")}</td>
-      <td class="doc-title-cell">${escapeHtml(d.title)}</td>
+      <td class="doc-title-cell">${urgencyBadge(d.urgency)}${escapeHtml(d.title || "-")}</td>
       <td>${escapeHtml(categoryName(d.category) || "-")}</td>
       <td class="mono">${formatDate(d.date)}</td>
       <td>${statusStamp(d.status)}</td>
-    </tr>`).join("") || `<tr><td colspan="5" class="doc-sub">ยังไม่มีเอกสาร</td></tr>`;
+    </tr>`).join("") || `<tr><td colspan="6" class="doc-sub">ยังไม่มีเอกสาร</td></tr>`;
 }
 
 /* =========================================================
@@ -1422,6 +1426,7 @@ function openDocModal(doc = null) {
     document.getElementById("docAgency").value = doc.agency || "";
     document.getElementById("docCategory").value = allCategories.some((c) => c.id === doc.category) ? doc.category : "";
     document.getElementById("docStatus").value = doc.status || "pending";
+    document.getElementById("docUrgency").value = Object.hasOwn(URGENCY_LABEL, doc.urgency) ? doc.urgency : "";
     document.getElementById("docDescription").value = doc.description || "";
     if (doc.fileName) fileDropText.textContent = `ไฟล์ปัจจุบัน: ${doc.fileName} — คลิกเพื่อแทนที่`;
   } else {
@@ -1461,6 +1466,10 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
   // ทุกช่องเป็นตัวเลือก — ไม่บังคับกรอกครบหรือแนบไฟล์ PDF (firestore.rules ต้องยอมรับแบบเดียวกัน)
   const upload = pendingFileData;
   const existing = id ? findDoc(id) : null;
+  // เขียนชั้นความเร็วเฉพาะเมื่อเลือกไว้ หรือเมื่อต้องล้างค่าเดิมกลับเป็นปกติ
+  // เอกสารปกติจึงยังบันทึกได้ แม้ firestore.rules บนเซิร์ฟเวอร์ยังเป็นรุ่นที่ไม่รู้จักช่องนี้
+  const urgency = document.getElementById("docUrgency").value;
+  if (urgency || existing?.urgency) payload.urgency = urgency;
 
   const saveBtn = document.getElementById("docSaveBtn");
   setModalBusy("docModalOverlay", true);
@@ -1698,7 +1707,8 @@ async function previewDoc(doc) {
   window.getSelection()?.removeAllRanges();
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = URL.createObjectURL(blob);
-  document.getElementById("previewTitle").textContent = doc.title;
+  // หัวข้อนี้เป็นชื่อของหน้าต่างสำหรับโปรแกรมอ่านหน้าจอด้วย จึงห้ามว่างเมื่อเอกสารไม่มีชื่อ
+  document.getElementById("previewTitle").textContent = doc.title || doc.fileName || "ดูตัวอย่างเอกสาร";
   const frame = document.getElementById("previewFrame");
   const pageMode = needsPageViewer();
   frame.hidden = pageMode;
@@ -1752,7 +1762,7 @@ function getFilteredDocs() {
   const dateFilter = document.getElementById("filterDate").value;
 
   let list = allDocuments.filter((d) => {
-    const matchesQuery = !q || [d.title, d.docNumber, d.agency, categoryName(d.category)]
+    const matchesQuery = !q || [d.title, d.docNumber, d.agency, categoryName(d.category), URGENCY_LABEL[d.urgency]]
       .some((f) => String(f ?? "").toLowerCase().includes(q));
     const matchesCat = !catFilter || d.category === catFilter;
     const matchesStatus = !statusFilter || d.status === statusFilter;
@@ -1760,14 +1770,17 @@ function getFilteredDocs() {
     return matchesQuery && matchesCat && matchesStatus && matchesDate;
   });
 
+  const dir = sortDir === "asc" ? 1 : -1;
   list.sort((a, b) => {
-    let av = a[sortKey] ?? "", bv = b[sortKey] ?? "";
-    if (sortKey === "category") { av = categoryName(a.category) || ""; bv = categoryName(b.category) || ""; }
-    if (sortKey === "size") { av = a.fileSize || 0; bv = b.fileSize || 0; }
-    if (typeof av === "string" && typeof bv === "string") return av.localeCompare(bv, "th", { numeric: true }) * (sortDir === "asc" ? 1 : -1);
-    if (av < bv) return sortDir === "asc" ? -1 : 1;
-    if (av > bv) return sortDir === "asc" ? 1 : -1;
-    return 0;
+    if (sortKey !== "entry") {
+      let av = a[sortKey] ?? "", bv = b[sortKey] ?? "";
+      if (sortKey === "category") { av = categoryName(a.category) || ""; bv = categoryName(b.category) || ""; }
+      if (sortKey === "size") { av = a.fileSize || 0; bv = b.fileSize || 0; }
+      const order = typeof av === "string" && typeof bv === "string" ? av.localeCompare(bv, "th", { numeric: true }) : (av > bv) - (av < bv);
+      if (order) return order * dir;
+    }
+    // คอลัมน์ "ลำดับ" และแถวที่ค่าเท่ากัน (เช่น ออกเอกสารวันเดียวกัน) เรียงตามลำดับที่บันทึก
+    return byEntry(a, b) * dir;
   });
   return list;
 }
@@ -1797,11 +1810,16 @@ function renderDocsTable() {
   const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
   currentPage = Math.min(currentPage, totalPages);
   const pageItems = list.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const numbers = entryNumbers();
 
-  tbody.innerHTML = pageItems.map((d) => `
+  tbody.innerHTML = pageItems.map((d) => {
+    // เอกสารที่บันทึกโดยไม่แนบ PDF ไม่มีอะไรให้ดูหรือดาวน์โหลด ปิดปุ่มไว้แทนการกดแล้วแจ้งว่าไฟล์เสีย
+    const fileButton = (label) => d.storageKey || d.fileData ? `title="${label}"` : `title="${label} (ไม่มีไฟล์ PDF)" disabled`;
+    return `
     <tr>
+      <td class="mono col-entry">${numbers.get(d.id)}</td>
       <td class="mono">${escapeHtml(d.docNumber || "-")}</td>
-      <td class="doc-title-cell">${escapeHtml(d.title)}${d.description ? `<div class="doc-sub">${escapeHtml(truncate(d.description, 60))}</div>` : ""}</td>
+      <td class="doc-title-cell">${urgencyBadge(d.urgency)}${escapeHtml(d.title || "-")}${d.description ? `<div class="doc-sub">${escapeHtml(truncate(d.description, 60))}</div>` : ""}</td>
       <td>${escapeHtml(categoryName(d.category) || "-")}</td>
       <td>${escapeHtml(d.agency || "-")}</td>
       <td class="mono">${formatDate(d.date)}</td>
@@ -1809,13 +1827,14 @@ function renderDocsTable() {
       <td>${statusStamp(d.status)}</td>
       <td class="col-actions">
         <div class="row-actions">
-          <button class="icon-btn" data-preview="${escapeHtml(d.id)}" title="ดูตัวอย่าง"><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
-          <button class="icon-btn" data-download="${escapeHtml(d.id)}" title="ดาวน์โหลด"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg></button>
+          <button class="icon-btn" data-preview="${escapeHtml(d.id)}" ${fileButton("ดูตัวอย่าง")}><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          <button class="icon-btn" data-download="${escapeHtml(d.id)}" ${fileButton("ดาวน์โหลด")}><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg></button>
           <button class="icon-btn" data-edit="${escapeHtml(d.id)}" title="แก้ไข"><svg viewBox="0 0 24 24"><path d="M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6M17.5 3.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button>
           <button class="icon-btn" data-delete="${escapeHtml(d.id)}" title="ลบ"><svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7z"/></svg></button>
         </div>
       </td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
 
   bindRowActions(tbody);
   renderPagination(totalPages);
@@ -1858,7 +1877,7 @@ function renderTrash() {
   tbody.innerHTML = allTrash.map((d) => `
     <tr>
       <td class="mono">${escapeHtml(d.docNumber || "-")}</td>
-      <td class="doc-title-cell">${escapeHtml(d.title)}</td>
+      <td class="doc-title-cell">${escapeHtml(d.title || "-")}</td>
       <td class="mono">${d.deletedAt ? new Date(d.deletedAt).toLocaleDateString("th-TH") : "-"}</td>
       <td class="col-actions">
         <div class="row-actions">
@@ -1879,6 +1898,11 @@ function statusStamp(status) {
   const cls = { approved: "stamp-approved", pending: "stamp-pending", rejected: "stamp-rejected" }[status] || "stamp-pending";
   return `<span class="stamp ${cls}">${STATUS_LABEL[status] || "รอดำเนินการ"}</span>`;
 }
+/* ป้ายชั้นความเร็วหน้าชื่อเอกสาร เอกสารปกติไม่มีป้าย */
+function urgencyBadge(urgency) {
+  if (!Object.hasOwn(URGENCY_LABEL, urgency)) return "";
+  return `<span class="urgency urgency-${urgency}">${URGENCY_LABEL[urgency]}</span>`;
+}
 function formatDate(iso) {
   if (!iso) return "-";
   const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T00:00:00` : iso);
@@ -1891,6 +1915,14 @@ function createdAtMillis(doc) {
   if (Number.isFinite(value)) return value;
   if (Number.isFinite(value?.seconds)) return value.seconds * 1000;
   return 0;
+}
+/* ลำดับการบันทึก: ตามเวลาที่เพิ่มเข้าระบบ ไม่ใช่วันที่ออกเอกสาร เวลาเท่ากันใช้ id ตัดสินให้ลำดับไม่สลับไปมา */
+function byEntry(a, b) {
+  return createdAtMillis(a) - createdAtMillis(b) || String(a.id).localeCompare(String(b.id));
+}
+/* เลขลำดับของเอกสารที่ยังไม่ถูกลบ ฉบับที่บันทึกก่อนได้ 1 เลขติดตัวเอกสารไม่ว่าจะเรียง กรอง หรืออยู่หน้าไหน */
+function entryNumbers() {
+  return new Map([...allDocuments].sort(byEntry).map((d, i) => [d.id, i + 1]));
 }
 /* เอกสารแบบเดิมเท่านั้น: PDF เก็บเป็น base64 ในช่อง fileData ของ Firestore (ไม่มีการเขียนแบบนี้อีกแล้ว) */
 function attachmentBlob(doc) {

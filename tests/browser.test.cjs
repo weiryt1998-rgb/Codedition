@@ -194,6 +194,20 @@ async function main() {
       assert.equal(await evaluate(`document.getElementById('filterCategory').value`), 'cat-b');
       await click('#clearFilters');
     });
+    await check('Rows are numbered in the order they were saved, newest first by default', async () => {
+      // seed-0 is the newest of the 12 records, so it is number 12
+      const numbers = () => evaluate(`[...document.querySelectorAll('#docsTableBody tr')].map((tr) => tr.cells[0].textContent)`);
+      assert.deepEqual(await numbers(), ['12', '11', '10', '9', '8', '7', '6', '5']);
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#recentTable tbody tr')].map((tr) => tr.cells[0].textContent)`), ['12', '11', '10', '9', '8']);
+      await click('#docsTable th[data-sort="entry"]');
+      assert.deepEqual(await numbers(), ['1', '2', '3', '4', '5', '6', '7', '8'], 'ascending puts the first saved on top');
+      await click('#docsTable th[data-sort="title"]');
+      assert.equal(await evaluate(`[...document.querySelectorAll('#docsTableBody tr')].find((tr) => tr.cells[1].textContent === 'ทดสอบ/1').cells[0].textContent`), '12',
+        'another sort keeps each document its own number');
+      await click('#docsTable th[data-sort="entry"]');
+      await click('#docsTable th[data-sort="entry"]');
+      assert.deepEqual(await numbers(), ['12', '11', '10', '9', '8', '7', '6', '5']);
+    });
     await check('Document and category action IDs preserve quotes and HTML entities', async () => {
       const id = 'record" data-id-marker="injected &quot; literal';
       const ids = await evaluate(`(() => {
@@ -213,6 +227,19 @@ async function main() {
       await reloadApp();
       await click('[data-view="documents"]');
     });
+    await check('A document saved without a PDF or title shows "-" and offers no preview or download', async () => {
+      await evaluate(`allDocuments = [{ id: 'no-file', title: '', docNumber: 'NOFILE/1', status: 'pending', deleted: false }]; renderDocsTable()`);
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docsTableBody [data-preview], #docsTableBody [data-download]')].map((b) => [b.disabled, b.title])`),
+        [[true, 'ดูตัวอย่าง (ไม่มีไฟล์ PDF)'], [true, 'ดาวน์โหลด (ไม่มีไฟล์ PDF)']]);
+      assert.equal(await evaluate(`document.querySelector('#docsTableBody .doc-title-cell').textContent`), '-');
+      await click('#docsTableBody [data-preview]');
+      await click('#docsTableBody [data-download]');
+      await pause(200);
+      assert.equal(await evaluate(`document.getElementById('previewModalOverlay').hidden`), true);
+      assert.equal(await evaluate(`document.querySelectorAll('#toastStack .toast.error').length`), 0, 'no "broken file" error');
+      await reloadApp();
+      await click('[data-view="documents"]');
+    });
     await check('Modal traps keyboard focus and restores it on Escape', async () => {
       await click('#addDocBtn');
       await evaluate(`document.getElementById('docSaveBtn').focus()`);
@@ -227,23 +254,39 @@ async function main() {
       await click('#addDocBtn');
       await evaluate(`handleFile(new File(['invalid'], 'invalid.pdf', {type:'application/pdf'}))`);
       assert.equal(await evaluate(`document.getElementById('docFormError').hidden`), false);
-      await evaluate(`document.getElementById('docTitle').value='Browser created'; document.getElementById('docNumber').value='TEST/100'; handleFile(new File([fixturePdf], 'test.pdf', {type:'application/pdf'}))`);
+      await evaluate(`document.getElementById('docTitle').value='Browser created'; document.getElementById('docNumber').value='TEST/100'; document.getElementById('docUrgency').value='most-urgent'; handleFile(new File([fixturePdf], 'test.pdf', {type:'application/pdf'}))`);
       await click('#docSaveBtn');
       await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.length===13`);
       // The PDF went to R2 through the Worker; Firestore got metadata only.
-      const saved = await evaluate(`(() => { const d = fixtureStore.documents.find((x) => x.title === 'Browser created'); return { storageKey: d.storageKey, hasFileData: 'fileData' in d, mimeType: d.mimeType, createdBy: d.createdBy, fileName: d.fileName }; })()`);
+      const saved = await evaluate(`(() => { const d = fixtureStore.documents.find((x) => x.title === 'Browser created'); return { storageKey: d.storageKey, hasFileData: 'fileData' in d, mimeType: d.mimeType, createdBy: d.createdBy, fileName: d.fileName, urgency: d.urgency }; })()`);
       assert.match(saved.storageKey, STORAGE_KEY);
       assert.equal(saved.hasFileData, false);
-      assert.deepEqual([saved.mimeType, saved.createdBy, saved.fileName], ['application/pdf', 'browser-test', 'test.pdf']);
+      assert.deepEqual([saved.mimeType, saved.createdBy, saved.fileName, saved.urgency], ['application/pdf', 'browser-test', 'test.pdf', 'most-urgent']);
       assert.ok(r2.get(saved.storageKey).subarray(0, 5).toString('latin1') === '%PDF-');
       assert.ok(apiLog.includes('POST /api/files'));
       createdKey = saved.storageKey;
       await evaluate(`document.getElementById('globalSearch').value='Browser created'; document.getElementById('globalSearch').dispatchEvent(new Event('input'))`);
       await click('[data-edit]');
-      await evaluate(`document.getElementById('docTitle').value='Browser edited'`);
+      assert.equal(await evaluate(`document.getElementById('docUrgency').value`), 'most-urgent', 'editing shows the saved urgency');
+      await evaluate(`document.getElementById('docTitle').value='Browser edited'; document.getElementById('docUrgency').value='urgent'`);
       await click('#docSaveBtn');
-      await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.some(d=>d.title==='Browser edited')`);
+      await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.some(d=>d.title==='Browser edited' && d.urgency==='urgent')`);
       await click('#clearFilters');
+      const badge = (docNumber) => evaluate(`(() => {
+        const row = [...document.querySelectorAll('#docsTableBody tr')].find((tr) => tr.cells[1].textContent === ${JSON.stringify(docNumber)});
+        if (!row) throw new Error('Missing row ' + ${JSON.stringify(docNumber)});
+        return row.querySelector('.urgency')?.textContent ?? null;
+      })()`);
+      assert.equal(await badge('TEST/100'), 'ด่วน');
+      assert.equal(await badge('ทดสอบ/4'), 'ด่วนมาก');
+      assert.equal(await badge('ทดสอบ/5'), 'ด่วนที่สุด');
+      assert.equal(await badge('ทดสอบ/1'), null, 'a record without the field shows no badge');
+      assert.equal(await badge('ทดสอบ/2'), null, 'ปกติ shows no badge');
+      await screenshot('documents.png');
+      await click('#addDocBtn');
+      assert.equal(await evaluate(`document.getElementById('docUrgency').value`), '', 'a new document starts as ปกติ');
+      await screenshot('document-form.png');
+      await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
     });
     await check('PDF preview opens a Blob URL and releases it when closed', async () => {
       await evaluate(`(() => {const range=document.createRange(); range.selectNode(document.getElementById('previewFrame')); const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range);})()`);

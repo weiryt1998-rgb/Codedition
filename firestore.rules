@@ -62,7 +62,7 @@ service cloud.firestore {
 
     function validDocument(data) {
       return data.keys().hasOnly([
-          'title', 'docNumber', 'date', 'agency', 'category', 'status',
+          'title', 'docNumber', 'date', 'agency', 'category', 'status', 'urgency',
           'description', 'deleted', 'deletedAt', 'createdAt', 'createdAtMs',
           'updatedAt', 'fileName', 'fileSize', 'fileData',
           'storageKey', 'mimeType', 'createdBy'
@@ -73,6 +73,9 @@ service cloud.firestore {
         && data.agency is string && data.agency.size() <= 300
         && data.category is string && data.category.size() <= 200
         && data.status in ['approved', 'pending', 'rejected']
+        // ชั้นความเร็ว, optional: the web app writes it only for an urgent document,
+        // or '' when one is set back to ปกติ. A record without it is ปกติ.
+        && (!('urgency' in data) || data.urgency in ['', 'urgent', 'very-urgent', 'most-urgent'])
         && data.description is string && data.description.size() <= 5000
         && data.deleted is bool
         && (!('fileName' in data) || (data.fileName is string && data.fileName.size() <= 260))

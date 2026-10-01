@@ -45,6 +45,8 @@ const fixtureStore = {
     id: `seed-${i}`, title: `เอกสารทดสอบ ${i + 1}`, docNumber: `ทดสอบ/${i + 1}`,
     category: i % 2 ? 'cat-b' : 'cat-a', agency: 'หน่วยงานทดสอบ', date: '2026-09-10',
     status: ['approved', 'pending', 'rejected'][i % 3], deleted: false,
+    // every fifth record predates the urgency field and has none at all
+    ...(i % 5 ? { urgency: ['', 'urgent', 'very-urgent', 'most-urgent'][i % 5 - 1] } : {}),
     createdAtMs: Date.now() - i * 1000, fileName: 'sample.pdf', fileSize: fixturePdf.length,
     fileData: 'data:application/pdf;base64,' + btoa(fixturePdf),
   })),
