@@ -1453,17 +1453,8 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
     deleted: false,
     updatedAt: Date.now(),
   };
-  if (!payload.title || !payload.docNumber || !payload.date) {
-    errEl.textContent = "กรุณากรอกชื่อเอกสาร เลขที่หนังสือ และวันที่ให้ครบถ้วน";
-    errEl.hidden = false;
-    return;
-  }
+  // ทุกช่องเป็นตัวเลือก — ไม่บังคับกรอกครบหรือแนบไฟล์ PDF
   const upload = pendingFileData;
-  if (!upload && !id) {
-    errEl.textContent = "กรุณาแนบไฟล์ PDF";
-    errEl.hidden = false;
-    return;
-  }
   const existing = id ? findDoc(id) : null;
 
   const saveBtn = document.getElementById("docSaveBtn");
@@ -1563,7 +1554,7 @@ async function downloadDoc(doc) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = doc.fileName || `${doc.title}.pdf`;
+  a.download = doc.fileName || `${doc.title || "เอกสาร"}.pdf`;
   document.body.appendChild(a);
   a.click();
   a.remove();
