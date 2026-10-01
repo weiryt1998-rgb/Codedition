@@ -1129,17 +1129,15 @@ function paintChart(canvasId, type, data, extraOptions) {
 
 function renderRecentTable() {
   const tbody = document.querySelector("#recentTable tbody");
-  const numbers = entryNumbers();
   const recent = [...allDocuments].sort((a, b) => byEntry(b, a)).slice(0, 5);
   tbody.innerHTML = recent.map((d) => `
     <tr>
-      <td class="mono col-entry">${numbers.get(d.id)}</td>
       <td class="mono">${escapeHtml(d.docNumber || "-")}</td>
       <td class="doc-title-cell">${urgencyBadge(d.urgency)}${escapeHtml(d.title || "-")}</td>
       <td>${escapeHtml(categoryName(d.category) || "-")}</td>
       <td class="mono">${formatDate(d.date)}</td>
       <td>${statusStamp(d.status)}</td>
-    </tr>`).join("") || `<tr><td colspan="6" class="doc-sub">ยังไม่มีเอกสาร</td></tr>`;
+    </tr>`).join("") || `<tr><td colspan="5" class="doc-sub">ยังไม่มีเอกสาร</td></tr>`;
 }
 
 /* =========================================================
@@ -1779,7 +1777,7 @@ function getFilteredDocs() {
       const order = typeof av === "string" && typeof bv === "string" ? av.localeCompare(bv, "th", { numeric: true }) : (av > bv) - (av < bv);
       if (order) return order * dir;
     }
-    // คอลัมน์ "ลำดับ" และแถวที่ค่าเท่ากัน (เช่น ออกเอกสารวันเดียวกัน) เรียงตามลำดับที่บันทึก
+    // ค่าเริ่มต้น และแถวที่ค่าเท่ากัน (เช่น ออกเอกสารวันเดียวกัน) เรียงตามลำดับที่บันทึก
     return byEntry(a, b) * dir;
   });
   return list;
@@ -1810,14 +1808,12 @@ function renderDocsTable() {
   const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
   currentPage = Math.min(currentPage, totalPages);
   const pageItems = list.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  const numbers = entryNumbers();
 
   tbody.innerHTML = pageItems.map((d) => {
     // เอกสารที่บันทึกโดยไม่แนบ PDF ไม่มีอะไรให้ดูหรือดาวน์โหลด ปิดปุ่มไว้แทนการกดแล้วแจ้งว่าไฟล์เสีย
     const fileButton = (label) => d.storageKey || d.fileData ? `title="${label}"` : `title="${label} (ไม่มีไฟล์ PDF)" disabled`;
     return `
     <tr>
-      <td class="mono col-entry">${numbers.get(d.id)}</td>
       <td class="mono">${escapeHtml(d.docNumber || "-")}</td>
       <td class="doc-title-cell">${urgencyBadge(d.urgency)}${escapeHtml(d.title || "-")}${d.description ? `<div class="doc-sub">${escapeHtml(truncate(d.description, 60))}</div>` : ""}</td>
       <td>${escapeHtml(categoryName(d.category) || "-")}</td>
@@ -1919,10 +1915,6 @@ function createdAtMillis(doc) {
 /* ลำดับการบันทึก: ตามเวลาที่เพิ่มเข้าระบบ ไม่ใช่วันที่ออกเอกสาร เวลาเท่ากันใช้ id ตัดสินให้ลำดับไม่สลับไปมา */
 function byEntry(a, b) {
   return createdAtMillis(a) - createdAtMillis(b) || String(a.id).localeCompare(String(b.id));
-}
-/* เลขลำดับของเอกสารที่ยังไม่ถูกลบ ฉบับที่บันทึกก่อนได้ 1 เลขติดตัวเอกสารไม่ว่าจะเรียง กรอง หรืออยู่หน้าไหน */
-function entryNumbers() {
-  return new Map([...allDocuments].sort(byEntry).map((d, i) => [d.id, i + 1]));
 }
 /* เอกสารแบบเดิมเท่านั้น: PDF เก็บเป็น base64 ในช่อง fileData ของ Firestore (ไม่มีการเขียนแบบนี้อีกแล้ว) */
 function attachmentBlob(doc) {

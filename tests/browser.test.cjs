@@ -194,19 +194,15 @@ async function main() {
       assert.equal(await evaluate(`document.getElementById('filterCategory').value`), 'cat-b');
       await click('#clearFilters');
     });
-    await check('Rows are numbered in the order they were saved, newest first by default', async () => {
-      // seed-0 is the newest of the 12 records, so it is number 12
-      const numbers = () => evaluate(`[...document.querySelectorAll('#docsTableBody tr')].map((tr) => tr.cells[0].textContent)`);
-      assert.deepEqual(await numbers(), ['12', '11', '10', '9', '8', '7', '6', '5']);
-      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#recentTable tbody tr')].map((tr) => tr.cells[0].textContent)`), ['12', '11', '10', '9', '8']);
-      await click('#docsTable th[data-sort="entry"]');
-      assert.deepEqual(await numbers(), ['1', '2', '3', '4', '5', '6', '7', '8'], 'ascending puts the first saved on top');
-      await click('#docsTable th[data-sort="title"]');
-      assert.equal(await evaluate(`[...document.querySelectorAll('#docsTableBody tr')].find((tr) => tr.cells[1].textContent === 'ทดสอบ/1').cells[0].textContent`), '12',
-        'another sort keeps each document its own number');
-      await click('#docsTable th[data-sort="entry"]');
-      await click('#docsTable th[data-sort="entry"]');
-      assert.deepEqual(await numbers(), ['12', '11', '10', '9', '8', '7', '6', '5']);
+    await check('Rows list newest saved first by default, with no sequence-number column', async () => {
+      // seed-0 (ทดสอบ/1) is the newest of the 12 records
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docsTableBody tr')].map((tr) => tr.cells[0].textContent)`),
+        ['ทดสอบ/1', 'ทดสอบ/2', 'ทดสอบ/3', 'ทดสอบ/4', 'ทดสอบ/5', 'ทดสอบ/6', 'ทดสอบ/7', 'ทดสอบ/8']);
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#recentTable tbody tr')].map((tr) => tr.cells[0].textContent)`),
+        ['ทดสอบ/1', 'ทดสอบ/2', 'ทดสอบ/3', 'ทดสอบ/4', 'ทดสอบ/5']);
+      assert.equal(await evaluate(`document.querySelectorAll('.col-entry').length`), 0);
+      assert.deepEqual(await evaluate(`['#recentTable', '#docsTable'].map((t) => document.querySelector(t + ' thead th').textContent.trim())`),
+        ['เลขที่หนังสือ', 'เลขที่หนังสือ']);
     });
     await check('Document and category action IDs preserve quotes and HTML entities', async () => {
       const id = 'record" data-id-marker="injected &quot; literal';
@@ -273,7 +269,7 @@ async function main() {
       await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.some(d=>d.title==='Browser edited' && d.urgency==='urgent')`);
       await click('#clearFilters');
       const badge = (docNumber) => evaluate(`(() => {
-        const row = [...document.querySelectorAll('#docsTableBody tr')].find((tr) => tr.cells[1].textContent === ${JSON.stringify(docNumber)});
+        const row = [...document.querySelectorAll('#docsTableBody tr')].find((tr) => tr.cells[0].textContent === ${JSON.stringify(docNumber)});
         if (!row) throw new Error('Missing row ' + ${JSON.stringify(docNumber)});
         return row.querySelector('.urgency')?.textContent ?? null;
       })()`);

@@ -319,7 +319,7 @@ test('document numbers sort naturally and pagination stays bounded', () => {
   assert.match(elements.get('pagination').innerHTML, /aria-current="page"/);
 });
 
-test('rows are numbered in save order, newest first, and keep their number under any sort', () => {
+test('rows list newest saved first by default, without sequence numbers', () => {
   const { run, elements } = setup();
   // issue dates deliberately run against the save order; the legacy record has no timestamp at all
   run(`allDocuments = [
@@ -328,16 +328,17 @@ test('rows are numbered in save order, newest first, and keep their number under
     { id: "a", title: "บันทึกแรก", date: "2026-06-01", createdAtMs: 1000 },
     { id: "z", title: "เอกสารเก่าไม่มีเวลา", date: "2026-03-01" },
   ]; renderDocsTable()`);
-  const rows = () => [...elements.get('docsTableBody').innerHTML.matchAll(/<td class="mono col-entry">(\d+)<\/td>[\s\S]*?<td class="doc-title-cell">([^<]*)/g)].map((m) => `${m[1]} ${m[2]}`);
-  assert.deepEqual(rows(), ['4 บันทึกล่าสุด', '3 บันทึกที่สอง', '2 บันทึกแรก', '1 เอกสารเก่าไม่มีเวลา']);
+  const rows = () => [...elements.get('docsTableBody').innerHTML.matchAll(/<td class="doc-title-cell">([^<]*)/g)].map((m) => m[1]);
+  assert.deepEqual(rows(), ['บันทึกล่าสุด', 'บันทึกที่สอง', 'บันทึกแรก', 'เอกสารเก่าไม่มีเวลา']);
+  assert.doesNotMatch(elements.get('docsTableBody').innerHTML, /col-entry/);
   run('sortKey = "date"; sortDir = "desc"; renderDocsTable()');
-  assert.deepEqual(rows(), ['2 บันทึกแรก', '1 เอกสารเก่าไม่มีเวลา', '3 บันทึกที่สอง', '4 บันทึกล่าสุด']);
+  assert.deepEqual(rows(), ['บันทึกแรก', 'เอกสารเก่าไม่มีเวลา', 'บันทึกที่สอง', 'บันทึกล่าสุด']);
   // documents issued on the same day appear in the order they were saved
   run(`allDocuments = [
     { id: "x", title: "บันทึกทีหลัง", date: "2026-09-10", createdAtMs: 20 },
     { id: "y", title: "บันทึกก่อน", date: "2026-09-10", createdAtMs: 10 },
   ]; sortDir = "asc"; renderDocsTable()`);
-  assert.deepEqual(rows(), ['1 บันทึกก่อน', '2 บันทึกทีหลัง']);
+  assert.deepEqual(rows(), ['บันทึกก่อน', 'บันทึกทีหลัง']);
 });
 
 test('record IDs stay escaped in document, trash and category action attributes', () => {
