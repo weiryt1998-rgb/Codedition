@@ -3,9 +3,12 @@ rules_version = '2';
 // Security rules for the government document system (ระบบจัดเก็บเอกสารราชการ).
 // The app signs every visitor in anonymously and relies entirely on these rules
 // to keep the "documents" and "categories" collections safe — none of the
-// client-side checks in script.js (required fields, attachment format) are
+// client-side checks in script.js (field lengths, attachment format) are
 // enforced unless mirrored here, since anyone can call the Firestore REST/SDK
 // API directly with the public web config.
+//
+// Every field of the document form is optional, including the PDF, so the
+// rules check types and lengths but never require text to be filled in.
 //
 // PDF files: new documents keep the file in Cloudflare R2 (uploaded through
 // the Worker in worker/) and store only `storageKey` here. Older documents
@@ -36,19 +39,24 @@ service cloud.firestore {
         && value.matches('^documents/[0-9]{4}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.]pdf$');
     }
 
-    // Exactly one attachment kind: an R2 file (never mixed with base64), or a
-    // legacy base64 PDF from before the move to R2.
+    // At most one attachment kind: an R2 file (never mixed with base64), a
+    // legacy base64 PDF from before the move to R2, or no file at all — then
+    // none of the file fields may be present.
     function validAttachment(data) {
       return (
           'storageKey' in data
           && isStorageKey(data.storageKey)
           && !('fileData' in data)
+          && 'fileName' in data
           && data.mimeType == 'application/pdf'
           && data.fileSize is number && data.fileSize > 0 && data.fileSize <= 20971520 // 20 * 1024 * 1024
         ) || (
           !('storageKey' in data)
           && isPdfDataUrl(data.fileData)
+          && 'fileName' in data
           && data.fileSize is number && data.fileSize > 0 && data.fileSize <= 716800 // 700 * 1024
+        ) || (
+          !data.keys().hasAny(['storageKey', 'fileData', 'fileName', 'fileSize', 'mimeType'])
         );
     }
 
@@ -59,22 +67,22 @@ service cloud.firestore {
           'updatedAt', 'fileName', 'fileSize', 'fileData',
           'storageKey', 'mimeType', 'createdBy'
         ])
-        && data.title is string && data.title.size() > 0 && data.title.size() <= 300
-        && data.docNumber is string && data.docNumber.size() > 0 && data.docNumber.size() <= 100
-        && data.date is string && data.date.size() > 0 && data.date.size() <= 10
+        && data.title is string && data.title.size() <= 300
+        && data.docNumber is string && data.docNumber.size() <= 100
+        && data.date is string && data.date.size() <= 10
         && data.agency is string && data.agency.size() <= 300
         && data.category is string && data.category.size() <= 200
         && data.status in ['approved', 'pending', 'rejected']
         && data.description is string && data.description.size() <= 5000
         && data.deleted is bool
-        && data.fileName is string && data.fileName.size() <= 260
+        && (!('fileName' in data) || (data.fileName is string && data.fileName.size() <= 260))
         && validAttachment(data);
     }
 
     match /documents/{docId} {
       allow read: if signedIn();
 
-      // New documents always point at R2; base64 PDFs can no longer be created.
+      // New documents point at R2 or have no file; base64 PDFs can no longer be created.
       // createdBy must be the caller's own uid, never a value the client picked.
       allow create: if signedIn()
         && validDocument(request.resource.data)

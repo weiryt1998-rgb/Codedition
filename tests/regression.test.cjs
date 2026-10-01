@@ -416,14 +416,37 @@ test('document save prevents duplicate submissions and closing during the write'
   assert.equal(elements.get('docSaveBtn').disabled, false);
 });
 
-test('whitespace-only required fields never reach Firestore', async () => {
-  const app = setup();
+test('a document with blank details and no PDF is saved without any file fields', async () => {
+  const app = setup({ authMode: 'ready' });
+  app.run('openDocModal()');
   app.elements.get('docTitle').value = '   ';
-  app.elements.get('docNumber').value = '001';
-  app.elements.get('docDate').value = '2026-09-10';
-  await app.elements.get('docForm').fire('submit');
-  assert.equal(app.writes.length, 0);
-  assert.equal(app.elements.get('docFormError').hidden, false);
+  app.elements.get('docDate').value = '';
+  const saving = app.elements.get('docForm').fire('submit');
+  await flush();
+  assert.equal(app.uploads.length, 0);
+  assert.equal(app.writes.length, 1);
+  const [write] = app.writes;
+  assert.equal(write.title, '');
+  assert.equal(write.docNumber, '');
+  assert.equal(write.date, '');
+  assert.equal(write.createdBy, 'user-1');
+  // firestore.rules accepts a record without a file only when none of the file fields are present.
+  for (const key of ['storageKey', 'fileData', 'fileName', 'fileSize', 'mimeType']) assert.equal(key in write, false, key);
+  app.complete();
+  await saving;
+  assert.equal(app.elements.get('docModalOverlay').hidden, true);
+});
+
+test('saving before the anonymous sign-in has finished is explained in Thai', async () => {
+  for (const app of [setup(), setup({ authMode: 'ready' })]) {
+    app.run('if (typeof auth !== "undefined") auth.currentUser = null');
+    app.run('openDocModal()');
+    app.elements.get('docTitle').value = 'หนังสือทดสอบ';
+    await app.elements.get('docForm').fire('submit');
+    assert.equal(app.writes.length, 0);
+    assert.match(app.elements.get('docFormError').textContent, /^บันทึกข้อมูลไม่สำเร็จ: ยืนยันตัวตนไม่สำเร็จ/);
+    assert.equal(app.elements.get('docModalOverlay').hidden, false);
+  }
 });
 
 test('preview accepts PDF blobs and rejects executable data URLs', () => {

@@ -1269,9 +1269,14 @@ function pdfApiUrl(path) {
   if (!base) throw new PdfApiError(PDF_API_MESSAGES["not-configured"], "not-configured");
   return base + path;
 }
-async function currentIdToken() {
+/* ผู้ใช้ที่ sign-in แบบ anonymous เสร็จแล้ว ถ้ายังไม่สำเร็จ (เช่น เน็ตหลุดตอนเปิดหน้า) แจ้งเป็นข้อความภาษาไทย */
+async function signedInUser() {
   const user = (await databaseReady) && typeof auth !== "undefined" && auth ? auth.currentUser : null;
   if (!user) throw new PdfApiError(PDF_API_MESSAGES.unauthenticated, "unauthenticated");
+  return user;
+}
+async function currentIdToken() {
+  const user = await signedInUser();
   try { return await user.getIdToken(); }
   catch { throw new PdfApiError(PDF_API_MESSAGES.network, "network"); }
 }
@@ -1453,7 +1458,7 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
     deleted: false,
     updatedAt: Date.now(),
   };
-  // ทุกช่องเป็นตัวเลือก — ไม่บังคับกรอกครบหรือแนบไฟล์ PDF
+  // ทุกช่องเป็นตัวเลือก — ไม่บังคับกรอกครบหรือแนบไฟล์ PDF (firestore.rules ต้องยอมรับแบบเดียวกัน)
   const upload = pendingFileData;
   const existing = id ? findDoc(id) : null;
 
@@ -1485,7 +1490,7 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
     } else {
       payload.createdAt = Date.now();
       payload.createdAtMs = Date.now();
-      payload.createdBy = auth.currentUser.uid;
+      payload.createdBy = (await signedInUser()).uid;
       await db.collection("documents").add(payload);
     }
     saved = true;
