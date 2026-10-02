@@ -1150,19 +1150,26 @@ function categoryName(id) {
   const cat = allCategories.find((c) => c.id === id);
   return cat ? cat.name : "";
 }
-/* หมวดคำสั่งเรียกช่องเลขที่หนังสือว่า "เลขคำสั่ง" (ยังเก็บใน docNumber เหมือนเดิม) */
+/* หมวดคำสั่งเรียกช่องเลขที่หนังสือว่า "เลขคำสั่ง" และช่องหน่วยงานว่า "จาก" (คำสั่งจากใคร)
+   ยังเก็บใน docNumber และ agency เหมือนเดิม */
 function isOrderCategory(id) {
   return !!id && categoryKey(categoryName(id)) === categoryKey("คำสั่ง");
 }
 function docNumberLabel(categoryId) {
   return isOrderCategory(categoryId) ? "เลขคำสั่ง" : "เลขที่หนังสือ";
 }
-function syncDocNumberLabel() {
-  const category = document.getElementById("docCategory").value;
-  document.getElementById("docNumberLabel").textContent = docNumberLabel(category);
-  document.getElementById("docNumber").placeholder = isOrderCategory(category) ? "เช่น 123/2569" : "เช่น ศธ 0001/2569";
+function agencyLabel(categoryId) {
+  return isOrderCategory(categoryId) ? "จาก" : "หน่วยงาน";
 }
-document.getElementById("docCategory").addEventListener("change", syncDocNumberLabel);
+function syncOrderLabels() {
+  const category = document.getElementById("docCategory").value;
+  const order = isOrderCategory(category);
+  document.getElementById("docNumberLabel").textContent = docNumberLabel(category);
+  document.getElementById("docNumber").placeholder = order ? "เช่น 123/2569" : "เช่น ศธ 0001/2569";
+  document.getElementById("docAgencyLabel").textContent = agencyLabel(category);
+  document.getElementById("docAgency").placeholder = order ? "เช่น นายก อบต." : "เช่น กรมการปกครอง";
+}
+document.getElementById("docCategory").addEventListener("change", syncOrderLabels);
 
 function renderCategoryOptions() {
   const docSelect = document.getElementById("docCategory");
@@ -1174,7 +1181,7 @@ function renderCategoryOptions() {
   docSelect.value = allCategories.some((c) => c.id === selected) ? selected : "";
   filterSelect.value = allCategories.some((c) => c.id === filtered) ? filtered : "";
   // ชื่อหมวดหมู่อาจเปลี่ยนระหว่างที่ฟอร์มเปิดอยู่ (เช่น หนังสือคำสั่ง → คำสั่ง)
-  syncDocNumberLabel();
+  syncOrderLabels();
 }
 function renderCategories() {
   const grid = document.getElementById("categoryGrid");
@@ -1196,7 +1203,7 @@ function renderCategories() {
       ? `disabled title="หมวดหมู่หลักของระบบ ลบไม่ได้" aria-label="หมวดหมู่หลักของระบบ ${escapeHtml(c.name)} ลบไม่ได้"`
       : `data-del-cat="${escapeHtml(c.id)}" title="ลบหมวดหมู่" aria-label="ลบหมวดหมู่ ${escapeHtml(c.name)}"`;
     return `
-      <div class="category-card">
+      <div class="category-card" data-open-cat="${escapeHtml(c.id)}">
         <span class="cat-back" aria-hidden="true"></span>
         <span class="cat-paper" aria-hidden="true"></span>
         <span class="cat-paper cat-paper-front" aria-hidden="true"></span>
@@ -1205,7 +1212,7 @@ function renderCategories() {
             <span class="cat-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6V3zM14 3v5h4M9 12h6M9 16h4"/></svg></span>
             <span class="stat-chip mono" title="สัดส่วนของเอกสารทั้งหมด">${share}%</span>
           </div>
-          <span class="cat-name">${escapeHtml(c.name)}</span>
+          <button type="button" class="cat-name" aria-label="ดูเอกสารในหมวดหมู่ ${escapeHtml(c.name)}">${escapeHtml(c.name)}</button>
           <span class="cat-count">${count} เอกสาร</span>
           <div class="meter" aria-hidden="true"><span style="width:${(count / max) * 100}%"></span></div>
           <div class="cat-actions">
@@ -1224,6 +1231,14 @@ function renderCategories() {
           showToast("ลบหมวดหมู่แล้ว", "success");
         } catch (err) { showToast(friendlyError(err), "error"); }
       });
+    });
+  });
+  // กดตรงไหนของแฟ้มก็เปิดดูเอกสารในหมวดนั้น ยกเว้นปุ่มลบ (ชื่อหมวดหมู่เป็นปุ่ม จึงเปิดจากคีย์บอร์ดได้ด้วย)
+  grid.querySelectorAll("[data-open-cat]").forEach((card) => {
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".cat-actions button")) return;
+      resetDocFilters(card.dataset.openCat);
+      switchView("documents");
     });
   });
 }
@@ -1466,7 +1481,7 @@ function openDocModal(doc = null) {
       .slice(0, 10);
     document.getElementById("docDate").value = localDate;
   }
-  syncDocNumberLabel();
+  syncOrderLabels();
   openModal("docModalOverlay");
 }
 
@@ -1762,14 +1777,16 @@ document.getElementById("globalSearch").addEventListener("input", () => {
 document.getElementById("filterCategory").addEventListener("change", () => { currentPage = 1; renderDocsTable(); });
 document.getElementById("filterStatus").addEventListener("change", () => { currentPage = 1; renderDocsTable(); });
 document.getElementById("filterDate").addEventListener("change", () => { currentPage = 1; renderDocsTable(); });
-document.getElementById("clearFilters").addEventListener("click", () => {
+/* ล้างตัวกรองทั้งหมด หรือเหลือไว้แค่หมวดหมู่เดียวตอนเปิดแฟ้ม (ตารางจึงมีเอกสารครบตามจำนวนบนแฟ้ม) */
+function resetDocFilters(category = "") {
   document.getElementById("globalSearch").value = "";
-  document.getElementById("filterCategory").value = "";
+  document.getElementById("filterCategory").value = category;
   document.getElementById("filterStatus").value = "";
   document.getElementById("filterDate").value = "";
   currentPage = 1;
   renderDocsTable();
-});
+}
+document.getElementById("clearFilters").addEventListener("click", () => resetDocFilters());
 document.querySelectorAll("#docsTable th[data-sort]").forEach((th) => {
   th.tabIndex = 0;
   th.addEventListener("keydown", (e) => {
@@ -1821,8 +1838,10 @@ function renderDocsTable() {
   const emptyMessage = document.getElementById("docsEmptyMessage");
   const emptyAddButton = document.getElementById("docsEmptyAddBtn");
 
-  // กรองดูเฉพาะหมวดคำสั่ง คอลัมน์แรกจึงเป็นเลขคำสั่งทั้งหมด
-  document.getElementById("docNumberHead").textContent = docNumberLabel(document.getElementById("filterCategory").value);
+  // กรองดูเฉพาะหมวดคำสั่ง หัวคอลัมน์จึงเรียกแบบคำสั่ง: เลขคำสั่ง และ จาก (แทนหน่วยงาน)
+  const filterCategory = document.getElementById("filterCategory").value;
+  document.getElementById("docNumberHead").textContent = docNumberLabel(filterCategory);
+  document.getElementById("agencyHead").textContent = agencyLabel(filterCategory);
 
   // sort direction indicator on the header
   document.querySelectorAll("#docsTable th[data-sort]").forEach((th) => {

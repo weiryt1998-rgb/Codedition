@@ -355,7 +355,7 @@ test('record IDs stay escaped in document, trash and category action attributes'
   for (const [elementId, actions] of [
     ['docsTableBody', ['preview', 'download', 'edit', 'delete']],
     ['trashTableBody', ['restore', 'purge']],
-    ['categoryGrid', ['del-cat']],
+    ['categoryGrid', ['del-cat', 'open-cat']],
   ]) {
     const markup = app.elements.get(elementId).innerHTML;
     for (const action of actions) {
@@ -534,36 +534,41 @@ test('a chosen status is restored when editing; a blank one opens and shows as n
   for (const status of ['""', 'undefined', '"toString"', '"<b>x</b>"']) assert.equal(run(`statusStamp(${status})`), '-', status);
 });
 
-test('the คำสั่ง category calls the number field เลขคำสั่ง, in the form and the filtered table', async () => {
+test('the คำสั่ง category calls the number เลขคำสั่ง and the agency จาก, in the form and the filtered table', async () => {
   const { run, elements } = setup();
   run(`allCategories = [{ id: "order", name: " คำสั่ง " }, { id: "memo", name: "บันทึกข้อความ" }, { id: "old", name: "หนังสือคำสั่ง" }]; renderCategoryOptions()`);
   const label = () => [elements.get('docNumberLabel').textContent, elements.get('docNumber').placeholder];
+  const from = () => [elements.get('docAgencyLabel').textContent, elements.get('docAgency').placeholder];
+  const heads = () => [elements.get('docNumberHead').textContent, elements.get('agencyHead').textContent];
   const choose = (id) => { elements.get('docCategory').value = id; return elements.get('docCategory').fire('change'); };
   run('openDocModal()');
   assert.deepEqual(label(), ['เลขที่หนังสือ', 'เช่น ศธ 0001/2569']);
+  assert.deepEqual(from(), ['หน่วยงาน', 'เช่น กรมการปกครอง']);
   await choose('order');
   assert.deepEqual(label(), ['เลขคำสั่ง', 'เช่น 123/2569']);
+  assert.deepEqual(from(), ['จาก', 'เช่น นายก อบต.']);
   await choose('memo');
   assert.deepEqual(label(), ['เลขที่หนังสือ', 'เช่น ศธ 0001/2569']);
+  assert.deepEqual(from(), ['หน่วยงาน', 'เช่น กรมการปกครอง']);
 
   run('openDocModal({ id: "a", category: "order" })');
-  assert.equal(label()[0], 'เลขคำสั่ง', 'editing an order shows its label straight away');
+  assert.deepEqual([label()[0], from()[0]], ['เลขคำสั่ง', 'จาก'], 'editing an order shows its labels straight away');
   run('openDocModal({ id: "b", category: "memo" })');
-  assert.equal(label()[0], 'เลขที่หนังสือ');
+  assert.deepEqual([label()[0], from()[0]], ['เลขที่หนังสือ', 'หน่วยงาน']);
 
   // the built-in rename หนังสือคำสั่ง → คำสั่ง can arrive while the form is open
   await choose('old');
-  assert.equal(label()[0], 'เลขที่หนังสือ');
+  assert.deepEqual([label()[0], from()[0]], ['เลขที่หนังสือ', 'หน่วยงาน']);
   run(`allCategories = [{ id: "old", name: "คำสั่ง" }]; renderCategoryOptions()`);
-  assert.equal(label()[0], 'เลขคำสั่ง');
+  assert.deepEqual([label()[0], from()[0]], ['เลขคำสั่ง', 'จาก']);
 
   run('allDocuments = []; renderDocsTable()');
-  assert.equal(elements.get('docNumberHead').textContent, 'เลขที่หนังสือ');
+  assert.deepEqual(heads(), ['เลขที่หนังสือ', 'หน่วยงาน']);
   elements.get('filterCategory').value = 'old';
   await elements.get('filterCategory').fire('change');
-  assert.equal(elements.get('docNumberHead').textContent, 'เลขคำสั่ง');
+  assert.deepEqual(heads(), ['เลขคำสั่ง', 'จาก']);
   await elements.get('clearFilters').fire('click');
-  assert.equal(elements.get('docNumberHead').textContent, 'เลขที่หนังสือ');
+  assert.deepEqual(heads(), ['เลขที่หนังสือ', 'หน่วยงาน']);
 });
 
 test('editing writes urgency only when one is chosen or has to be cleared back to ปกติ', async () => {
@@ -919,6 +924,24 @@ test('built-in categories cannot be deleted (they would come back empty), others
   const markup = app.elements.get('categoryGrid').innerHTML;
   assert.deepEqual([...markup.matchAll(/data-del-cat="([^"]*)"/g)].map((m) => m[1]), ['own']);
   assert.equal((markup.match(/disabled title="หมวดหมู่หลักของระบบ ลบไม่ได้"/g) || []).length, 2);
+});
+test('every folder opens its own documents, with the other filters cleared', () => {
+  const app = setup();
+  app.run(`allCategories = [{ id: "order", name: "คำสั่ง" }, { id: "own", name: "หนังสือเวียน" }];
+    allDocuments = [
+      { id: "a", title: "คำสั่งแต่งตั้ง", category: "order", status: "pending" },
+      { id: "b", title: "คำสั่งย้าย", category: "order" },
+      { id: "c", title: "หนังสือเวียนแจ้ง", category: "own", status: "approved" },
+    ];
+    renderCategories()`);
+  const markup = app.elements.get('categoryGrid').innerHTML;
+  // built-in folders can't be deleted, but they still open
+  assert.deepEqual([...markup.matchAll(/data-open-cat="([^"]*)"/g)].map((m) => m[1]), ['order', 'own']);
+  assert.match(markup, /<button type="button" class="cat-name" aria-label="ดูเอกสารในหมวดหมู่ คำสั่ง">คำสั่ง<\/button>/);
+  for (const [id, value] of [['globalSearch', 'ย้าย'], ['filterStatus', 'approved'], ['filterDate', '2026-01-01']]) app.elements.get(id).value = value;
+  app.run('resetDocFilters("order")');
+  assert.deepEqual(['globalSearch', 'filterCategory', 'filterStatus', 'filterDate'].map((id) => app.elements.get(id).value), ['', 'order', '', '']);
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(getFilteredDocs().map((d) => d.title))')).sort(), ['คำสั่งแต่งตั้ง', 'คำสั่งย้าย'].sort());
 });
 
 test('the status filter can find documents saved without a status', () => {

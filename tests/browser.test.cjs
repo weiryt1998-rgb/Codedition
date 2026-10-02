@@ -212,13 +212,13 @@ async function main() {
         allTrash = [{ ...allDocuments[0], deleted: true }];
         allCategories = [{ ...allCategories[0], id }];
         renderDocsTable(); renderTrash(); renderCategories();
-        const actions = ['preview', 'download', 'edit', 'delete', 'restore', 'purge', 'del-cat'];
+        const actions = ['preview', 'download', 'edit', 'delete', 'restore', 'purge', 'del-cat', 'open-cat'];
         return {
           values: actions.map(action => document.querySelector('[data-' + action + ']').getAttribute('data-' + action)),
           injected: document.querySelectorAll('[data-id-marker]').length,
         };
       })()`);
-      assert.deepEqual(ids.values, Array(7).fill(id));
+      assert.deepEqual(ids.values, Array(8).fill(id));
       assert.equal(ids.injected, 0, 'Record IDs must not create HTML attributes');
       await reloadApp();
       await click('[data-view="documents"]');
@@ -285,32 +285,32 @@ async function main() {
       await screenshot('document-form.png');
       await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
     });
-    await check('The คำสั่ง category labels the number เลขคำสั่ง in the form and the filtered table', async () => {
+    await check('The คำสั่ง category labels the number เลขคำสั่ง and the agency จาก in the form and the filtered table', async () => {
       const chooseOrder = (select) => evaluate(`(() => {
         const s = document.getElementById(${JSON.stringify(select)});
         s.value = [...s.options].find((o) => o.textContent === 'คำสั่ง').value;
         s.dispatchEvent(new Event('change'));
       })()`);
-      const label = () => evaluate(`document.getElementById('docNumberLabel').textContent`);
-      const head = () => evaluate(`document.getElementById('docNumberHead').textContent`);
+      const labels = () => evaluate(`['docNumberLabel', 'docAgencyLabel'].map((id) => document.getElementById(id).textContent)`);
+      const heads = () => evaluate(`['docNumberHead', 'agencyHead'].map((id) => document.getElementById(id).textContent)`);
       await waitFor(`document.getElementById('docModalOverlay').hidden`);
       await click('#addDocBtn');
-      assert.equal(await label(), 'เลขที่หนังสือ');
+      assert.deepEqual(await labels(), ['เลขที่หนังสือ', 'หน่วยงาน']);
       await chooseOrder('docCategory');
-      assert.equal(await label(), 'เลขคำสั่ง');
-      assert.equal(await evaluate(`document.getElementById('docNumber').placeholder`), 'เช่น 123/2569');
+      assert.deepEqual(await labels(), ['เลขคำสั่ง', 'จาก']);
+      assert.deepEqual(await evaluate(`['docNumber', 'docAgency'].map((id) => document.getElementById(id).placeholder)`), ['เช่น 123/2569', 'เช่น นายก อบต.']);
       await screenshot('document-form-order.png');
       await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
       await waitFor(`document.getElementById('docModalOverlay').hidden`);
       await click('#addDocBtn');
-      assert.equal(await label(), 'เลขที่หนังสือ', 'the next new document starts without a category');
+      assert.deepEqual(await labels(), ['เลขที่หนังสือ', 'หน่วยงาน'], 'the next new document starts without a category');
       await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
       await waitFor(`document.getElementById('docModalOverlay').hidden`);
-      assert.equal(await head(), 'เลขที่หนังสือ');
+      assert.deepEqual(await heads(), ['เลขที่หนังสือ', 'หน่วยงาน']);
       await chooseOrder('filterCategory');
-      assert.equal(await head(), 'เลขคำสั่ง');
+      assert.deepEqual(await heads(), ['เลขคำสั่ง', 'จาก']);
       await click('#clearFilters');
-      assert.equal(await head(), 'เลขที่หนังสือ');
+      assert.deepEqual(await heads(), ['เลขที่หนังสือ', 'หน่วยงาน']);
     });
     await check('PDF preview opens a Blob URL and releases it when closed', async () => {
       await evaluate(`(() => {const range=document.createRange(); range.selectNode(document.getElementById('previewFrame')); const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range);})()`);
@@ -395,6 +395,40 @@ async function main() {
         .filter((card) => ['คำสั่ง', 'บันทึกข้อความ', 'คำร้อง'].includes(card.querySelector('.cat-name').textContent))
         .map((card) => card.querySelector('.cat-actions button').disabled)`);
       assert.deepEqual(builtIn, [true, true, true]);
+    });
+    await check('Clicking a category folder opens its documents, but its trash button does not', async () => {
+      const viewActive = (view) => evaluate(`document.getElementById('view-${view}').classList.contains('is-active')`);
+      const filters = () => evaluate(`['globalSearch', 'filterCategory', 'filterStatus', 'filterDate'].map((id) => document.getElementById(id).value)`);
+      await click('[data-view="categories"]');
+      // leftover filters would hide documents that the folder counts
+      await evaluate(`document.getElementById('globalSearch').value='ทดสอบ/1'; document.getElementById('filterStatus').value='approved'; document.getElementById('filterDate').value='2020-01-01'`);
+      // the paper sheets above the cover are part of the folder too
+      const paper = await evaluate(`(() => { const el=document.querySelector('[data-open-cat="cat-b"]'); el.scrollIntoView({block:'center'}); const r=el.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+40}; })()`);
+      await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...paper, button: 'left', clickCount: 1 });
+      await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...paper, button: 'left', clickCount: 1 });
+      await waitFor(`document.getElementById('view-documents').classList.contains('is-active')`);
+      assert.deepEqual(await filters(), ['', 'cat-b', '', '']);
+      assert.equal(await evaluate(`document.getElementById('resultCount').textContent`), 'พบ 6 จาก 12 รายการ');
+      assert.ok(await evaluate(`[...document.querySelectorAll('#docsTableBody tr')].every((tr) => tr.cells[2].textContent === 'หนังสือออก')`));
+
+      await click('[data-view="categories"]');
+      await click('[data-del-cat="cat-a"]');
+      await waitFor(`!document.getElementById('confirmModalOverlay').hidden`);
+      await click('#confirmModalOverlay [data-close-modal]');
+      assert.equal(await viewActive('categories'), true, 'the trash button only asks to delete');
+      const orderId = await evaluate(`allCategories.find((c) => c.name === 'คำสั่ง').id`);
+      await click(`[data-open-cat="${orderId}"] .cat-actions button`);
+      await pause(100);
+      assert.equal(await viewActive('categories'), true, 'a built-in folder\'s disabled trash button does nothing');
+      assert.equal(await evaluate(`document.getElementById('confirmModalOverlay').hidden`), true);
+
+      // keyboard users open a folder from its name
+      await evaluate(`document.querySelector('[data-open-cat="cat-a"] .cat-name').focus()`);
+      await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+      await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      await waitFor(`document.getElementById('view-documents').classList.contains('is-active')`);
+      assert.deepEqual(await filters(), ['', 'cat-a', '', '']);
+      await click('#clearFilters');
     });
     await check('Theme changes and persists across reload', async () => {
       const previous = await evaluate('activeMode()');

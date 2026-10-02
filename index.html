@@ -376,7 +376,7 @@
                   <th data-sort="docNumber" id="docNumberHead">เลขที่หนังสือ</th>
                   <th data-sort="title">ชื่อเอกสาร</th>
                   <th data-sort="category">หมวดหมู่</th>
-                  <th data-sort="agency">หน่วยงาน</th>
+                  <th data-sort="agency" id="agencyHead">หน่วยงาน</th>
                   <th data-sort="date">วันที่ออกเอกสาร</th>
                   <th data-sort="size">ขนาดไฟล์</th>
                   <th data-sort="status">สถานะ</th>
@@ -463,7 +463,7 @@
         <label>วันที่ออกเอกสาร
           <input type="date" id="docDate">
         </label>
-        <label>หน่วยงาน
+        <label><span id="docAgencyLabel">หน่วยงาน</span>
           <input type="text" id="docAgency" maxlength="300" placeholder="เช่น กรมการปกครอง">
         </label>
         <label>หมวดหมู่
