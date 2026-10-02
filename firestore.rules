@@ -115,7 +115,9 @@ service cloud.firestore {
           )
         );
 
-      allow delete: if signedIn();
+      // Permanent deletion only from the trash, the way the web app does it,
+      // so a document can't skip the trash and vanish in one step.
+      allow delete: if signedIn() && resource.data.deleted == true;
     }
 
     match /categories/{categoryId} {

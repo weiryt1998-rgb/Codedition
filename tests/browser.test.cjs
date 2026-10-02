@@ -156,8 +156,12 @@ async function main() {
       try { await fn(); results.push({ name, passed: true }); console.log(`PASS ${name}`); }
       catch (error) { results.push({ name, passed: false, error: error.message }); throw error; }
     }
-    async function screenshot(name) {
+    // Waits for every finite animation and transition, so measurements don't catch a layout mid-change.
+    async function settle() {
       await evaluate(`Promise.all(document.getAnimations().filter(a=>a.effect.getComputedTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{}))).then(()=>true)`);
+    }
+    async function screenshot(name) {
+      await settle();
       const image = await cdp('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
       await fs.writeFile(path.join(output, name), Buffer.from(image.data, 'base64'));
     }
@@ -526,14 +530,18 @@ async function main() {
       await click('#appearanceBtn');
       await pause(300);
       await click('#presetGrid [data-preset="lavender"]');
+      // The preset click starts colour transitions; measure the settled layout, not a frame mid-transition.
+      await settle();
       assert.ok(await evaluate(`(() => {
         const modal=document.querySelector('#appearanceModalOverlay .modal');
         const body=modal.querySelector('.modal-body'); const r=modal.getBoundingClientRect();
         return r.x>=0 && r.right<=innerWidth && r.y>=0 && r.bottom<=innerHeight && body.scrollWidth<=body.clientWidth;
       })()`), 'modal fits viewport without horizontal scrolling');
-      assert.ok(await evaluate(`[...document.querySelectorAll('#gradientEditor input, #gradientEditor button')].every(el => {
-        const r=el.getBoundingClientRect(); return r.width>0 && r.x>=0 && r.right<=innerWidth;
-      })`), 'all endpoint, direction, and reverse controls fit horizontally');
+      const outside = await evaluate(`JSON.stringify([...document.querySelectorAll('#gradientEditor input, #gradientEditor button')].flatMap(el => {
+        const r=el.getBoundingClientRect();
+        return r.width>0 && r.x>=0 && r.right<=innerWidth ? [] : [{ id: el.id || el.className, x: Math.round(r.x), right: Math.round(r.right), width: Math.round(r.width), innerWidth }];
+      }))`);
+      assert.equal(outside, '[]', 'all endpoint, direction, and reverse controls fit horizontally');
       assert.ok(await evaluate(`(() => {
         const [start,end]=document.querySelectorAll('.gradient-stop');
         return end.getBoundingClientRect().top>=start.getBoundingClientRect().bottom;

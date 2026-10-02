@@ -442,7 +442,7 @@ function showToast(message, type = "info") {
 function signInDatabase() {
   if (typeof auth === "undefined" || !auth || typeof db === "undefined" || !db) return Promise.resolve(false);
   return auth.signInAnonymously().then(() => true).catch((err) => {
-    showToast("เชื่อมต่อฐานข้อมูลไม่สำเร็จ: " + err.message, "error");
+    showToast("เชื่อมต่อฐานข้อมูลไม่สำเร็จ: " + friendlyError(err), "error");
     return false;
   });
 }
@@ -605,7 +605,9 @@ document.getElementById("confirmActionBtn").addEventListener("click", async () =
 function attachFirestoreListeners() {
   firestoreUnsubscribes.forEach((unsubscribe) => { if (typeof unsubscribe === "function") unsubscribe(); });
   firestoreUnsubscribes = [];
-  const failed = (err) => showToast("โหลดข้อมูลล้มเหลว: " + err.message, "error");
+  // การโหลดคือการอ่าน ข้อความไม่มีสิทธิ์จึงต่างจากตอนบันทึก
+  const failed = (err) => showToast("โหลดข้อมูลล้มเหลว: "
+    + (err?.code === "permission-denied" ? "ไม่มีสิทธิ์อ่านข้อมูลเอกสาร" : friendlyError(err)), "error");
 
   firestoreUnsubscribes.push(db.collection("documents").where("deleted", "==", false)
     .onSnapshot({ includeMetadataChanges: true }, (snap) => {
@@ -1301,13 +1303,24 @@ function pdfApiError(status, code) {
   const key = status === 401 ? "unauthenticated" : status === 403 ? "forbidden" : code;
   return new PdfApiError(PDF_API_MESSAGES[key] || `ระบบจัดเก็บไฟล์ขัดข้อง (รหัส ${status}) กรุณาลองใหม่`, key || `http-${status}`);
 }
+/* ข้อความภาษาไทยของรหัสข้อผิดพลาดจาก Firestore และ Firebase Auth ที่ผู้ใช้เจอได้จริง */
+const FIREBASE_MESSAGES = {
+  "permission-denied": "ไม่มีสิทธิ์บันทึกหรือแก้ไขข้อมูลเอกสาร",
+  unavailable: "เชื่อมต่อฐานข้อมูลไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่",
+  // แก้ไข/กู้คืนรายการที่มีคนลบถาวรไปแล้วระหว่างที่หน้านี้เปิดอยู่
+  "not-found": "ไม่พบข้อมูลนี้แล้ว อาจถูกลบไปแล้ว",
+  unauthenticated: PDF_API_MESSAGES.unauthenticated,
+  "resource-exhausted": "มีการใช้งานฐานข้อมูลเกินโควตา กรุณาลองใหม่ภายหลัง",
+  // ตอนเปิดหน้า: เน็ตกลับมาเมื่อไร listener "online" จะเชื่อมต่อใหม่ให้เอง
+  "auth/network-request-failed": "อินเทอร์เน็ตขัดข้อง ระบบจะเชื่อมต่อใหม่เองเมื่อกลับมาออนไลน์",
+  "auth/too-many-requests": "มีการเชื่อมต่อถี่เกินไป กรุณารอสักครู่แล้วโหลดหน้าใหม่",
+  "auth/operation-not-allowed": "ระบบปิดการเข้าใช้งานอยู่ กรุณาติดต่อผู้ดูแลระบบ",
+  "auth/admin-restricted-operation": "ระบบปิดการเข้าใช้งานอยู่ กรุณาติดต่อผู้ดูแลระบบ",
+};
 /* ข้อความภาษาไทยสำหรับข้อผิดพลาดทั้งจากระบบไฟล์และจาก Firestore */
 function friendlyError(err) {
   if (err instanceof PdfApiError) return err.message;
-  if (err?.code === "permission-denied") return "ไม่มีสิทธิ์บันทึกหรือแก้ไขข้อมูลเอกสาร";
-  if (err?.code === "unavailable") return "เชื่อมต่อฐานข้อมูลไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่";
-  // แก้ไข/กู้คืนรายการที่มีคนลบถาวรไปแล้วระหว่างที่หน้านี้เปิดอยู่
-  if (err?.code === "not-found") return "ไม่พบข้อมูลนี้แล้ว อาจถูกลบไปแล้ว";
+  if (typeof err?.code === "string" && Object.hasOwn(FIREBASE_MESSAGES, err.code)) return FIREBASE_MESSAGES[err.code];
   return err?.message || String(err);
 }
 

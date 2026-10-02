@@ -302,6 +302,21 @@ test('connectivity recovery retries failed authentication and replaces old liste
   assert.equal(app.subscriptions.filter((s) => s.active).length, 3);
 });
 
+test('a failed startup sign-in is explained in Thai, not raw Firebase text', async () => {
+  for (const [code, reason] of [
+    ['auth/network-request-failed', 'อินเทอร์เน็ตขัดข้อง ระบบจะเชื่อมต่อใหม่เองเมื่อกลับมาออนไลน์'],
+    ['auth/admin-restricted-operation', 'ระบบปิดการเข้าใช้งานอยู่ กรุณาติดต่อผู้ดูแลระบบ'],
+  ]) {
+    const app = setup({ authMode: 'deferred' });
+    const toasts = [];
+    app.context.record = (message, type) => toasts.push({ message, type });
+    app.run('showToast = record');
+    app.rejectAuthentication(Object.assign(new Error(`Firebase: Error (${code}).`), { code }));
+    await flush();
+    assert.deepEqual(toasts, [{ message: `เชื่อมต่อฐานข้อมูลไม่สำเร็จ: ${reason}`, type: 'error' }]);
+  }
+});
+
 test('global search opens results and tolerates legacy numeric metadata', async () => {
   const { run, elements } = setup();
   run('allDocuments = [{id:"a", title:"Test", docNumber:123}]');
@@ -648,7 +663,7 @@ test('opening a PDF clears a stale selection in the host page', () => {
   run('closeModal("previewModalOverlay")');
 });
 
-test('realtime updates refresh category counts and report stream errors', () => {
+test('realtime updates refresh category counts and report stream errors in Thai', () => {
   const { run, subscriptions, elements, context } = setup();
   const toasts = [];
   context.record = (message, type) => toasts.push({ message, type });
@@ -661,8 +676,12 @@ test('realtime updates refresh category counts and report stream errors', () => 
   assert.equal(run('allDocuments[0].id'), 'actual-id');
   assert.match(elements.get('categoryGrid').innerHTML, /1 เอกสาร/);
   assert.equal(toasts.length, 0);
-  subscriptions[0].fail(new Error('Permission denied'));
-  assert.deepEqual(toasts, [{ message: 'โหลดข้อมูลล้มเหลว: Permission denied', type: 'error' }]);
+  subscriptions[0].fail(Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }));
+  subscriptions[1].fail(Object.assign(new Error('Quota exceeded.'), { code: 'resource-exhausted' }));
+  assert.deepEqual(toasts, [
+    { message: 'โหลดข้อมูลล้มเหลว: ไม่มีสิทธิ์อ่านข้อมูลเอกสาร', type: 'error' },
+    { message: 'โหลดข้อมูลล้มเหลว: มีการใช้งานฐานข้อมูลเกินโควตา กรุณาลองใหม่ภายหลัง', type: 'error' },
+  ]);
 });
 
 test('trend counts import timestamps instead of document issue dates', () => {
