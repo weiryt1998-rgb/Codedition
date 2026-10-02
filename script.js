@@ -6,7 +6,14 @@
 const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB — ต้องตรงกับ worker/src/index.js และ firestore.rules
 const PDF_MIME = "application/pdf";
 const PAGE_SIZE = 8;
-const STATUS_LABEL = { approved: "อนุมัติแล้ว", pending: "รอดำเนินการ", rejected: "ไม่อนุมัติ" };
+const STATUS_LABEL = {
+  approved: "อนุมัติแล้ว", pending: "รอดำเนินการ", rejected: "ไม่อนุมัติ",
+  "in-progress": "กำลังดำเนินการ", completed: "เสร็จสิ้น", cancelled: "ยกเลิก",
+};
+// ตัวเลือกสถานะของแต่ละฟอร์ม ต้องตรงกับ firestore.rules
+// ทั้งสองแบบไม่บังคับเลือก ("" = ยังไม่ระบุ) คำสั่งมี 4 ขั้น ใช้ "รอดำเนินการ" ร่วมกับเอกสาร
+const DOC_STATUSES = ["", "pending", "approved", "rejected"];
+const ORDER_STATUSES = ["", "pending", "in-progress", "completed", "cancelled"];
 // ชั้นความเร็วของหนังสือ — ค่าว่าง (หรือเอกสารเดิมที่ไม่มีช่องนี้) คือปกติ ต้องตรงกับ firestore.rules
 const URGENCY_LABEL = { urgent: "ด่วน", "very-urgent": "ด่วนมาก", "most-urgent": "ด่วนที่สุด" };
 
@@ -548,7 +555,8 @@ function closeModal(id) {
 function setModalBusy(id, busy) {
   const overlay = document.getElementById(id);
   overlay.setAttribute("aria-busy", String(busy));
-  overlay.querySelectorAll("button, input, select, textarea").forEach((el) => { el.disabled = busy; });
+  // ช่องที่ล็อกไว้ (หมวดหมู่ของฟอร์มคำสั่ง) ยังปิดอยู่หลังบันทึกเสร็จ
+  overlay.querySelectorAll("button, input, select, textarea").forEach((el) => { el.disabled = busy || "locked" in el.dataset; });
 }
 document.querySelectorAll("[data-close-modal]").forEach((btn) => {
   btn.addEventListener("click", () => closeModal(btn.closest(".modal-overlay").id));
@@ -1152,26 +1160,68 @@ function categoryName(id) {
   const cat = allCategories.find((c) => c.id === id);
   return cat ? cat.name : "";
 }
-/* หมวดคำสั่งเรียกช่องเลขที่หนังสือว่า "เลขคำสั่ง" และช่องหน่วยงานว่า "จาก" (คำสั่งจากใคร)
-   ยังเก็บใน docNumber และ agency เหมือนเดิม */
+/* คำสั่งคือรายการในหมวดคำสั่ง เรียกช่องต่าง ๆ แบบคำสั่ง ทั้งในฟอร์มและหัวตารางที่กรองดูเฉพาะคำสั่ง
+   แต่ยังเก็บใน title, docNumber, date และ agency เหมือนเอกสาร */
+const ORDER_CATEGORY = "คำสั่ง";
+const FIELD_LABELS = {
+  document: { title: "ชื่อเอกสาร", docNumber: "เลขที่หนังสือ", date: "วันที่ออกเอกสาร", agency: "หน่วยงาน" },
+  order: { title: "ชื่อคำสั่ง", docNumber: "เลขที่คำสั่ง", date: "วันที่ออกคำสั่ง", agency: "ผู้สั่ง" },
+};
 function isOrderCategory(id) {
-  return !!id && categoryKey(categoryName(id)) === categoryKey("คำสั่ง");
+  return !!id && categoryKey(categoryName(id)) === categoryKey(ORDER_CATEGORY);
 }
-function docNumberLabel(categoryId) {
-  return isOrderCategory(categoryId) ? "เลขคำสั่ง" : "เลขที่หนังสือ";
+function orderCategoryId() {
+  return allCategories.find((c) => categoryKey(c.name) === categoryKey(ORDER_CATEGORY))?.id || "";
 }
-function agencyLabel(categoryId) {
-  return isOrderCategory(categoryId) ? "จาก" : "หน่วยงาน";
+/* ฟอร์มคำสั่ง: เปิดจากปุ่มเพิ่มคำสั่งหรือแก้ไขคำสั่ง (หมวดหมู่ล็อกไว้ที่คำสั่ง) หรือเลือกหมวดคำสั่งในฟอร์มเพิ่มเอกสาร */
+function docFormIsOrder() {
+  const category = document.getElementById("docCategory");
+  return "locked" in category.dataset || isOrderCategory(category.value);
 }
-function syncOrderLabels() {
-  const category = document.getElementById("docCategory").value;
-  const order = isOrderCategory(category);
-  document.getElementById("docNumberLabel").textContent = docNumberLabel(category);
+/* รายการสถานะของฟอร์ม ตัวเลือกว่างของเอกสารเขียนว่าไม่ระบุสถานะ ของคำสั่งเว้นว่างไว้เลย
+   สถานะเดิมที่ฟอร์มนี้ไม่มีให้เลือก (เช่น คำสั่งเก่าที่บันทึกไว้ว่าอนุมัติแล้ว) ใส่ไว้เป็นตัวเลือกแรก
+   แก้ช่องอื่นแล้วบันทึก สถานะจึงไม่เปลี่ยนไปเอง */
+function renderStatusOptions(order, value) {
+  const select = document.getElementById("docStatus");
+  const choices = order ? ORDER_STATUSES : DOC_STATUSES;
+  const blank = order ? "" : "ไม่ระบุสถานะ";
+  select.innerHTML = (choices.includes(value) ? choices : [value, ...choices])
+    .map((s) => `<option value="${s}">${s ? STATUS_LABEL[s] : blank}</option>`).join("");
+  select.value = value;
+  select.dataset.mode = order ? "order" : "document";
+}
+function syncOrderFields() {
+  const category = document.getElementById("docCategory");
+  // หมวดคำสั่งอาจโหลดเสร็จ หรือเพิ่งเปลี่ยนชื่อจาก "หนังสือคำสั่ง" ระหว่างที่ฟอร์มเปิดอยู่
+  if ("locked" in category.dataset) category.value = orderCategoryId();
+  const order = docFormIsOrder();
+  const editing = Boolean(document.getElementById("docId").value);
+  const labels = FIELD_LABELS[order ? "order" : "document"];
+  document.getElementById("docModalTitle").textContent = order
+    ? (editing ? "แก้ไขคำสั่ง" : "เพิ่มคำสั่งใหม่")
+    : (editing ? "แก้ไขเอกสาร" : "เพิ่มเอกสารใหม่");
+  document.getElementById("docModalSubtitle").textContent =
+    order ? "กรอกรายละเอียดคำสั่งและแนบไฟล์ PDF" : "กรอกรายละเอียดหนังสือราชการและแนบไฟล์ PDF";
+  document.getElementById("docTitleLabel").textContent = labels.title;
+  document.getElementById("docTitle").placeholder = order ? "เช่น แต่งตั้งคณะกรรมการตรวจรับพัสดุ" : "เช่น ขอเชิญประชุมคณะกรรมการ";
+  document.getElementById("docNumberLabel").textContent = labels.docNumber;
   document.getElementById("docNumber").placeholder = order ? "เช่น 123/2569" : "เช่น ศธ 0001/2569";
-  document.getElementById("docAgencyLabel").textContent = agencyLabel(category);
+  document.getElementById("docDateLabel").textContent = labels.date;
+  document.getElementById("docAgencyLabel").textContent = labels.agency;
   document.getElementById("docAgency").placeholder = order ? "เช่น นายก อบต." : "เช่น กรมการปกครอง";
+  document.getElementById("docDescription").placeholder = `รายละเอียดเพิ่มเติมของ${order ? "คำสั่ง" : "เอกสาร"}`;
+  // คำสั่งไม่มีชั้นความเร็ว
+  document.getElementById("docUrgencyField").hidden = order;
+  // เปลี่ยนรายการสถานะเฉพาะตอนสลับระหว่างเอกสารกับคำสั่ง ค่าที่มีในทั้งสองแบบ (ว่าง, รอดำเนินการ) คงไว้
+  const status = document.getElementById("docStatus");
+  if (status.dataset.mode !== (order ? "order" : "document")) {
+    renderStatusOptions(order, (order ? ORDER_STATUSES : DOC_STATUSES).includes(status.value) ? status.value : "");
+  }
+  if (document.getElementById("docModalOverlay").getAttribute("aria-busy") !== "true") {
+    document.getElementById("docSaveBtn").textContent = order ? "บันทึกคำสั่ง" : "บันทึกเอกสาร";
+  }
 }
-document.getElementById("docCategory").addEventListener("change", syncOrderLabels);
+document.getElementById("docCategory").addEventListener("change", syncOrderFields);
 
 function renderCategoryOptions() {
   const docSelect = document.getElementById("docCategory");
@@ -1183,7 +1233,7 @@ function renderCategoryOptions() {
   docSelect.value = allCategories.some((c) => c.id === selected) ? selected : "";
   filterSelect.value = allCategories.some((c) => c.id === filtered) ? filtered : "";
   // ชื่อหมวดหมู่อาจเปลี่ยนระหว่างที่ฟอร์มเปิดอยู่ (เช่น หนังสือคำสั่ง → คำสั่ง)
-  syncOrderLabels();
+  syncOrderFields();
 }
 function renderCategories() {
   const grid = document.getElementById("categoryGrid");
@@ -1460,11 +1510,20 @@ async function handleFile(file) {
    ========================================================= */
 document.getElementById("addDocBtn").addEventListener("click", () => openDocModal());
 document.querySelectorAll("[data-open='addDocBtn']").forEach((b) => b.addEventListener("click", () => openDocModal()));
+document.getElementById("addOrderBtn").addEventListener("click", () => openDocModal(null, { order: true }));
+document.querySelectorAll("[data-open='addOrderBtn']").forEach((b) => b.addEventListener("click", () => openDocModal(null, { order: true })));
 
-function openDocModal(doc = null) {
+/* ฟอร์มเดียวใช้ทั้งเอกสารและคำสั่ง ปุ่มเพิ่มคำสั่ง ({ order: true }) และการแก้ไขรายการในหมวดคำสั่ง
+   เปิดเป็นฟอร์มคำสั่งที่ล็อกหมวดหมู่ไว้ที่คำสั่ง */
+function openDocModal(doc = null, { order = false } = {}) {
   fileReadVersion++;
   fileReading = false;
   fileInvalid = false;
+  const category = document.getElementById("docCategory");
+  const locked = doc ? isOrderCategory(doc.category) : order;
+  // ตั้งก่อน setModalBusy ซึ่งเปิดใช้ทุกช่องยกเว้นช่องที่ล็อกไว้
+  if (locked) category.dataset.locked = "";
+  else delete category.dataset.locked;
   setModalBusy("docModalOverlay", false);
   document.getElementById("docForm").reset();
   document.getElementById("docFormError").hidden = true;
@@ -1474,27 +1533,27 @@ function openDocModal(doc = null) {
   fileDropText.textContent = `ลากไฟล์ PDF มาวาง หรือคลิกเพื่อเลือกไฟล์ (สูงสุด ${formatFileSize(MAX_FILE_BYTES)})`;
 
   if (doc) {
-    document.getElementById("docModalTitle").textContent = "แก้ไขเอกสาร";
     document.getElementById("docId").value = doc.id;
     document.getElementById("docTitle").value = doc.title || "";
     document.getElementById("docNumber").value = doc.docNumber || "";
     document.getElementById("docDate").value = doc.date || "";
     document.getElementById("docAgency").value = doc.agency || "";
-    document.getElementById("docCategory").value = allCategories.some((c) => c.id === doc.category) ? doc.category : "";
-    document.getElementById("docStatus").value = Object.hasOwn(STATUS_LABEL, doc.status) ? doc.status : "";
+    category.value = allCategories.some((c) => c.id === doc.category) ? doc.category : "";
     document.getElementById("docUrgency").value = Object.hasOwn(URGENCY_LABEL, doc.urgency) ? doc.urgency : "";
     document.getElementById("docDescription").value = doc.description || "";
     if (doc.fileName) fileDropText.textContent = `ไฟล์ปัจจุบัน: ${doc.fileName} — คลิกเพื่อแทนที่`;
   } else {
-    document.getElementById("docModalTitle").textContent = "เพิ่มเอกสารใหม่";
     document.getElementById("docId").value = "";
+    category.value = "";
     const today = new Date();
     const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000)
       .toISOString()
       .slice(0, 10);
     document.getElementById("docDate").value = localDate;
   }
-  syncOrderLabels();
+  // ฟอร์มที่ไม่ล็อกเปิดขึ้นมาเป็นเอกสารเสมอ จึงใช้ locked บอกชนิดของฟอร์มได้ รายการใหม่เริ่มแบบยังไม่ระบุสถานะ
+  renderStatusOptions(locked, doc && Object.hasOwn(STATUS_LABEL, doc.status) ? doc.status : "");
+  syncOrderFields();
   openModal("docModalOverlay");
 }
 
@@ -1509,12 +1568,20 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
     errEl.hidden = false;
     return;
   }
+  const order = docFormIsOrder();
+  const category = document.getElementById("docCategory").value;
+  // ถ้าหมวดคำสั่งยังโหลดไม่เสร็จ บันทึกไปจะกลายเป็นเอกสารไม่ระบุหมวดหมู่ ไม่ใช่คำสั่ง
+  if (order && !category) {
+    errEl.textContent = "ยังโหลดหมวดหมู่คำสั่งไม่เสร็จ กรุณารอสักครู่แล้วบันทึกอีกครั้ง";
+    errEl.hidden = false;
+    return;
+  }
   const payload = {
     title: document.getElementById("docTitle").value.trim(),
     docNumber: document.getElementById("docNumber").value.trim(),
     date: document.getElementById("docDate").value,
     agency: document.getElementById("docAgency").value.trim(),
-    category: document.getElementById("docCategory").value,
+    category,
     status: document.getElementById("docStatus").value,
     description: document.getElementById("docDescription").value.trim(),
     deleted: false,
@@ -1525,7 +1592,8 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
   const existing = id ? findDoc(id) : null;
   // เขียนชั้นความเร็วเฉพาะเมื่อเลือกไว้ หรือเมื่อต้องล้างค่าเดิมกลับเป็นปกติ
   // เอกสารปกติจึงยังบันทึกได้ แม้ firestore.rules บนเซิร์ฟเวอร์ยังเป็นรุ่นที่ไม่รู้จักช่องนี้
-  const urgency = document.getElementById("docUrgency").value;
+  // คำสั่งไม่มีชั้นความเร็ว จึงนับเป็นปกติ
+  const urgency = order ? "" : document.getElementById("docUrgency").value;
   if (urgency || existing?.urgency) payload.urgency = urgency;
 
   const saveBtn = document.getElementById("docSaveBtn");
@@ -1560,7 +1628,8 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
       await db.collection("documents").add(payload);
     }
     saved = true;
-    showToast(id ? "แก้ไขเอกสารสำเร็จ" : "เพิ่มเอกสารสำเร็จ", "success");
+    const noun = order ? "คำสั่ง" : "เอกสาร";
+    showToast(id ? `แก้ไข${noun}สำเร็จ` : `เพิ่ม${noun}สำเร็จ`, "success");
     // ไฟล์เดิมใน R2 ถูกแทนที่แล้ว ลบทิ้ง (ถ้าไม่สำเร็จ เอกสารยังถูกต้อง แค่มีไฟล์เก่าค้าง)
     if (stored && existing?.storageKey && existing.storageKey !== stored.storageKey) {
       discardStoredPdf(existing.storageKey).catch((err) => console.warn("ลบไฟล์ PDF เดิมใน R2 ไม่สำเร็จ:", existing.storageKey, err));
@@ -1577,7 +1646,7 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
     if (upload && !saved) fileDropText.textContent = `${upload.name} (${formatFileSize(upload.size)}) — กดบันทึกเพื่อลองใหม่`;
   } finally {
     setModalBusy("docModalOverlay", false);
-    saveBtn.textContent = "บันทึกเอกสาร";
+    saveBtn.textContent = order ? "บันทึกคำสั่ง" : "บันทึกเอกสาร";
   }
 });
 
@@ -1851,10 +1920,12 @@ function renderDocsTable() {
   const emptyMessage = document.getElementById("docsEmptyMessage");
   const emptyAddButton = document.getElementById("docsEmptyAddBtn");
 
-  // กรองดูเฉพาะหมวดคำสั่ง หัวคอลัมน์จึงเรียกแบบคำสั่ง: เลขคำสั่ง และ จาก (แทนหน่วยงาน)
-  const filterCategory = document.getElementById("filterCategory").value;
-  document.getElementById("docNumberHead").textContent = docNumberLabel(filterCategory);
-  document.getElementById("agencyHead").textContent = agencyLabel(filterCategory);
+  // กรองดูเฉพาะหมวดคำสั่ง หัวคอลัมน์จึงเรียกแบบคำสั่ง เหมือนช่องในฟอร์มคำสั่ง
+  const heads = FIELD_LABELS[isOrderCategory(document.getElementById("filterCategory").value) ? "order" : "document"];
+  document.getElementById("docNumberHead").textContent = heads.docNumber;
+  document.getElementById("titleHead").textContent = heads.title;
+  document.getElementById("agencyHead").textContent = heads.agency;
+  document.getElementById("dateHead").textContent = heads.date;
 
   // sort direction indicator on the header
   document.querySelectorAll("#docsTable th[data-sort]").forEach((th) => {

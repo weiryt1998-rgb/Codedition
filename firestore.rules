@@ -72,8 +72,9 @@ service cloud.firestore {
         && data.date is string && data.date.size() <= 10
         && data.agency is string && data.agency.size() <= 300
         && data.category is string && data.category.size() <= 200
-        // สถานะ, optional: '' when none is chosen in the form.
-        && data.status in ['', 'approved', 'pending', 'rejected']
+        // สถานะ, optional: '' when none is chosen in the form. Documents use
+        // pending/approved/rejected; orders (หมวดคำสั่ง) use pending/in-progress/completed/cancelled.
+        && data.status in ['', 'approved', 'pending', 'rejected', 'in-progress', 'completed', 'cancelled']
         // ชั้นความเร็ว, optional: the web app writes it only for an urgent document,
         // or '' when one is set back to ปกติ. A record without it is ปกติ.
         && (!('urgency' in data) || data.urgency in ['', 'urgent', 'very-urgent', 'most-urgent'])

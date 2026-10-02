@@ -187,6 +187,10 @@
       </div>
 
       <div class="topbar-actions">
+        <button class="btn btn-primary btn-sm hide-sm" data-open="addOrderBtn">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          เพิ่มคำสั่ง
+        </button>
         <button class="btn btn-primary btn-sm hide-sm" data-open="addDocBtn">
           <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
           เพิ่มเอกสาร
@@ -220,6 +224,10 @@
             </h2>
             <p>จัดเก็บ ค้นหา และติดตามสถานะหนังสือราชการได้จากที่เดียว พร้อมสำรองข้อมูลแบบเรียลไทม์</p>
             <div class="hero-actions">
+              <button class="btn btn-primary" data-open="addOrderBtn">
+                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                เพิ่มคำสั่งใหม่
+              </button>
               <button class="btn btn-primary" data-open="addDocBtn">
                 <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
                 เพิ่มเอกสารใหม่
@@ -338,10 +346,16 @@
             <h2>เอกสารทั้งหมด</h2>
             <p>จัดการ แก้ไข ดาวน์โหลด และลบเอกสารราชการ</p>
           </div>
-          <button class="btn btn-primary" id="addDocBtn">
-            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-            เพิ่มเอกสาร
-          </button>
+          <div class="view-head-actions">
+            <button class="btn btn-primary" id="addOrderBtn">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              เพิ่มคำสั่ง
+            </button>
+            <button class="btn btn-primary" id="addDocBtn">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              เพิ่มเอกสาร
+            </button>
+          </div>
         </div>
 
         <div class="toolbar">
@@ -356,6 +370,9 @@
               <option value="approved">อนุมัติแล้ว</option>
               <option value="pending">รอดำเนินการ</option>
               <option value="rejected">ไม่อนุมัติ</option>
+              <option value="in-progress">กำลังดำเนินการ</option>
+              <option value="completed">เสร็จสิ้น</option>
+              <option value="cancelled">ยกเลิก</option>
               <option value="none">ไม่ระบุสถานะ</option>
             </select>
           </div>
@@ -376,10 +393,10 @@
               <thead>
                 <tr>
                   <th data-sort="docNumber" id="docNumberHead">เลขที่หนังสือ</th>
-                  <th data-sort="title">ชื่อเอกสาร</th>
+                  <th data-sort="title" id="titleHead">ชื่อเอกสาร</th>
                   <th data-sort="category">หมวดหมู่</th>
                   <th data-sort="agency" id="agencyHead">หน่วยงาน</th>
-                  <th data-sort="date">วันที่ออกเอกสาร</th>
+                  <th data-sort="date" id="dateHead">วันที่ออกเอกสาร</th>
                   <th data-sort="size">ขนาดไฟล์</th>
                   <th data-sort="status">สถานะ</th>
                   <th class="col-actions">การดำเนินการ</th>
@@ -449,20 +466,20 @@
       <span class="modal-icon"><svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/></svg></span>
       <div class="modal-heading">
         <h3 id="docModalTitle">เพิ่มเอกสารใหม่</h3>
-        <p>กรอกรายละเอียดหนังสือราชการและแนบไฟล์ PDF</p>
+        <p id="docModalSubtitle">กรอกรายละเอียดหนังสือราชการและแนบไฟล์ PDF</p>
       </div>
       <button class="icon-btn" data-close-modal aria-label="ปิด"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
     <form id="docForm" class="modal-body">
       <input type="hidden" id="docId">
       <div class="form-grid">
-        <label class="span-2">ชื่อเอกสาร
+        <label class="span-2"><span id="docTitleLabel">ชื่อเอกสาร</span>
           <input type="text" id="docTitle" maxlength="300" placeholder="เช่น ขอเชิญประชุมคณะกรรมการ">
         </label>
         <label><span id="docNumberLabel">เลขที่หนังสือ</span>
           <input type="text" id="docNumber" maxlength="100" placeholder="เช่น ศธ 0001/2569">
         </label>
-        <label>วันที่ออกเอกสาร
+        <label><span id="docDateLabel">วันที่ออกเอกสาร</span>
           <input type="date" id="docDate">
         </label>
         <label><span id="docAgencyLabel">หน่วยงาน</span>
@@ -471,7 +488,7 @@
         <label>หมวดหมู่
           <select id="docCategory"><option value="">ไม่ระบุหมวดหมู่</option></select>
         </label>
-        <label>ชั้นความเร็ว
+        <label id="docUrgencyField">ชั้นความเร็ว
           <select id="docUrgency">
             <option value="">ปกติ</option>
             <option value="urgent">ด่วน</option>

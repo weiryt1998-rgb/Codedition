@@ -289,32 +289,108 @@ async function main() {
       await screenshot('document-form.png');
       await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
     });
-    await check('The คำสั่ง category labels the number เลขคำสั่ง and the agency จาก in the form and the filtered table', async () => {
+    const documentLabels = ['ชื่อเอกสาร', 'เลขที่หนังสือ', 'วันที่ออกเอกสาร', 'หน่วยงาน'];
+    const orderLabels = ['ชื่อคำสั่ง', 'เลขที่คำสั่ง', 'วันที่ออกคำสั่ง', 'ผู้สั่ง'];
+    const orderStatuses = ['', 'รอดำเนินการ', 'กำลังดำเนินการ', 'เสร็จสิ้น', 'ยกเลิก']; // starts blank
+    const closeDocForm = async () => {
+      await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await waitFor(`document.getElementById('docModalOverlay').hidden`);
+    };
+    // What the document form currently shows, as a person would see it
+    const docForm = () => evaluate(`(() => {
+      const category = document.getElementById('docCategory');
+      return {
+        title: document.getElementById('docModalTitle').textContent,
+        labels: ['docTitleLabel', 'docNumberLabel', 'docDateLabel', 'docAgencyLabel'].map((id) => document.getElementById(id).textContent),
+        category: [category.value, category.selectedOptions[0]?.textContent, category.disabled],
+        urgencyShown: document.getElementById('docUrgency').getClientRects().length > 0,
+        statuses: [...document.getElementById('docStatus').options].map((o) => o.textContent),
+        status: document.getElementById('docStatus').value,
+        save: document.getElementById('docSaveBtn').textContent,
+      };
+    })()`);
+    await check('Choosing the คำสั่ง category turns the document form into the order form, and the filtered table uses its names', async () => {
       const chooseOrder = (select) => evaluate(`(() => {
         const s = document.getElementById(${JSON.stringify(select)});
         s.value = [...s.options].find((o) => o.textContent === 'คำสั่ง').value;
         s.dispatchEvent(new Event('change'));
       })()`);
-      const labels = () => evaluate(`['docNumberLabel', 'docAgencyLabel'].map((id) => document.getElementById(id).textContent)`);
-      const heads = () => evaluate(`['docNumberHead', 'agencyHead'].map((id) => document.getElementById(id).textContent)`);
+      const heads = () => evaluate(`['titleHead', 'docNumberHead', 'dateHead', 'agencyHead'].map((id) => document.getElementById(id).textContent)`);
       await waitFor(`document.getElementById('docModalOverlay').hidden`);
       await click('#addDocBtn');
-      assert.deepEqual(await labels(), ['เลขที่หนังสือ', 'หน่วยงาน']);
+      assert.deepEqual((await docForm()).labels, documentLabels);
       await chooseOrder('docCategory');
-      assert.deepEqual(await labels(), ['เลขคำสั่ง', 'จาก']);
+      const form = await docForm();
+      assert.deepEqual([form.title, form.labels, form.urgencyShown, form.statuses, form.save],
+        ['เพิ่มคำสั่งใหม่', orderLabels, false, orderStatuses, 'บันทึกคำสั่ง']);
+      assert.equal(form.category[2], false, 'a category chosen in the document form can still be changed');
       assert.deepEqual(await evaluate(`['docNumber', 'docAgency'].map((id) => document.getElementById(id).placeholder)`), ['เช่น 123/2569', 'เช่น นายก อบต.']);
       await screenshot('document-form-order.png');
-      await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-      await waitFor(`document.getElementById('docModalOverlay').hidden`);
+      await closeDocForm();
       await click('#addDocBtn');
-      assert.deepEqual(await labels(), ['เลขที่หนังสือ', 'หน่วยงาน'], 'the next new document starts without a category');
-      await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-      await waitFor(`document.getElementById('docModalOverlay').hidden`);
-      assert.deepEqual(await heads(), ['เลขที่หนังสือ', 'หน่วยงาน']);
+      assert.deepEqual((await docForm()).labels, documentLabels, 'the next new document starts without a category');
+      await closeDocForm();
+      assert.deepEqual(await heads(), documentLabels);
       await chooseOrder('filterCategory');
-      assert.deepEqual(await heads(), ['เลขคำสั่ง', 'จาก']);
+      assert.deepEqual(await heads(), orderLabels);
       await click('#clearFilters');
-      assert.deepEqual(await heads(), ['เลขที่หนังสือ', 'หน่วยงาน']);
+      assert.deepEqual(await heads(), documentLabels);
+    });
+    await check('เพิ่มคำสั่ง opens the order form locked to คำสั่ง; orders save, show their status and edit there', async () => {
+      const orderId = await evaluate(`allCategories.find((c) => c.name === 'คำสั่ง').id`);
+      await click('#addOrderBtn');
+      await waitFor(`!document.getElementById('docModalOverlay').hidden`);
+      assert.deepEqual(await docForm(), {
+        title: 'เพิ่มคำสั่งใหม่', labels: orderLabels, category: [orderId, 'คำสั่ง', true], urgencyShown: false,
+        statuses: orderStatuses, status: '', save: 'บันทึกคำสั่ง',
+      });
+      await screenshot('order-form.png');
+      await evaluate(`document.getElementById('docTitle').value='คำสั่งทดสอบเบราว์เซอร์'; document.getElementById('docNumber').value='ทดสอบ/คำสั่ง'; document.getElementById('docAgency').value='นายก อบต.'; document.getElementById('docStatus').value='in-progress'`);
+      await click('#docSaveBtn');
+      await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.some((d) => d.title === 'คำสั่งทดสอบเบราว์เซอร์')`);
+      const saved = await evaluate(`(() => { const d = fixtureStore.documents.find((x) => x.title === 'คำสั่งทดสอบเบราว์เซอร์'); return { category: d.category, status: d.status, agency: d.agency, hasUrgency: 'urgency' in d }; })()`);
+      assert.deepEqual(saved, { category: orderId, status: 'in-progress', agency: 'นายก อบต.', hasUrgency: false });
+      // the status filter finds it, and its row carries the order status
+      await evaluate(`document.getElementById('filterStatus').value='in-progress'; document.getElementById('filterStatus').dispatchEvent(new Event('change'))`);
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docsTableBody tr')].map((tr) => [tr.cells[0].textContent, tr.querySelector('.stamp').textContent])`),
+        [['ทดสอบ/คำสั่ง', 'กำลังดำเนินการ']]);
+      await click('[data-edit]');
+      await waitFor(`!document.getElementById('docModalOverlay').hidden`);
+      const editing = await docForm();
+      assert.deepEqual([editing.title, editing.category, editing.status, editing.save], ['แก้ไขคำสั่ง', [orderId, 'คำสั่ง', true], 'in-progress', 'บันทึกคำสั่ง']);
+      await evaluate(`document.getElementById('docStatus').value='completed'`);
+      await click('#docSaveBtn');
+      await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.some((d) => d.title === 'คำสั่งทดสอบเบราว์เซอร์' && d.status === 'completed')`);
+      await click('#clearFilters');
+      // later checks count the seed documents, so the test order goes away again
+      await evaluate(`fixtureStore.documents = fixtureStore.documents.filter((d) => d.title !== 'คำสั่งทดสอบเบราว์เซอร์'); emitFixture()`);
+      await waitFor('allDocuments.length === 13');
+      await click('#addDocBtn');
+      const next = await docForm();
+      assert.deepEqual([next.title, next.category[2], next.urgencyShown], ['เพิ่มเอกสารใหม่', false, true], 'the document form is unlocked again');
+      await closeDocForm();
+    });
+    await check('เพิ่มคำสั่ง sits beside เพิ่มเอกสาร on every page and opens the order form from each place', async () => {
+      const places = (selector) => evaluate(`[...document.querySelectorAll(${JSON.stringify(selector)})].filter((el) => el.getClientRects().length)
+        .map((el) => el.closest('.topbar') ? 'topbar' : el.closest('.hero') ? 'hero' : el.closest('.view-head') ? 'page-head' : 'other')`);
+      for (const [view, expected] of [['dashboard', ['topbar', 'hero']], ['documents', ['topbar', 'page-head']], ['categories', ['topbar']], ['trash', ['topbar']]]) {
+        await click(`.nav-item[data-view="${view}"]`);
+        assert.deepEqual(await places('#addDocBtn, [data-open="addDocBtn"]'), expected, view);
+        assert.deepEqual(await places('#addOrderBtn, [data-open="addOrderBtn"]'), expected, view);
+      }
+      // from a page that has no add buttons of its own (รายการที่ลบ), through the top bar
+      await click('.topbar [data-open="addOrderBtn"]');
+      await waitFor(`!document.getElementById('docModalOverlay').hidden`);
+      const form = await docForm();
+      assert.deepEqual([form.title, form.category[1], form.category[2]], ['เพิ่มคำสั่งใหม่', 'คำสั่ง', true]);
+      await closeDocForm();
+      assert.equal(await evaluate(`document.activeElement === document.querySelector('.topbar [data-open="addOrderBtn"]')`), true, 'focus returns to the button');
+      await click('.nav-item[data-view="dashboard"]');
+      await click('.hero [data-open="addOrderBtn"]');
+      await waitFor(`!document.getElementById('docModalOverlay').hidden`);
+      assert.equal((await docForm()).title, 'เพิ่มคำสั่งใหม่');
+      await closeDocForm();
+      await click('.nav-item[data-view="documents"]');
     });
     await check('PDF preview opens a Blob URL and releases it when closed', async () => {
       await evaluate(`(() => {const range=document.createRange(); range.selectNode(document.getElementById('previewFrame')); const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range);})()`);
@@ -559,17 +635,39 @@ async function main() {
     });
     await check('Mobile navigation and form fit a 390px viewport', async () => {
       await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+      await evaluate(`switchView('dashboard')`);
       await pause(350);
       assert.ok(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'));
+      // the top bar is too narrow on a phone, so the add buttons there are hidden and the banner keeps both
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('[data-open="addOrderBtn"], [data-open="addDocBtn"]')].filter((el) => el.getClientRects().length).map((el) => el.textContent.trim())`),
+        ['เพิ่มคำสั่งใหม่', 'เพิ่มเอกสารใหม่']);
       await screenshot('mobile.png');
       await click('#menuToggle');
       await pause(350);
       await click('[data-view="documents"]');
       await pause(350);
       assert.equal(await evaluate(`document.getElementById('menuToggle').getAttribute('aria-expanded')`), 'false');
+      const formFits = `(() => {const r=document.querySelector('#docModalOverlay .modal').getBoundingClientRect(); return r.x>=0 && r.right<=innerWidth && r.bottom<=innerHeight;})()`;
       await click('#addDocBtn');
-      assert.ok(await evaluate(`(() => {const r=document.querySelector('#docModalOverlay .modal').getBoundingClientRect(); return r.x>=0 && r.right<=innerWidth && r.bottom<=innerHeight;})()`));
+      assert.ok(await evaluate(formFits));
       await screenshot('mobile-form.png');
+      await closeDocForm();
+      // เพิ่มคำสั่ง sits beside เพิ่มเอกสาร under the heading
+      assert.ok(await evaluate(`(() => {
+        const order = document.getElementById('addOrderBtn').getBoundingClientRect(), doc = document.getElementById('addDocBtn').getBoundingClientRect();
+        return order.right <= doc.left && Math.abs(order.top - doc.top) < 1 && doc.right <= innerWidth;
+      })()`), 'both add buttons fit on one row');
+      await click('#addOrderBtn');
+      assert.ok(await evaluate(formFits));
+      await screenshot('mobile-order-form.png');
+      // on a phone the toast from the last save lies over the popup's buttons; a tap on บันทึก must still reach it
+      await evaluate(`showToast('เพิ่มคำสั่งสำเร็จ', 'success')`);
+      assert.equal(await evaluate(`(() => {
+        const save = document.getElementById('docSaveBtn'); save.scrollIntoView({ block: 'nearest' });
+        const r = save.getBoundingClientRect(), toast = document.querySelector('.toast').getBoundingClientRect();
+        if (toast.bottom < r.top || toast.top > r.bottom) return 'the toast no longer covers the button, so this proves nothing';
+        return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === save;
+      })()`), true);
     });
     // Phones can't page through a PDF inside an iframe, so every page is drawn with PDF.js instead.
     async function checkPhonePdf(userAgent, shot) {

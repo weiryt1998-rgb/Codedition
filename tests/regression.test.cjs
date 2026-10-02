@@ -526,15 +526,31 @@ test('the urgency choice is saved, restored when editing, shown before the title
   assert.match(elements.get('docsTableBody').innerHTML, /ขอเชิญประชุม/);
 });
 
-test('the form, the labels and firestore.rules agree on the statuses, and none has to be chosen', () => {
+test('the document and order forms, the labels, the filter, the stamps and firestore.rules agree on the statuses', () => {
   const { run } = setup();
-  const select = html.match(/<select id="docStatus">([\s\S]*?)<\/select>/)[1];
-  const options = [...select.matchAll(/<option value="([^"]*)">([^<]*)<\/option>/g)].map((m) => [m[1], m[2]]);
-  assert.deepEqual(options, [['', 'ไม่ระบุสถานะ'], ['pending', 'รอดำเนินการ'], ['approved', 'อนุมัติแล้ว'], ['rejected', 'ไม่อนุมัติ']]);
-  assert.deepEqual(JSON.parse(run('JSON.stringify(STATUS_LABEL)')), Object.fromEntries(options.slice(1)));
+  const options = (id) => [...html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))[1]
+    .matchAll(/<option value="([^"]*)">([^<]*)<\/option>/g)].map((m) => [m[1], m[2]]);
+  const label = JSON.parse(run('JSON.stringify(STATUS_LABEL)'));
+  // documents: the form starts like this, and none has to be chosen
+  const documentStatuses = [['', 'ไม่ระบุสถานะ'], ['pending', 'รอดำเนินการ'], ['approved', 'อนุมัติแล้ว'], ['rejected', 'ไม่อนุมัติ']];
+  assert.deepEqual(options('docStatus'), documentStatuses);
+  assert.deepEqual(JSON.parse(run('JSON.stringify(DOC_STATUSES)')), documentStatuses.map(([value]) => value));
+  documentStatuses.slice(1).forEach(([value, text]) => assert.equal(label[value], text));
+  // orders: none has to be chosen either, then four steps; รอดำเนินการ is shared with documents
+  const orderStatuses = JSON.parse(run('JSON.stringify(ORDER_STATUSES)'));
+  assert.equal(orderStatuses[0], '');
+  assert.deepEqual(orderStatuses.slice(1).map((s) => [s, label[s]]),
+    [['pending', 'รอดำเนินการ'], ['in-progress', 'กำลังดำเนินการ'], ['completed', 'เสร็จสิ้น'], ['cancelled', 'ยกเลิก']]);
+  const statuses = Object.keys(label);
+  assert.deepEqual([...statuses].sort(), JSON.parse(run('JSON.stringify([...new Set([...DOC_STATUSES, ...ORDER_STATUSES])].filter(Boolean).sort())')));
+  // the filter offers every status once, then the records with none
+  assert.deepEqual(options('filterStatus'), [['', 'สถานะทั้งหมด'], ...Object.entries(label), ['none', 'ไม่ระบุสถานะ']]);
+  const css = fs.readFileSync(path.join(root, 'style.css'), 'utf8');
+  statuses.forEach((status) => assert.match(css, new RegExp(`\\.stamp-${status} \\{`), `a stamp colour for ${status}`));
+  // a value the rules don't list would be refused with permission-denied on save
   const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
   const allowed = [...rules.match(/data\.status in \[([^\]]*)\]/)[1].matchAll(/'([^']*)'/g)].map((m) => m[1]);
-  assert.deepEqual(allowed.sort(), options.map(([value]) => value).sort());
+  assert.deepEqual(allowed.sort(), ['', ...statuses].sort());
 });
 
 test('a chosen status is restored when editing; a blank one opens and shows as not specified', () => {
@@ -546,44 +562,161 @@ test('a chosen status is restored when editing; a blank one opens and shows as n
     assert.equal(elements.get('docStatus').value, '', status);
   }
   assert.equal(run('statusStamp("approved")'), '<span class="stamp stamp-approved">อนุมัติแล้ว</span>');
+  for (const [status, text] of [['in-progress', 'กำลังดำเนินการ'], ['completed', 'เสร็จสิ้น'], ['cancelled', 'ยกเลิก']]) {
+    assert.equal(run(`statusStamp("${status}")`), `<span class="stamp stamp-${status}">${text}</span>`);
+  }
   for (const status of ['""', 'undefined', '"toString"', '"<b>x</b>"']) assert.equal(run(`statusStamp(${status})`), '-', status);
 });
 
-test('the คำสั่ง category calls the number เลขคำสั่ง and the agency จาก, in the form and the filtered table', async () => {
+const DOCUMENT_LABELS = ['ชื่อเอกสาร', 'เลขที่หนังสือ', 'วันที่ออกเอกสาร', 'หน่วยงาน'];
+const ORDER_LABELS = ['ชื่อคำสั่ง', 'เลขที่คำสั่ง', 'วันที่ออกคำสั่ง', 'ผู้สั่ง'];
+// the order form leaves its "no status" choice blank instead of writing ไม่ระบุสถานะ
+const ORDER_STATUS_TEXT = ['', 'รอดำเนินการ', 'กำลังดำเนินการ', 'เสร็จสิ้น', 'ยกเลิก'];
+const formText = (elements, ...ids) => ids.map((id) => elements.get(id).textContent);
+const formLabels = (elements) => formText(elements, 'docTitleLabel', 'docNumberLabel', 'docDateLabel', 'docAgencyLabel');
+const statusOptions = (elements) => [...elements.get('docStatus').innerHTML.matchAll(/<option value="([^"]*)">([^<]*)</g)].map((m) => m[2]);
+
+test('choosing the คำสั่ง category turns the document form into the order form, and the filtered table uses the same names', async () => {
   const { run, elements } = setup();
   run(`allCategories = [{ id: "order", name: " คำสั่ง " }, { id: "memo", name: "บันทึกข้อความ" }, { id: "old", name: "หนังสือคำสั่ง" }]; renderCategoryOptions()`);
-  const label = () => [elements.get('docNumberLabel').textContent, elements.get('docNumber').placeholder];
-  const from = () => [elements.get('docAgencyLabel').textContent, elements.get('docAgency').placeholder];
-  const heads = () => [elements.get('docNumberHead').textContent, elements.get('agencyHead').textContent];
+  const placeholders = () => ['docTitle', 'docNumber', 'docAgency'].map((id) => elements.get(id).placeholder);
+  const heads = () => formText(elements, 'titleHead', 'docNumberHead', 'dateHead', 'agencyHead');
+  const status = elements.get('docStatus');
   const choose = (id) => { elements.get('docCategory').value = id; return elements.get('docCategory').fire('change'); };
   run('openDocModal()');
-  assert.deepEqual(label(), ['เลขที่หนังสือ', 'เช่น ศธ 0001/2569']);
-  assert.deepEqual(from(), ['หน่วยงาน', 'เช่น กรมการปกครอง']);
+  assert.deepEqual(formLabels(elements), DOCUMENT_LABELS);
+  assert.deepEqual(placeholders(), ['เช่น ขอเชิญประชุมคณะกรรมการ', 'เช่น ศธ 0001/2569', 'เช่น กรมการปกครอง']);
+  assert.equal(elements.get('docUrgencyField').hidden, false);
+  assert.deepEqual(statusOptions(elements), ['ไม่ระบุสถานะ', 'รอดำเนินการ', 'อนุมัติแล้ว', 'ไม่อนุมัติ']);
   await choose('order');
-  assert.deepEqual(label(), ['เลขคำสั่ง', 'เช่น 123/2569']);
-  assert.deepEqual(from(), ['จาก', 'เช่น นายก อบต.']);
+  assert.deepEqual(formLabels(elements), ORDER_LABELS);
+  assert.deepEqual(placeholders(), ['เช่น แต่งตั้งคณะกรรมการตรวจรับพัสดุ', 'เช่น 123/2569', 'เช่น นายก อบต.']);
+  assert.deepEqual(formText(elements, 'docModalTitle', 'docSaveBtn'), ['เพิ่มคำสั่งใหม่', 'บันทึกคำสั่ง']);
+  assert.equal(elements.get('docUrgencyField').hidden, true, 'orders have no urgency');
+  assert.deepEqual(statusOptions(elements), ORDER_STATUS_TEXT);
+  assert.equal(status.value, '', 'still no status chosen');
+  assert.equal('locked' in elements.get('docCategory').dataset, false, 'a category chosen here can still be changed');
+  status.value = 'completed';
   await choose('memo');
-  assert.deepEqual(label(), ['เลขที่หนังสือ', 'เช่น ศธ 0001/2569']);
-  assert.deepEqual(from(), ['หน่วยงาน', 'เช่น กรมการปกครอง']);
-
-  run('openDocModal({ id: "a", category: "order" })');
-  assert.deepEqual([label()[0], from()[0]], ['เลขคำสั่ง', 'จาก'], 'editing an order shows its labels straight away');
-  run('openDocModal({ id: "b", category: "memo" })');
-  assert.deepEqual([label()[0], from()[0]], ['เลขที่หนังสือ', 'หน่วยงาน']);
+  assert.deepEqual(formLabels(elements), DOCUMENT_LABELS);
+  assert.deepEqual(formText(elements, 'docModalTitle', 'docSaveBtn'), ['เพิ่มเอกสารใหม่', 'บันทึกเอกสาร']);
+  assert.equal(elements.get('docUrgencyField').hidden, false);
+  assert.equal(status.value, '', 'an order-only status falls back to not specified');
+  status.value = 'pending';
+  await choose('order');
+  await choose('memo');
+  assert.equal(status.value, 'pending', 'รอดำเนินการ belongs to both forms, so it is kept');
 
   // the built-in rename หนังสือคำสั่ง → คำสั่ง can arrive while the form is open
   await choose('old');
-  assert.deepEqual([label()[0], from()[0]], ['เลขที่หนังสือ', 'หน่วยงาน']);
+  assert.deepEqual(formLabels(elements), DOCUMENT_LABELS);
   run(`allCategories = [{ id: "old", name: "คำสั่ง" }]; renderCategoryOptions()`);
-  assert.deepEqual([label()[0], from()[0]], ['เลขคำสั่ง', 'จาก']);
+  assert.deepEqual(formLabels(elements), ORDER_LABELS);
 
   run('allDocuments = []; renderDocsTable()');
-  assert.deepEqual(heads(), ['เลขที่หนังสือ', 'หน่วยงาน']);
+  assert.deepEqual(heads(), DOCUMENT_LABELS);
   elements.get('filterCategory').value = 'old';
   await elements.get('filterCategory').fire('change');
-  assert.deepEqual(heads(), ['เลขคำสั่ง', 'จาก']);
+  assert.deepEqual(heads(), ORDER_LABELS);
   await elements.get('clearFilters').fire('click');
-  assert.deepEqual(heads(), ['เลขที่หนังสือ', 'หน่วยงาน']);
+  assert.deepEqual(heads(), DOCUMENT_LABELS);
+});
+
+test('the เพิ่มคำสั่ง button opens the order form locked to คำสั่ง and saves an order without urgency', async () => {
+  const app = setup({ authMode: 'ready' });
+  const { run, elements } = app;
+  const toasts = recordToasts(app);
+  const category = elements.get('docCategory');
+  run(`allCategories = [{ id: "memo", name: "บันทึกข้อความ" }, { id: "order", name: "คำสั่ง" }]; renderCategoryOptions()`);
+  elements.get('docUrgency').value = 'most-urgent'; // left over from an earlier document; the order form hides it
+  await elements.get('addOrderBtn').fire('click');
+  assert.equal(elements.get('docModalOverlay').hidden, false);
+  assert.deepEqual(formText(elements, 'docModalTitle', 'docModalSubtitle', 'docSaveBtn'), ['เพิ่มคำสั่งใหม่', 'กรอกรายละเอียดคำสั่งและแนบไฟล์ PDF', 'บันทึกคำสั่ง']);
+  assert.deepEqual(formLabels(elements), ORDER_LABELS);
+  assert.equal(category.value, 'order');
+  assert.equal('locked' in category.dataset, true);
+  assert.equal(elements.get('docUrgencyField').hidden, true);
+  assert.deepEqual(statusOptions(elements), ORDER_STATUS_TEXT);
+  assert.equal(elements.get('docStatus').value, '', 'a new order starts with no status');
+
+  elements.get('docTitle').value = 'แต่งตั้งคณะกรรมการตรวจรับพัสดุ';
+  elements.get('docNumber').value = '123/2569';
+  elements.get('docAgency').value = 'นายก อบต.';
+  elements.get('docStatus').value = 'in-progress';
+  const saving = elements.get('docForm').fire('submit');
+  await flush();
+  const [write] = app.writes;
+  assert.deepEqual([write.title, write.docNumber, write.agency, write.category, write.status],
+    ['แต่งตั้งคณะกรรมการตรวจรับพัสดุ', '123/2569', 'นายก อบต.', 'order', 'in-progress']);
+  assert.equal('urgency' in write, false, 'orders have no urgency');
+  app.complete();
+  await saving;
+  assert.equal(elements.get('docModalOverlay').hidden, true);
+  assert.deepEqual(toasts, [{ message: 'เพิ่มคำสั่งสำเร็จ', type: 'success' }]);
+
+  // the next document opens unlocked, as a document again
+  run('openDocModal()');
+  assert.equal('locked' in category.dataset, false);
+  assert.equal(category.value, '');
+  assert.deepEqual(formText(elements, 'docModalTitle', 'docTitleLabel', 'docSaveBtn'), ['เพิ่มเอกสารใหม่', 'ชื่อเอกสาร', 'บันทึกเอกสาร']);
+  assert.equal(elements.get('docUrgencyField').hidden, false);
+  assert.equal(elements.get('docStatus').value, '');
+});
+
+test('editing an order opens the order form and keeps an older status the order form does not offer', async () => {
+  const edit = async (existing, change = () => {}) => {
+    const app = setup({ authMode: 'ready' });
+    const toasts = recordToasts(app);
+    app.context.existing = existing;
+    app.run(`allCategories = [{ id: "order", name: "คำสั่ง" }, { id: "memo", name: "บันทึกข้อความ" }]; allDocuments = [existing]; openDocModal(existing)`);
+    const { elements } = app;
+    const form = {
+      title: elements.get('docModalTitle').textContent, locked: 'locked' in elements.get('docCategory').dataset,
+      statuses: statusOptions(elements), status: elements.get('docStatus').value,
+    };
+    change(elements);
+    const saving = elements.get('docForm').fire('submit');
+    await flush();
+    app.complete();
+    await saving;
+    return { form, write: app.writes[0], toasts };
+  };
+  const order = { id: 'o1', title: 'คำสั่งเดิม', category: 'order', status: 'completed' };
+  const saved = await edit(order);
+  assert.deepEqual(saved.form, { title: 'แก้ไขคำสั่ง', locked: true, statuses: ORDER_STATUS_TEXT, status: 'completed' });
+  assert.deepEqual([saved.write.category, saved.write.status], ['order', 'completed']);
+  assert.deepEqual(saved.toasts, [{ message: 'แก้ไขคำสั่งสำเร็จ', type: 'success' }]);
+
+  // orders saved through the document form before keep their status until someone picks a new one
+  const approved = await edit({ ...order, status: 'approved', urgency: 'most-urgent' });
+  assert.deepEqual(approved.form.statuses, ['อนุมัติแล้ว', ...ORDER_STATUS_TEXT]);
+  assert.equal(approved.write.status, 'approved');
+  assert.equal(approved.write.urgency, '', 'orders have no urgency, so an earlier level is cleared');
+  // no status is one of the order form's own choices, so nothing extra is added for it
+  const unset = await edit({ ...order, status: undefined });
+  assert.deepEqual([unset.form.statuses, unset.form.status, unset.write.status], [ORDER_STATUS_TEXT, '', '']);
+  const changed = await edit({ ...order, status: 'approved' }, (elements) => { elements.get('docStatus').value = 'cancelled'; });
+  assert.equal(changed.write.status, 'cancelled');
+
+  // records in other categories still open the document form
+  const memo = await edit({ id: 'm1', title: 'บันทึก', category: 'memo', status: 'approved' });
+  assert.deepEqual(memo.form, { title: 'แก้ไขเอกสาร', locked: false, statuses: ['ไม่ระบุสถานะ', 'รอดำเนินการ', 'อนุมัติแล้ว', 'ไม่อนุมัติ'], status: 'approved' });
+});
+
+test('an order is not saved before the คำสั่ง category has loaded, and picks it up once it arrives', async () => {
+  const app = setup({ authMode: 'ready' });
+  app.run('allCategories = []; openDocModal(null, { order: true })');
+  assert.deepEqual(formText(app.elements, 'docModalTitle', 'docTitleLabel'), ['เพิ่มคำสั่งใหม่', 'ชื่อคำสั่ง'], 'still the order form');
+  await app.elements.get('docForm').fire('submit');
+  assert.equal(app.writes.length, 0, 'without its category it would be saved as a document');
+  assert.match(app.elements.get('docFormError').textContent, /ยังโหลดหมวดหมู่คำสั่งไม่เสร็จ/);
+  app.run('allCategories = [{ id: "order", name: "คำสั่ง" }]; renderCategoryOptions()');
+  assert.equal(app.elements.get('docCategory').value, 'order');
+  const saving = app.elements.get('docForm').fire('submit');
+  await flush();
+  assert.deepEqual([app.writes[0].category, app.writes[0].status], ['order', ''], 'saved as an order with no status chosen');
+  app.complete();
+  await saving;
 });
 
 test('editing writes urgency only when one is chosen or has to be cleared back to ปกติ', async () => {
@@ -969,12 +1102,15 @@ test('the status filter can find documents saved without a status', () => {
     { id: "a", title: "ไม่ระบุ", status: "" },
     { id: "b", title: "เดิมไม่มีช่องสถานะ" },
     { id: "c", title: "อนุมัติ", status: "approved" },
+    { id: "d", title: "คำสั่งเสร็จสิ้น", status: "completed" },
   ]`);
   const titles = () => JSON.parse(run('JSON.stringify(getFilteredDocs().map((d) => d.title))')).sort();
   elements.get('filterStatus').value = 'none';
   assert.deepEqual(titles(), ['ไม่ระบุ', 'เดิมไม่มีช่องสถานะ'].sort());
   elements.get('filterStatus').value = 'approved';
   assert.deepEqual(titles(), ['อนุมัติ']);
+  elements.get('filterStatus').value = 'completed';
+  assert.deepEqual(titles(), ['คำสั่งเสร็จสิ้น']);
   assert.match(html.match(/<select id="filterStatus">([\s\S]*?)<\/select>/)[1], /<option value="none">ไม่ระบุสถานะ<\/option>/);
 });
 

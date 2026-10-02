@@ -479,6 +479,7 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 .view-head h2 { font-size: 25px; font-weight: 700; }
 .view-head p { color: var(--text-muted); font-size: 14px; margin-top: 5px; }
 .view-head-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.view-head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /* =========================== Hero =========================== */
 /* เนื้อหาทั้งหมดอยู่กึ่งกลางแบนเนอร์ ตราโลโก้อยู่ซ้ายและดอกทานตะวันอยู่ขวาเป็นเครื่องประดับคู่กัน
@@ -689,6 +690,10 @@ tr:hover .row-actions { opacity: 1; }
 .stamp-approved { color: var(--success); background: var(--success-bg); }
 .stamp-pending { color: var(--warning); background: var(--warning-bg); }
 .stamp-rejected { color: var(--danger); background: var(--danger-bg); }
+/* สถานะของคำสั่ง (รอดำเนินการใช้ stamp-pending ร่วมกับเอกสาร) */
+.stamp-in-progress { color: var(--primary); background: var(--primary-100); }
+.stamp-completed { color: var(--success); background: var(--success-bg); }
+.stamp-cancelled { color: var(--text-muted); background: var(--surface-3); }
 
 /* ชั้นความเร็วหน้าชื่อเอกสาร: กรอบเหลี่ยมแบบตรายาง ไม่ให้สับสนกับป้ายสถานะทรงแคปซูล
    ยิ่งด่วนสียิ่งเข้ม ด่วน = กรอบอำพัน, ด่วนมาก = กรอบแดง, ด่วนที่สุด = พื้นแดงทึบ */
@@ -921,6 +926,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238296AE' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 13px center; background-size: 16px;
 }
+/* หมวดหมู่ที่ล็อกไว้ในฟอร์มคำสั่ง: แม่กุญแจแทนลูกศร ตัวหนังสือยังชัดเท่าช่องอื่น
+   (Safari บน iPhone ทำตัวหนังสือในช่องที่ปิดใช้งานให้จาง จึงกำหนด text-fill-color ไว้ด้วย) */
+.form-grid select[data-locked] {
+  opacity: 1; color: var(--text); -webkit-text-fill-color: var(--text); cursor: not-allowed; background-color: var(--surface-3);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238296AE' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E");
+}
 /* Safari บน iPhone/iPad วาดช่องวันที่เอง: ข้อความอยู่กลางช่อง และช่องที่ยังว่างจะเตี้ยกว่าช่องอื่น */
 @supports (-webkit-touch-callout: none) {
   input[type="date"] { -webkit-appearance: none; appearance: none; }
@@ -1023,7 +1034,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .tune-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-faint); margin-top: 7px; }
 
 /* =========================== Toasts =========================== */
-.toast-stack { position: fixed; bottom: 22px; right: 22px; display: flex; flex-direction: column; gap: 10px; z-index: 200; }
+/* ป้ายแจ้งเตือนไม่มีอะไรให้กด จึงไม่รับการแตะ: บนมือถือป้ายลอยทับปุ่มบันทึก/ยกเลิกของหน้าต่างที่เปิดต่อทันที
+   ถ้ารับการแตะไว้ กดบันทึกจะไม่ติดอยู่หลายวินาทีจนกว่าป้ายจะหายไป */
+.toast-stack { position: fixed; bottom: 22px; right: 22px; display: flex; flex-direction: column; gap: 10px; z-index: 200; pointer-events: none; }
 .toast {
   position: relative; overflow: hidden; display: flex; align-items: center; gap: 11px;
   background: var(--glass-strong); backdrop-filter: blur(14px);
@@ -1052,6 +1065,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .hero { padding-inline: 164px; }
   .hero-art { left: 24px; width: 124px; height: 124px; }
   .search-wrap { max-width: 320px; }
+  /* ปุ่มเพิ่มคำสั่งและเพิ่มเอกสารบนแถบด้านบนกินที่ ช่องค้นหาจึงแคบลง ซ่อนป้าย Ctrl K (ปุ่มลัดยังใช้ได้) ให้เหลือที่พิมพ์ */
+  .search-kbd { display: none; }
+  .search-wrap input { padding-right: 16px; }
 }
 @media (max-width: 980px) {
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
