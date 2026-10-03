@@ -38,9 +38,11 @@ Object key: `documents/<ปี ค.ศ.>/<UUID>.pdf` สร้างใน Worke
    ```
    npx wrangler r2 bucket list
    ```
-3. `ALLOWED_ORIGINS` ใน `worker/wrangler.toml` ตั้งเป็นโดเมนของ Firebase Hosting แล้ว
+3. `ALLOWED_ORIGINS` ใน `worker/wrangler.toml` ตั้งเป็นโดเมนของ Firebase Hosting
    (`https://project2-ff906.web.app`, `https://project2-ff906.firebaseapp.com`)
+   และ Netlify (`https://saodora.netlify.app`, `https://deploy-sytem.netlify.app`) แล้ว
    ถ้าเปิดเว็บจากโดเมนอื่นด้วย ให้เพิ่มคั่นด้วย `,` แล้ว deploy Worker ใหม่
+   (ถ้าลืม เว็บใหม่จะแสดงรายการเอกสารได้ แต่ดู/ดาวน์โหลด/อัปโหลด PDF ไม่ได้ และขึ้นว่า "เชื่อมต่อระบบจัดเก็บไฟล์ไม่ได้")
 4. Deploy Worker แล้วจด URL ที่ได้ (ปัจจุบันคือ `https://myproject-pdf-api.govdocs-sukhothai.workers.dev`)
    ชื่อ Worker ใน `wrangler.toml` ต้องไม่ซ้ำกับโปรเจกต์อื่นในบัญชีเดียวกัน เพราะ deploy ชื่อเดียวกันจะทับของเดิมทันที
    ```
