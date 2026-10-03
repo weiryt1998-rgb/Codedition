@@ -441,14 +441,34 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 /* ---- Main / topbar ---- */
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
+/* แถบบนสุดไล่เฉดม่วงชุดเดียวกับแถบเมนูซ้าย ต่อกันเป็นกรอบเดียว และเปลี่ยนตามสีที่ปรับไว้กับโหมดมืด
+   ตัวหนังสือและไอคอนบนแถบใช้ --on-primary ซึ่งกลายเป็นสีเข้มเองเมื่อเลือกม่วงอ่อน */
 .topbar {
   display: flex; align-items: center; gap: 16px; padding: 14px 28px;
-  background: var(--glass); backdrop-filter: blur(18px) saturate(160%);
-  border-bottom: 1px solid var(--border-soft); position: sticky; top: 0; z-index: 30;
+  background: var(--grad-primary); color: var(--on-primary);
+  box-shadow: 0 12px 28px -20px rgba(33, 16, 51, .75);
+  position: sticky; top: 0; z-index: 30;
+}
+/* ประกายจาง ๆ ครึ่งบนให้แถบดูนูน และเส้นทองใต้แถบ รับกับขอบทองของป้ายชื่อและดอกทานตะวัน */
+.topbar::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, 0) 60%);
+}
+.topbar::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; pointer-events: none;
+  background: linear-gradient(90deg, rgba(255, 222, 145, 0), rgba(255, 222, 145, .8) 25%, rgba(226, 164, 58, .9) 70%, rgba(255, 222, 145, 0));
 }
 .topbar > .icon-btn { display: none; }
+.topbar .icon-btn {
+  background: color-mix(in srgb, var(--on-primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--on-primary) 24%, transparent); color: var(--on-primary);
+}
+.topbar .icon-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--on-primary) 22%, transparent);
+  border-color: color-mix(in srgb, var(--on-primary) 42%, transparent); color: var(--on-primary);
+}
 .topbar-title { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.topbar-title .crumb { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--text-faint); font-weight: 600; }
+.topbar-title .crumb { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--on-primary-muted); font-weight: 600; }
 .topbar-title h1 { font-size: 17px; font-weight: 700; white-space: nowrap; }
 
 .search-wrap { position: relative; flex: 1; max-width: 440px; margin-left: auto; }
@@ -459,7 +479,8 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
   box-shadow: var(--shadow-xs); transition: border-color .2s var(--ease), box-shadow .2s var(--ease);
 }
 .search-wrap input::placeholder { color: var(--text-faint); }
-.search-wrap input:focus { outline: none; border-color: var(--primary-400); box-shadow: 0 0 0 4px rgba(var(--primary-rgb), .12); }
+/* วงโฟกัสสีม่วงจะกลืนกับแถบ จึงใช้สีตัวหนังสือของแถบแทน */
+.search-wrap input:focus { outline: none; border-color: var(--primary-400); box-shadow: 0 0 0 4px color-mix(in srgb, var(--on-primary) 35%, transparent); }
 .search-wrap input::-webkit-search-cancel-button { display: none; }
 .search-kbd {
   position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
@@ -523,7 +544,8 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 }
 .hero-copy p { color: var(--on-primary-muted); font-size: 14.5px; line-height: 1.7; }
 .hero-actions { display: flex; justify-content: center; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
-.hero-actions .btn-primary { background: var(--grad-accent); color: #38224E; box-shadow: 0 12px 26px -14px color-mix(in srgb, var(--accent) 90%, transparent); }
+/* ปุ่มม่วงจะกลืนไปกับพื้นม่วง ปุ่มบนแบนเนอร์และแถบบนสุดจึงเป็นปุ่มสีม่วงอ่อน */
+.hero-actions .btn-primary, .topbar .btn-primary { background: var(--grad-accent); color: #38224E; box-shadow: 0 12px 26px -14px color-mix(in srgb, var(--accent) 90%, transparent); }
 .hero-actions .btn-ghost { background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .18); color: var(--on-primary); }
 .hero-actions .btn-ghost:hover { background: rgba(255, 255, 255, .16); color: var(--on-primary); }
 .hero-art {
@@ -932,6 +954,42 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   opacity: 1; color: var(--text); -webkit-text-fill-color: var(--text); cursor: not-allowed; background-color: var(--surface-3);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238296AE' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E");
 }
+/* ฟอร์มคำสั่ง: กล่องค้นหาคำสั่งที่บันทึกไว้แล้ว พื้นสีม่วงอ่อนแยกจากช่องกรอก ให้เห็นว่าไม่ใช่ข้อมูลที่จะบันทึก */
+.order-lookup {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px;
+  border-radius: var(--radius-sm); background: var(--accent-soft); border: 1px solid var(--border-soft);
+}
+.order-lookup-bar { display: flex; gap: 8px; }
+.order-lookup-input { position: relative; flex: 1; min-width: 0; }
+.order-lookup-input svg {
+  position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
+  width: 17px; height: 17px; color: var(--text-faint); pointer-events: none;
+}
+.form-grid .order-lookup input { padding-left: 38px; background-color: var(--surface); }
+.form-grid .order-lookup select { flex: none; width: auto; background-color: var(--surface); }
+.order-lookup-note { font-size: 12.5px; color: var(--text-muted); line-height: 1.5; }
+.order-hits {
+  list-style: none; margin: 0; padding: 0; max-height: 236px; overflow-y: auto;
+  border-radius: 10px; border: 1px solid var(--border-soft); background: var(--surface);
+}
+.order-hit {
+  display: grid; grid-template-columns: minmax(64px, auto) minmax(0, 1fr) auto; grid-template-areas: "number main date";
+  align-items: baseline; gap: 12px; padding: 9px 12px; font-size: 13.5px; line-height: 1.45;
+}
+.order-hit + .order-hit { border-top: 1px solid var(--border-soft); }
+.order-hit-number { grid-area: number; font-weight: 600; color: var(--primary); }
+.order-hit-main { grid-area: main; display: flex; flex-direction: column; min-width: 0; }
+.order-hit-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.order-hit-sub { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.order-hit-date { grid-area: date; font-size: 12.5px; color: var(--text-muted); white-space: nowrap; }
+/* จอแคบ: เลขที่กับวันที่อยู่บรรทัดบน ชื่อคำสั่งได้ทั้งแถว ไม่ถูกบีบเหลือไม่กี่ตัวอักษร */
+@media (max-width: 640px) {
+  .order-hit { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "number date" "main main"; gap: 2px 10px; }
+  .order-hit-title { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+}
+/* ฟอร์มคำสั่ง: ตัวเลือกปี พ.ศ. ต่อท้ายช่องวันที่ กว้างพอดีข้อความ ช่องวันที่ได้ที่เหลือ */
+.date-pick { display: flex; gap: 8px; }
+.form-grid .date-pick select { flex: none; width: auto; }
 /* Safari บน iPhone/iPad วาดช่องวันที่เอง: ข้อความอยู่กลางช่อง และช่องที่ยังว่างจะเตี้ยกว่าช่องอื่น */
 @supports (-webkit-touch-callout: none) {
   input[type="date"] { -webkit-appearance: none; appearance: none; }

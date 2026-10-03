@@ -663,6 +663,113 @@ test('the เพิ่มคำสั่ง button opens the order form locked t
   assert.equal(elements.get('docStatus').value, '');
 });
 
+test('the order form has a พ.ศ. year beside its date, so past orders can be entered', async () => {
+  const { run, elements } = setup();
+  run(`allCategories = [{ id: "order", name: "คำสั่ง" }, { id: "memo", name: "บันทึกข้อความ" }]; renderCategoryOptions()`);
+  const year = elements.get('docYear'), date = elements.get('docDate');
+  const years = () => [...year.innerHTML.matchAll(/<option value="([^"]*)">([^<]*)</g)].map((m) => m[2]);
+  const thisYear = new Date().getFullYear() + 543;
+  run('openDocModal()');
+  assert.equal(year.hidden, true, 'documents keep the plain date');
+  elements.get('docCategory').value = 'order';
+  await elements.get('docCategory').fire('change');
+  assert.equal(year.hidden, false, 'choosing คำสั่ง in the document form shows it');
+
+  run('openDocModal(null, { order: true })');
+  assert.equal(year.hidden, false);
+  assert.equal(year.value, String(thisYear), 'a new order starts in this year');
+  assert.deepEqual([years()[0], years().at(-1), years().length], [`พ.ศ. ${thisYear}`, `พ.ศ. ${thisYear - 30}`, 31]);
+  date.value = '2026-03-15';
+  await date.fire('change');
+  year.value = '2565';
+  await year.fire('change');
+  assert.equal(date.value, '2022-03-15', 'the day and month stay');
+  date.value = '2024-02-29';
+  await date.fire('change');
+  assert.equal(year.value, '2567', 'a date picked in the calendar moves the year with it');
+  year.value = '2566';
+  await year.fire('change');
+  assert.equal(date.value, '2023-02-28', '2566 has no 29 February');
+
+  // an order older than the list still shows its own year
+  run('openDocModal({ id: "o1", title: "คำสั่งเก่า", category: "order", date: "1990-05-01" })');
+  assert.equal(year.value, '2533');
+  assert.equal(years().at(-1), 'พ.ศ. 2533');
+  // with the date cleared, a chosen year takes today's day and month
+  date.value = '';
+  await date.fire('change');
+  assert.deepEqual([year.value, years()[0]], ['', 'ปี พ.ศ.']);
+  year.value = '2560';
+  await year.fire('change');
+  assert.match(date.value, /^2017-\d{2}-\d{2}$/);
+  assert.equal(year.value, '2560');
+});
+
+test('the order form searches saved orders, optionally in one พ.ศ. year, and Enter or Esc there never saves or closes it', async () => {
+  const { run, elements, subscriptions } = setup();
+  const saved = [
+    { id: 'a', category: 'order', title: 'แต่งตั้งคณะกรรมการตรวจรับพัสดุ', docNumber: '12/2565', agency: 'นายก อบต.', date: '2022-03-15', status: 'completed' },
+    { id: 'b', category: 'order', title: 'แต่งตั้งคณะทำงาน <b>ป้องกันภัย</b>', docNumber: '45/2565', agency: 'ปลัด อบต.', date: '2022-11-02' },
+    { id: 'c', category: 'order', title: 'มอบหมายงานเวรยาม', docNumber: '3/2569', agency: 'นายก อบต.', date: '2026-01-10', status: 'toString' },
+    { id: 'd', category: 'order', title: 'คำสั่งเก่ามาก', docNumber: '1/2530', date: '1987-05-01' },
+    { id: 'e', category: 'memo', title: 'แต่งตั้งในบันทึกข้อความ', docNumber: 'บ 1/2565', date: '2022-03-15' },
+  ];
+  run(`allCategories = [{ id: "order", name: "คำสั่ง" }, { id: "memo", name: "บันทึกข้อความ" }]; renderCategoryOptions()`);
+  run(`allDocuments = ${JSON.stringify(saved)}`);
+  const lookup = elements.get('orderLookup'), search = elements.get('orderSearch'), year = elements.get('orderSearchYear');
+  const results = elements.get('orderSearchResults');
+  const note = () => elements.get('orderSearchNote').textContent;
+  const hits = () => (results.hidden ? [] : [...results.innerHTML.matchAll(/order-hit-number mono">([^<]*)</g)].map((m) => m[1]));
+  const years = () => [...year.innerHTML.matchAll(/<option value="([^"]*)">([^<]*)</g)].map((m) => m[2]);
+  const type = (text) => { search.value = text; return search.fire('input'); };
+  const pick = (value) => { year.value = value; return year.fire('change'); };
+  const thisYear = new Date().getFullYear() + 543;
+
+  run('openDocModal()');
+  assert.equal(lookup.hidden, true, 'the document form has no order search');
+  run('openDocModal(null, { order: true })');
+  assert.equal(lookup.hidden, false);
+  assert.deepEqual([...years().slice(0, 2), ...years().slice(-2)], ['ทุกปี', `พ.ศ. ${thisYear}`, `พ.ศ. ${thisYear - 30}`, 'พ.ศ. 2530'],
+    'the years of the date picker, plus older orders');
+  assert.deepEqual([year.value, hits(), note()], ['', [], 'มีคำสั่งที่บันทึกไว้แล้ว 4 รายการ พิมพ์คำค้นหรือเลือกปี พ.ศ. เพื่อดูรายการ']);
+
+  await type('แต่งตั้ง');
+  assert.deepEqual([hits(), note()], [['45/2565', '12/2565'], 'พบ 2 คำสั่ง'], 'orders only, the latest order date first');
+  assert.match(results.innerHTML, /แต่งตั้งคณะทำงาน &lt;b&gt;ป้องกันภัย&lt;\/b&gt;/);
+  assert.match(results.innerHTML, /นายก อบต\. · เสร็จสิ้น/);
+  await pick('2569');
+  assert.deepEqual([hits(), note(), results.hidden], [[], 'ไม่พบคำสั่งที่ตรงกันในปี พ.ศ. 2569', true]);
+  await type('');
+  assert.deepEqual([hits(), note()], [['3/2569'], 'พบ 1 คำสั่งในปี พ.ศ. 2569'], 'a year alone lists that year');
+  assert.doesNotMatch(results.innerHTML, /function|native code/, 'an unknown status adds nothing');
+  await pick('2565');
+  await type('ปลัด');
+  assert.deepEqual(hits(), ['45/2565'], 'ผู้สั่ง is searched too');
+
+  // Enter would submit the order form, and Esc would close it and lose what was typed
+  const press = async (key) => {
+    const event = { key, prevented: false, stopped: false };
+    await search.fire('keydown', { ...event, preventDefault() { event.prevented = true; }, stopPropagation() { event.stopped = true; } });
+    return event;
+  };
+  assert.equal((await press('Enter')).prevented, true);
+  const escape = await press('Escape');
+  assert.deepEqual([escape.stopped, search.value, hits()], [true, '', ['45/2565', '12/2565']], 'Esc clears the search and keeps the chosen year');
+  assert.equal((await press('Escape')).stopped, false, 'with the search empty, Esc closes the form as before');
+
+  // an order saved meanwhile (here or on another computer) shows up while the form is open
+  run('attachFirestoreListeners()');
+  const later = { id: 'f', category: 'order', title: 'แต่งตั้งเพิ่มเติม', docNumber: '46/2565', date: '2022-12-01' };
+  subscriptions.find((s) => s.deleted === false).receive({
+    docs: [...saved, later].map((d) => ({ id: d.id, data: () => d })), metadata: { fromCache: false, hasPendingWrites: false },
+  });
+  assert.deepEqual(hits(), ['46/2565', '45/2565', '12/2565']);
+
+  // the next order starts with an empty search
+  run('openDocModal(null, { order: true })');
+  assert.deepEqual([search.value, year.value, hits()], ['', '', []]);
+});
+
 test('editing an order opens the order form and keeps an older status the order form does not offer', async () => {
   const edit = async (existing, change = () => {}) => {
     const app = setup({ authMode: 'ready' });

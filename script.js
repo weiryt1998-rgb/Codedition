@@ -673,6 +673,8 @@ function renderAll() {
   renderRecentTable();
   renderDocsTable();
   renderCategories();
+  // คำสั่งที่เพิ่งเพิ่มหรือแก้ (รวมจากเครื่องอื่น) ขึ้นในผลค้นหาของฟอร์มคำสั่งที่เปิดอยู่ทันที
+  if (!document.getElementById("docModalOverlay").hidden && !document.getElementById("orderLookup").hidden) renderOrderLookup();
 }
 
 /* =========================================================
@@ -1210,8 +1212,11 @@ function syncOrderFields() {
   document.getElementById("docAgencyLabel").textContent = labels.agency;
   document.getElementById("docAgency").placeholder = order ? "เช่น นายก อบต." : "เช่น กรมการปกครอง";
   document.getElementById("docDescription").placeholder = `รายละเอียดเพิ่มเติมของ${order ? "คำสั่ง" : "เอกสาร"}`;
-  // คำสั่งไม่มีชั้นความเร็ว
+  // คำสั่งไม่มีชั้นความเร็ว แต่มีตัวเลือกปี พ.ศ. ไว้ลงคำสั่งย้อนหลัง และกล่องค้นหาคำสั่งที่บันทึกไว้แล้ว
   document.getElementById("docUrgencyField").hidden = order;
+  document.getElementById("docYear").hidden = !order;
+  document.getElementById("orderLookup").hidden = !order;
+  if (order) renderOrderLookup();
   // เปลี่ยนรายการสถานะเฉพาะตอนสลับระหว่างเอกสารกับคำสั่ง ค่าที่มีในทั้งสองแบบ (ว่าง, รอดำเนินการ) คงไว้
   const status = document.getElementById("docStatus");
   if (status.dataset.mode !== (order ? "order" : "document")) {
@@ -1222,6 +1227,100 @@ function syncOrderFields() {
   }
 }
 document.getElementById("docCategory").addEventListener("change", syncOrderFields);
+
+/* ลงคำสั่งย้อนหลัง: ช่องวันที่ของเบราว์เซอร์แสดงปีเป็น ค.ศ. จึงมีตัวเลือกปี พ.ศ. ต่อท้าย
+   เลือกปีแล้ววันที่ย้ายไปปีนั้นโดยคงวันและเดือนเดิม ค่าที่บันทึกยังเป็นช่องวันที่ช่องเดียว */
+const BE_OFFSET = 543;
+const YEARS_BACK = 30;
+function renderYearOptions() {
+  const select = document.getElementById("docYear");
+  const date = document.getElementById("docDate").value;
+  const year = /^\d{4}-\d{2}-\d{2}$/.test(date) ? Number(date.slice(0, 4)) : 0;
+  const thisYear = new Date().getFullYear();
+  const years = Array.from({ length: YEARS_BACK + 1 }, (_, i) => thisYear - i);
+  // คำสั่งที่เก่ากว่าช่วงนี้ หรือปีที่พิมพ์เองในช่องวันที่ ก็ยังแสดงปีของมัน
+  if (year && !years.includes(year)) years.push(year), years.sort((a, b) => b - a);
+  select.innerHTML = (year ? "" : `<option value="">ปี พ.ศ.</option>`)
+    + years.map((y) => `<option value="${y + BE_OFFSET}">พ.ศ. ${y + BE_OFFSET}</option>`).join("");
+  select.value = year ? String(year + BE_OFFSET) : "";
+}
+document.getElementById("docDate").addEventListener("change", renderYearOptions);
+document.getElementById("docYear").addEventListener("change", (e) => {
+  const year = Number(e.target.value) - BE_OFFSET;
+  if (!(year > 0)) return;
+  const input = document.getElementById("docDate");
+  const current = /^\d{4}-\d{2}-\d{2}$/.test(input.value) ? input.value : localIsoDate();
+  const [, month, day] = current.split("-").map(Number);
+  // 29 ก.พ. ย้ายไปปีที่ไม่มีวันนั้น ใช้วันสุดท้ายของเดือนแทน
+  const lastDay = new Date(year, month, 0).getDate();
+  input.value = [String(year).padStart(4, "0"), String(month).padStart(2, "0"), String(Math.min(day, lastDay)).padStart(2, "0")].join("-");
+  renderYearOptions();
+});
+
+/* ปี พ.ศ. ของวันที่แบบ YYYY-MM-DD ไม่มีวันที่คืน 0 */
+function buddhistYear(iso) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? Number(iso.slice(0, 4)) + BE_OFFSET : 0;
+}
+/* ฟอร์มคำสั่ง: ค้นหาคำสั่งที่บันทึกไว้แล้ว เลือกปี พ.ศ. ได้ (นับตามวันที่ออกคำสั่ง)
+   ไว้ดูก่อนบันทึกว่าเคยลงคำสั่งนี้แล้วหรือยัง และเลขที่ล่าสุดของปีนั้นถึงไหน */
+function renderOrderLookup() {
+  const yearSelect = document.getElementById("orderSearchYear");
+  const note = document.getElementById("orderSearchNote");
+  const results = document.getElementById("orderSearchResults");
+  const orders = allDocuments.filter((d) => isOrderCategory(d.category));
+  // ปีชุดเดียวกับตัวเลือกข้างช่องวันที่ บวกปีของคำสั่งที่เก่ากว่านั้น
+  const thisYear = new Date().getFullYear() + BE_OFFSET;
+  const years = new Set(Array.from({ length: YEARS_BACK + 1 }, (_, i) => thisYear - i));
+  orders.forEach((d) => { if (buddhistYear(d.date)) years.add(buddhistYear(d.date)); });
+  const chosen = Number(yearSelect.value);
+  yearSelect.innerHTML = `<option value="">ทุกปี</option>`
+    + [...years].sort((a, b) => b - a).map((y) => `<option value="${y}">พ.ศ. ${y}</option>`).join("");
+  const year = years.has(chosen) ? chosen : 0;
+  yearSelect.value = year ? String(year) : "";
+
+  const q = document.getElementById("orderSearch").value.trim().toLowerCase();
+  if (!q && !year) {
+    results.hidden = true;
+    results.innerHTML = "";
+    note.textContent = orders.length
+      ? `มีคำสั่งที่บันทึกไว้แล้ว ${orders.length} รายการ พิมพ์คำค้นหรือเลือกปี พ.ศ. เพื่อดูรายการ`
+      : "ยังไม่มีคำสั่งที่บันทึกไว้";
+    return;
+  }
+  // วันที่ออกคำสั่งล่าสุดอยู่บน วันเดียวกันเรียงเลขที่จากมากไปน้อย
+  const hits = orders.filter((d) => matchesSearch(d, q) && (!year || buddhistYear(d.date) === year))
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))
+      || String(b.docNumber || "").localeCompare(String(a.docNumber || ""), "th", { numeric: true })
+      || byEntry(b, a));
+  const inYear = year ? `ในปี พ.ศ. ${year}` : "";
+  note.textContent = hits.length ? `พบ ${hits.length} คำสั่ง${inYear}` : `ไม่พบคำสั่งที่ตรงกัน${inYear}`;
+  results.hidden = !hits.length;
+  results.innerHTML = hits.map((d) => {
+    const details = [d.agency, Object.hasOwn(STATUS_LABEL, d.status) ? STATUS_LABEL[d.status] : ""].filter(Boolean).join(" · ");
+    return `
+    <li class="order-hit">
+      <span class="order-hit-number mono">${escapeHtml(d.docNumber || "-")}</span>
+      <span class="order-hit-main">
+        <span class="order-hit-title">${escapeHtml(d.title || "-")}</span>
+        ${details ? `<span class="order-hit-sub">${escapeHtml(details)}</span>` : ""}
+      </span>
+      <span class="order-hit-date mono">${formatDate(d.date)}</span>
+    </li>`;
+  }).join("");
+}
+document.getElementById("orderSearch").addEventListener("input", renderOrderLookup);
+document.getElementById("orderSearchYear").addEventListener("change", renderOrderLookup);
+document.getElementById("orderSearch").addEventListener("keydown", (e) => {
+  // Enter ในช่องค้นหาจะส่งฟอร์ม (กลายเป็นบันทึกคำสั่ง) และ Esc จะปิดหน้าต่างทิ้งข้อมูลที่กรอกไว้
+  // จึงกัน Enter ไว้ และให้ Esc ล้างคำค้นก่อน
+  if (e.key === "Enter") e.preventDefault();
+  if (e.key === "Escape" && e.target.value) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.target.value = "";
+    renderOrderLookup();
+  }
+});
 
 function renderCategoryOptions() {
   const docSelect = document.getElementById("docCategory");
@@ -1511,7 +1610,6 @@ async function handleFile(file) {
 document.getElementById("addDocBtn").addEventListener("click", () => openDocModal());
 document.querySelectorAll("[data-open='addDocBtn']").forEach((b) => b.addEventListener("click", () => openDocModal()));
 document.getElementById("addOrderBtn").addEventListener("click", () => openDocModal(null, { order: true }));
-document.querySelectorAll("[data-open='addOrderBtn']").forEach((b) => b.addEventListener("click", () => openDocModal(null, { order: true })));
 
 /* ฟอร์มเดียวใช้ทั้งเอกสารและคำสั่ง ปุ่มเพิ่มคำสั่ง ({ order: true }) และการแก้ไขรายการในหมวดคำสั่ง
    เปิดเป็นฟอร์มคำสั่งที่ล็อกหมวดหมู่ไว้ที่คำสั่ง */
@@ -1526,6 +1624,9 @@ function openDocModal(doc = null, { order = false } = {}) {
   else delete category.dataset.locked;
   setModalBusy("docModalOverlay", false);
   document.getElementById("docForm").reset();
+  // ช่องค้นหาคำสั่งเริ่มว่างทุกครั้งที่เปิดฟอร์ม
+  document.getElementById("orderSearch").value = "";
+  document.getElementById("orderSearchYear").value = "";
   document.getElementById("docFormError").hidden = true;
   fileInput.value = "";
   pendingFileData = null;
@@ -1545,12 +1646,9 @@ function openDocModal(doc = null, { order = false } = {}) {
   } else {
     document.getElementById("docId").value = "";
     category.value = "";
-    const today = new Date();
-    const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000)
-      .toISOString()
-      .slice(0, 10);
-    document.getElementById("docDate").value = localDate;
+    document.getElementById("docDate").value = localIsoDate();
   }
+  renderYearOptions();
   // ฟอร์มที่ไม่ล็อกเปิดขึ้นมาเป็นเอกสารเสมอ จึงใช้ locked บอกชนิดของฟอร์มได้ รายการใหม่เริ่มแบบยังไม่ระบุสถานะ
   renderStatusOptions(locked, doc && Object.hasOwn(STATUS_LABEL, doc.status) ? doc.status : "");
   syncOrderFields();
@@ -1883,6 +1981,12 @@ document.querySelectorAll("#docsTable th[data-sort]").forEach((th) => {
   });
 });
 
+/* คำค้น (พิมพ์เล็กแล้ว) ตรงกับชื่อ เลขที่ หน่วยงาน หมวดหมู่ หรือชั้นความเร็ว
+   ใช้ทั้งช่องค้นหาด้านบนและช่องค้นหาในฟอร์มคำสั่ง */
+function matchesSearch(d, q) {
+  return !q || [d.title, d.docNumber, d.agency, categoryName(d.category), URGENCY_LABEL[d.urgency]]
+    .some((f) => String(f ?? "").toLowerCase().includes(q));
+}
 function getFilteredDocs() {
   const q = document.getElementById("globalSearch").value.trim().toLowerCase();
   const catFilter = document.getElementById("filterCategory").value;
@@ -1890,8 +1994,7 @@ function getFilteredDocs() {
   const dateFilter = document.getElementById("filterDate").value;
 
   let list = allDocuments.filter((d) => {
-    const matchesQuery = !q || [d.title, d.docNumber, d.agency, categoryName(d.category), URGENCY_LABEL[d.urgency]]
-      .some((f) => String(f ?? "").toLowerCase().includes(q));
+    const matchesQuery = matchesSearch(d, q);
     const matchesCat = !catFilter || d.category === catFilter;
     const matchesStatus = !statusFilter
       || (statusFilter === "none" ? !Object.hasOwn(STATUS_LABEL, d.status) : d.status === statusFilter);
@@ -2039,6 +2142,10 @@ function statusStamp(status) {
 function urgencyBadge(urgency) {
   if (!Object.hasOwn(URGENCY_LABEL, urgency)) return "";
   return `<span class="urgency urgency-${urgency}">${URGENCY_LABEL[urgency]}</span>`;
+}
+/* วันที่ตามเวลาเครื่อง (YYYY-MM-DD) ไม่ใช่ตามเวลา UTC ที่อาจยังเป็นเมื่อวาน */
+function localIsoDate(date = new Date()) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 function formatDate(iso) {
   if (!iso) return "-";

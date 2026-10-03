@@ -187,7 +187,7 @@
       </div>
 
       <div class="topbar-actions">
-        <button class="btn btn-primary btn-sm hide-sm" data-open="addOrderBtn">
+        <button class="btn btn-primary btn-sm hide-sm" id="addOrderBtn">
           <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
           เพิ่มคำสั่ง
         </button>
@@ -224,10 +224,6 @@
             </h2>
             <p>จัดเก็บ ค้นหา และติดตามสถานะหนังสือราชการได้จากที่เดียว พร้อมสำรองข้อมูลแบบเรียลไทม์</p>
             <div class="hero-actions">
-              <button class="btn btn-primary" data-open="addOrderBtn">
-                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-                เพิ่มคำสั่งใหม่
-              </button>
               <button class="btn btn-primary" data-open="addDocBtn">
                 <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
                 เพิ่มเอกสารใหม่
@@ -347,10 +343,6 @@
             <p>จัดการ แก้ไข ดาวน์โหลด และลบเอกสารราชการ</p>
           </div>
           <div class="view-head-actions">
-            <button class="btn btn-primary" id="addOrderBtn">
-              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-              เพิ่มคำสั่ง
-            </button>
             <button class="btn btn-primary" id="addDocBtn">
               <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
               เพิ่มเอกสาร
@@ -473,6 +465,19 @@
     <form id="docForm" class="modal-body">
       <input type="hidden" id="docId">
       <div class="form-grid">
+        <!-- ฟอร์มคำสั่งเท่านั้น: ค้นหาคำสั่งที่บันทึกไว้แล้ว ช่องในกล่องนี้ไม่ถูกบันทึก -->
+        <div class="span-2 order-lookup" id="orderLookup" hidden>
+          <label for="orderSearch">ค้นหาคำสั่งที่บันทึกไว้แล้ว</label>
+          <div class="order-lookup-bar">
+            <span class="order-lookup-input">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 21l-4.35-4.35m1.35-5.15a7 7 0 1 1-14 0 7 7 0 0 1 14 0z"/></svg>
+              <input type="search" id="orderSearch" placeholder="ชื่อคำสั่ง เลขที่คำสั่ง หรือผู้สั่ง" autocomplete="off">
+            </span>
+            <select id="orderSearchYear" aria-label="ปี พ.ศ. ที่จะค้นหา"><option value="">ทุกปี</option></select>
+          </div>
+          <p class="order-lookup-note" id="orderSearchNote" aria-live="polite"></p>
+          <ul class="order-hits" id="orderSearchResults" tabindex="0" aria-label="คำสั่งที่ค้นพบ" hidden></ul>
+        </div>
         <label class="span-2"><span id="docTitleLabel">ชื่อเอกสาร</span>
           <input type="text" id="docTitle" maxlength="300" placeholder="เช่น ขอเชิญประชุมคณะกรรมการ">
         </label>
@@ -480,7 +485,10 @@
           <input type="text" id="docNumber" maxlength="100" placeholder="เช่น ศธ 0001/2569">
         </label>
         <label><span id="docDateLabel">วันที่ออกเอกสาร</span>
-          <input type="date" id="docDate">
+          <span class="date-pick">
+            <input type="date" id="docDate">
+            <select id="docYear" aria-label="ปี พ.ศ." title="เลือกปี พ.ศ. เพื่อลงคำสั่งย้อนหลัง" hidden></select>
+          </span>
         </label>
         <label><span id="docAgencyLabel">หน่วยงาน</span>
           <input type="text" id="docAgency" maxlength="300" placeholder="เช่น กรมการปกครอง">
