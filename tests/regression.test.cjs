@@ -23,7 +23,7 @@ function defaultApiResponse(url, init = {}) {
 // Minimal DOM doubles: these exercise application logic, not browser layout.
 function setup({
   storageThrows = false, legacyTheme = null, storageValues = {}, authMode = 'missing', databaseAvailable = true,
-  apiUrl = 'https://pdf-api.test', apiRespond = defaultApiResponse, firestoreDeleteError = null,
+  apiUrl = 'https://pdf-api.test', apiRespond = defaultApiResponse, firestoreDeleteError = null, legacyBrowser = false,
 } = {}) {
   const elements = new Map();
   const storage = new Map(Object.entries(storageValues));
@@ -176,6 +176,8 @@ function setup({
     performance: { now: () => 0 }, requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout() {},
   });
   const run = (code) => vm.runInContext(code, context);
+  // Safari before 15.4 has neither of these
+  if (legacyBrowser) run('delete Object.hasOwn; delete Array.prototype.at;');
   run(source);
   return {
     run, elements, context, subscriptions, writes, deletes, storage, warnings, authAttempts, uploads, apiCalls, created,
@@ -622,6 +624,54 @@ test('choosing the คำสั่ง category turns the document form into the 
   assert.deepEqual(heads(), DOCUMENT_LABELS);
 });
 
+test('the หนังสือส่ง, หนังสือรับ and คำร้อง categories call the agency field and column ถึง, จาก and ผู้ยื่นคำร้อง, also when editing', async () => {
+  const { run, elements } = setup();
+  run(`allCategories = [{ id: "out", name: " หนังสือส่ง " }, { id: "in", name: "หนังสือรับ" }, { id: "petition", name: "คำร้อง" }, { id: "memo", name: "บันทึกข้อความ" }, { id: "order", name: "คำสั่ง" }]; renderCategoryOptions()`);
+  const agency = () => elements.get('docAgencyLabel').textContent;
+  const choose = (id) => { elements.get('docCategory').value = id; return elements.get('docCategory').fire('change'); };
+  run('openDocModal()');
+  assert.deepEqual(formLabels(elements), DOCUMENT_LABELS);
+  await choose('out');
+  assert.deepEqual(formLabels(elements), [...DOCUMENT_LABELS.slice(0, 3), 'ถึง'], 'only the agency field is renamed');
+  assert.deepEqual(formText(elements, 'docModalTitle', 'docSaveBtn'), ['เพิ่มเอกสารใหม่', 'บันทึกเอกสาร']);
+  await choose('in');
+  assert.equal(agency(), 'จาก');
+  await choose('petition');
+  assert.equal(agency(), 'ผู้ยื่นคำร้อง');
+  await choose('order');
+  assert.equal(agency(), 'ผู้สั่ง');
+  await choose('memo');
+  assert.equal(agency(), 'หน่วยงาน');
+  await choose('');
+  assert.equal(agency(), 'หน่วยงาน');
+
+  run('openDocModal({ id: "a", category: "in", agency: "อำเภอศรีสำโรง" })');
+  assert.deepEqual([agency(), elements.get('docAgency').value], ['จาก', 'อำเภอศรีสำโรง']);
+  run('openDocModal({ id: "b", category: "petition", agency: "นายสมชาย ใจดี" })');
+  assert.deepEqual([agency(), elements.get('docAgency').value], ['ผู้ยื่นคำร้อง', 'นายสมชาย ใจดี']);
+  run('openDocModal()');
+  assert.equal(agency(), 'หน่วยงาน', 'the next new document starts with หน่วยงาน again');
+
+  // the table filtered to one of them names its agency column the same way
+  const head = () => elements.get('agencyHead').textContent;
+  const filter = (id) => { elements.get('filterCategory').value = id; return elements.get('filterCategory').fire('change'); };
+  run('allDocuments = []; renderDocsTable()');
+  assert.equal(head(), 'หน่วยงาน');
+  await filter('out');
+  assert.deepEqual(formText(elements, 'titleHead', 'docNumberHead', 'dateHead', 'agencyHead'), [...DOCUMENT_LABELS.slice(0, 3), 'ถึง']);
+  await filter('in');
+  assert.equal(head(), 'จาก');
+  await filter('petition');
+  assert.equal(head(), 'ผู้ยื่นคำร้อง');
+  await filter('order');
+  assert.equal(head(), 'ผู้สั่ง');
+  await filter('memo');
+  assert.equal(head(), 'หน่วยงาน');
+  await filter('in');
+  await elements.get('clearFilters').fire('click');
+  assert.equal(head(), 'หน่วยงาน');
+});
+
 test('the เพิ่มคำสั่ง button opens the order form locked to คำสั่ง and saves an order without urgency', async () => {
   const app = setup({ authMode: 'ready' });
   const { run, elements } = app;
@@ -1016,7 +1066,23 @@ test('files that are not PDF are refused before anything is uploaded', async () 
   await app.run('handleFile(file)');
   assert.equal(app.run('pendingFileData'), null);
   assert.match(app.elements.get('docFormError').textContent, /ไม่ใช่ PDF/);
+  app.context.file = pdf('photo.pdf', 'JFIF not a pdf', 'image/jpeg');
+  await app.run('handleFile(file)');
+  assert.equal(app.run('pendingFileData'), null);
+  assert.match(app.elements.get('docFormError').textContent, /ไม่ใช่ PDF/);
   assert.equal(app.uploads.length, 0);
+});
+
+test('a real PDF that a phone reports as application/octet-stream is still accepted, by its content', async () => {
+  const app = setup({ authMode: 'ready' });
+  for (const type of ['application/octet-stream', '']) {
+    app.context.file = pdf('คำสั่ง.PDF', '%PDF-1.4\n%%EOF', type);
+    await app.run('handleFile(file)');
+    assert.equal(app.run('fileInvalid'), false, type || 'no type');
+    assert.equal(app.run('pendingFileData.name'), 'คำสั่ง.PDF');
+  }
+  // the picker lists .pdf files whatever type the phone gives them
+  assert.match(html, /id="docFile" accept="application\/pdf,\.pdf"/);
 });
 
 test('a failed upload never creates a Firestore record and is explained in Thai', async () => {
@@ -1269,4 +1335,36 @@ test('failed trash, restore and category actions are explained in Thai, not raw 
   assert.deepEqual(catToasts.map((t) => t.message), [
     'กรุณากรอกชื่อหมวดหมู่', 'มีหมวดหมู่นี้แล้ว กรุณาใช้ชื่ออื่น', 'ไม่มีสิทธิ์บันทึกหรือแก้ไขข้อมูลเอกสาร',
   ]);
+});
+
+test('phones on iOS before 15.4 (no Object.hasOwn or Array#at) still render and switch pages', () => {
+  const { run, elements } = setup({ legacyBrowser: true });
+  assert.equal(run('typeof Object.hasOwn'), 'function');
+  assert.deepEqual(run('JSON.stringify([[1, 2, 3].at(-1), [1, 2, 3].at(0), [1, 2, 3].at(5)])'), '[3,1,null]');
+  assert.equal(run('statusStamp("approved")'), '<span class="stamp stamp-approved">อนุมัติแล้ว</span>');
+  assert.equal(run('statusStamp("toString")'), '-', 'inherited names are still not statuses');
+  assert.match(run('urgencyBadge("urgent")'), /ด่วน/);
+  run('openDocModal({ id: "a", status: "rejected", urgency: "most-urgent" })');
+  assert.deepEqual([elements.get('docStatus').value, elements.get('docUrgency').value], ['rejected', 'most-urgent']);
+  run('switchView("documents")');
+  assert.equal(elements.get('pageTitle').textContent, 'เอกสารทั้งหมด');
+});
+
+// A custom property set straight to color-mix() is kept by browsers that do not know it, and every
+// background that reads it then drops out (iOS before 16.2 showed the category folders as blank white).
+test('custom properties only use color-mix() inside @supports, so older browsers keep a fallback', () => {
+  const css = fs.readFileSync(path.join(root, 'style.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const unguarded = [];
+  const stack = [];
+  let block = '';
+  for (const ch of css) {
+    if (ch === '{') { stack.push(/@supports[^{]*color-mix/.test(block)); block = ''; }
+    else if (ch === '}') { stack.pop(); block = ''; }
+    else if (ch === ';') {
+      const m = block.match(/(--[\w-]+)\s*:\s*color-mix\(/);
+      if (m && !stack.includes(true)) unguarded.push(m[1]);
+      block = '';
+    } else block += ch;
+  }
+  assert.deepEqual(unguarded, []);
 });

@@ -424,9 +424,49 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 /* โคนก้านทับขอบทองเล็กน้อย ให้ดูเหมือนต้นงอกออกมาจากป้าย */
 .officer-sunflower {
   position: absolute; left: 50%; bottom: calc(100% - 3px); transform: translateX(-50%);
-  width: 60px; height: 75px; stroke: none;
+  width: 60px; height: 75px; stroke: none; overflow: visible;
   filter: drop-shadow(0 6px 6px rgba(30, 20, 5, .28));
 }
+/* ทานตะวันไหวตามลม: ทั้งต้นโยกจากโคนก้าน ดอกเอนตามช้ากว่าเล็กน้อยเหมือนมีน้ำหนัก
+   ใบสองใบพลิ้วคนละจังหวะ กลีบชั้นนอกพองเบา ๆ ชั้นในบิดไปมา แต่ละส่วนมีรอบไม่ลงตัวกัน ท่ารวมจึงไม่ซ้ำเดิม
+   จุดหมุนเป็นพิกัดใน viewBox ของรูป (0 0 64 80) กฎ prefers-reduced-motion ด้านบนหยุดให้เอง */
+.officer-sunflower g, .officer-sunflower path { transform-box: view-box; }
+.sunflower-plant { transform-origin: 32px 80px; animation: sunflowerSway 9s ease-in-out infinite; }
+.sunflower-head { transform-origin: 32px 34px; animation: sunflowerNod 9s ease-in-out -.8s infinite; }
+.sunflower-leaf-right { transform-origin: 32.6px 59px; animation: sunflowerLeafRight 3.6s ease-in-out infinite; }
+.sunflower-leaf-left { transform-origin: 31.4px 69px; animation: sunflowerLeafLeft 4.4s ease-in-out -1.6s infinite; }
+.sunflower-petals-outer { transform-origin: 32px 25px; animation: sunflowerBloom 3.2s ease-in-out infinite; }
+.sunflower-petals-inner { transform-origin: 32px 25px; animation: sunflowerTwirl 5.4s ease-in-out -2s infinite; }
+@keyframes sunflowerSway {
+  0%, 100% { transform: rotate(0); }
+  18% { transform: rotate(3.5deg); }
+  36% { transform: rotate(-1.2deg); }
+  52% { transform: rotate(2.4deg); }
+  70% { transform: rotate(-3deg); }
+  86% { transform: rotate(.8deg); }
+}
+@keyframes sunflowerNod {
+  0%, 100% { transform: rotate(0); }
+  18% { transform: rotate(4.5deg); }
+  36% { transform: rotate(-1.8deg); }
+  52% { transform: rotate(3deg); }
+  70% { transform: rotate(-4deg); }
+  86% { transform: rotate(1.2deg); }
+}
+@keyframes sunflowerLeafRight {
+  0%, 100% { transform: rotate(0); }
+  35% { transform: rotate(-9deg); }
+  65% { transform: rotate(-3deg); }
+  82% { transform: rotate(-6deg); }
+}
+@keyframes sunflowerLeafLeft {
+  0%, 100% { transform: rotate(0); }
+  40% { transform: rotate(9deg); }
+  62% { transform: rotate(3deg); }
+  80% { transform: rotate(7deg); }
+}
+@keyframes sunflowerBloom { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+@keyframes sunflowerTwirl { 0%, 100% { transform: rotate(-2.5deg); } 50% { transform: rotate(2.5deg); } }
 .officer-text { display: flex; flex-direction: column; align-items: center; gap: 7px; min-width: 0; overflow-wrap: anywhere; }
 .officer-text strong { font-size: 15px; font-weight: 700; color: #FFFFFF; line-height: 1.45; text-shadow: 0 1px 2px rgba(0, 0, 0, .35); }
 .officer-text span {
@@ -777,9 +817,11 @@ tr:hover .row-actions { opacity: 1; }
 }
 /* แฟ้มใช้ไล่เฉดชุดเดียวกับแบนเนอร์แดชบอร์ดและแถบข้าง ส่วนตัวอักษรใช้ --on-primary
    ซึ่งระบบปรับแต่งสีเลือกให้อ่านชัดบนไล่เฉดนั้น จึงเปลี่ยนตามกันทุกครั้งที่ผู้ใช้เปลี่ยนสี */
+/* --folder-mid เริ่มจากสีปลายก่อน แล้วใช้ color-mix() เฉพาะเบราว์เซอร์ที่รู้จัก
+   ถ้าตัวแปรเป็น color-mix() ตรง ๆ เบราว์เซอร์เก่า (iOS ก่อน 16.2) จะทิ้งพื้นทุกชั้นที่อ้างตัวแปรนี้ แฟ้มโปร่งจนอ่านตัวหนังสือสีขาวไม่ออก */
 .category-card {
   --folder-light: var(--grad-start);
-  --folder-mid: color-mix(in srgb, var(--grad-start), var(--grad-end));
+  --folder-mid: var(--grad-end);
   --folder-deep: var(--grad-end);
   position: relative; isolation: isolate; min-width: 0;
   display: flex; flex-direction: column; padding-top: 54px;
@@ -803,8 +845,15 @@ tr:hover .row-actions { opacity: 1; }
 .cat-back::before {
   content: ""; position: absolute; left: 0; top: -18px; width: 46%; height: 20px;
   border-radius: 10px 14px 0 0;
-  background: linear-gradient(110deg, var(--folder-mid), color-mix(in srgb, var(--folder-mid) 88%, var(--folder-deep)));
+  background: var(--folder-mid);
   box-shadow: inset 0 2px 1px rgba(255, 255, 255, .3);
+}
+/* color-mix() ที่มี var() อยู่ด้วยต้องอยู่ใน @supports เท่านั้น เบราว์เซอร์เก่ารับบรรทัดแบบนี้ไว้ก่อน
+   แล้วค่อยพบว่าใช้ไม่ได้ตอนคำนวณสี ตอนนั้นจะไม่ถอยไปใช้บรรทัดสำรองด้านบน พื้นจึงหายไปเลย
+   บล็อกนี้ต้องอยู่หลังกฎด้านบน จึงทับค่าสำรองได้ */
+@supports (color: color-mix(in srgb, red, blue)) {
+  .category-card { --folder-mid: color-mix(in srgb, var(--grad-start), var(--grad-end)); }
+  .cat-back::before { background: linear-gradient(110deg, var(--folder-mid), color-mix(in srgb, var(--folder-mid) 88%, var(--folder-deep))); }
 }
 .cat-back::after {
   content: ""; position: absolute; top: -8px; left: 13px; width: 22px; height: 3px;
@@ -1076,7 +1125,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .gradient-direction .gradient-control { flex: 1; min-width: 0; padding-bottom: 7px; }
 .gradient-direction .btn { flex-shrink: 0; }
 
-.tune-range { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 999px; background: var(--surface-3); border: 1px solid var(--border); cursor: pointer; }
+/* เบราว์เซอร์ใส่ขอบนอกซ้ายขวาให้แถบเลื่อนข้างละ 2px ถ้าไม่ล้าง width: 100% จะล้นกล่องไป 4px */
+.tune-range { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; margin-inline: 0; border-radius: 999px; background: var(--surface-3); border: 1px solid var(--border); cursor: pointer; }
 .tune-range::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border-radius: 50%;
   background: var(--grad-primary); border: 2px solid var(--surface); box-shadow: var(--shadow-sm); cursor: pointer;

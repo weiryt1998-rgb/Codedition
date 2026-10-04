@@ -1,5 +1,15 @@
 "use strict";
 
+/* iOS ก่อน 15.4 (เช่น iPhone 6s/7 ที่ยังไม่ได้อัปเดต) ไม่มีสองฟังก์ชันนี้
+   ถ้าไม่เติมให้ แดชบอร์ดแสดงไม่ครบและกดเปลี่ยนหน้าไม่ได้ตั้งแต่เปิดเว็บ */
+if (!Object.hasOwn) Object.hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+if (!Array.prototype.at) {
+  Object.defineProperty(Array.prototype, "at", {
+    configurable: true, writable: true,
+    value(index) { const i = Math.trunc(index) || 0; return this[i < 0 ? this.length + i : i]; },
+  });
+}
+
 /* =========================================================
    CONSTANTS
    ========================================================= */
@@ -1169,6 +1179,14 @@ const FIELD_LABELS = {
   document: { title: "ชื่อเอกสาร", docNumber: "เลขที่หนังสือ", date: "วันที่ออกเอกสาร", agency: "หน่วยงาน" },
   order: { title: "ชื่อคำสั่ง", docNumber: "เลขที่คำสั่ง", date: "วันที่ออกคำสั่ง", agency: "ผู้สั่ง" },
 };
+/* บางหมวดเป็นเอกสาร แต่เรียกช่องหน่วยงานตามเรื่องของหมวด ทั้งในฟอร์มและหัวคอลัมน์
+   (หนังสือส่งถึงใคร หนังสือรับมาจากใคร คำร้องใครยื่น) ค่ายังเก็บใน agency เหมือนเดิม */
+const AGENCY_LABELS = { "หนังสือส่ง": "ถึง", "หนังสือรับ": "จาก", "คำร้อง": "ผู้ยื่นคำร้อง" };
+function documentAgencyLabel(id) {
+  const key = categoryKey(categoryName(id));
+  const name = Object.keys(AGENCY_LABELS).find((n) => categoryKey(n) === key);
+  return name ? AGENCY_LABELS[name] : FIELD_LABELS.document.agency;
+}
 function isOrderCategory(id) {
   return !!id && categoryKey(categoryName(id)) === categoryKey(ORDER_CATEGORY);
 }
@@ -1209,7 +1227,7 @@ function syncOrderFields() {
   document.getElementById("docNumberLabel").textContent = labels.docNumber;
   document.getElementById("docNumber").placeholder = order ? "เช่น 123/2569" : "เช่น ศธ 0001/2569";
   document.getElementById("docDateLabel").textContent = labels.date;
-  document.getElementById("docAgencyLabel").textContent = labels.agency;
+  document.getElementById("docAgencyLabel").textContent = order ? labels.agency : documentAgencyLabel(category.value);
   document.getElementById("docAgency").placeholder = order ? "เช่น นายก อบต." : "เช่น กรมการปกครอง";
   document.getElementById("docDescription").placeholder = `รายละเอียดเพิ่มเติมของ${order ? "คำสั่ง" : "เอกสาร"}`;
   // คำสั่งไม่มีชั้นความเร็ว แต่มีตัวเลือกปี พ.ศ. ไว้ลงคำสั่งย้อนหลัง และกล่องค้นหาคำสั่งที่บันทึกไว้แล้ว
@@ -1573,7 +1591,9 @@ async function handleFile(file) {
   fileDropText.textContent = `เลือกไฟล์ PDF ใหม่ (สูงสุด ${formatFileSize(MAX_FILE_BYTES)})`;
   fileInput.value = "";
   errEl.hidden = true;
-  if (file.type !== PDF_MIME && (file.type || !/\.pdf$/i.test(file.name))) {
+  // PDF ที่โหลดลงมือถือจากเว็บที่ไม่บอกชนิดไฟล์ มักได้ชนิดเป็น application/octet-stream
+  // ชื่อลงท้าย .pdf จึงรับไว้ก่อน แล้วให้หัวไฟล์ %PDF- ด้านล่างเป็นตัวตัดสิน (Worker ตรวจซ้ำอีกชั้น)
+  if (file.type !== PDF_MIME && !/\.pdf$/i.test(file.name)) {
     errEl.textContent = "รองรับเฉพาะไฟล์ PDF เท่านั้น";
     errEl.hidden = false;
     return;
@@ -2024,10 +2044,13 @@ function renderDocsTable() {
   const emptyAddButton = document.getElementById("docsEmptyAddBtn");
 
   // กรองดูเฉพาะหมวดคำสั่ง หัวคอลัมน์จึงเรียกแบบคำสั่ง เหมือนช่องในฟอร์มคำสั่ง
-  const heads = FIELD_LABELS[isOrderCategory(document.getElementById("filterCategory").value) ? "order" : "document"];
+  // หมวดที่มีชื่อช่องหน่วยงานของตัวเอง (AGENCY_LABELS) ใช้ชื่อเดียวกับในฟอร์ม
+  const filterCategory = document.getElementById("filterCategory").value;
+  const order = isOrderCategory(filterCategory);
+  const heads = FIELD_LABELS[order ? "order" : "document"];
   document.getElementById("docNumberHead").textContent = heads.docNumber;
   document.getElementById("titleHead").textContent = heads.title;
-  document.getElementById("agencyHead").textContent = heads.agency;
+  document.getElementById("agencyHead").textContent = order ? heads.agency : documentAgencyLabel(filterCategory);
   document.getElementById("dateHead").textContent = heads.date;
 
   // sort direction indicator on the header

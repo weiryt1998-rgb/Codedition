@@ -336,6 +336,36 @@ async function main() {
       await click('#clearFilters');
       assert.deepEqual(await heads(), documentLabels);
     });
+    await check('Choosing หนังสือส่ง, หนังสือรับ or คำร้อง calls the agency field and the filtered column ถึง, จาก or ผู้ยื่นคำร้อง', async () => {
+      const choose = (select, name) => evaluate(`(() => {
+        const s = document.getElementById(${JSON.stringify(select)});
+        s.value = [...s.options].find((o) => o.textContent === ${JSON.stringify(name)}).value;
+        s.dispatchEvent(new Event('change'));
+      })()`);
+      const agencyHead = () => evaluate(`document.getElementById('agencyHead').textContent`);
+      await click('#addDocBtn');
+      await choose('docCategory', 'หนังสือส่ง');
+      assert.deepEqual((await docForm()).labels, [...documentLabels.slice(0, 3), 'ถึง']);
+      await screenshot('document-form-outgoing.png');
+      await choose('docCategory', 'หนังสือรับ');
+      assert.deepEqual((await docForm()).labels, [...documentLabels.slice(0, 3), 'จาก']);
+      await screenshot('document-form-incoming.png');
+      await choose('docCategory', 'คำร้อง');
+      assert.deepEqual((await docForm()).labels, [...documentLabels.slice(0, 3), 'ผู้ยื่นคำร้อง']);
+      await screenshot('document-form-petition.png');
+      await closeDocForm();
+      await click('[data-view="documents"]');
+      await choose('filterCategory', 'หนังสือส่ง');
+      assert.equal(await agencyHead(), 'ถึง');
+      await screenshot('documents-outgoing.png');
+      await choose('filterCategory', 'หนังสือรับ');
+      assert.equal(await agencyHead(), 'จาก');
+      await screenshot('documents-incoming.png');
+      await choose('filterCategory', 'คำร้อง');
+      assert.equal(await agencyHead(), 'ผู้ยื่นคำร้อง');
+      await click('#clearFilters');
+      assert.equal(await agencyHead(), 'หน่วยงาน');
+    });
     await check('เพิ่มคำสั่ง opens the order form locked to คำสั่ง; orders save, show their status and edit there', async () => {
       const orderId = await evaluate(`allCategories.find((c) => c.name === 'คำสั่ง').id`);
       await click('#addOrderBtn');
@@ -596,7 +626,8 @@ async function main() {
       await waitFor(`document.getElementById('view-documents').classList.contains('is-active')`);
       assert.deepEqual(await filters(), ['', 'cat-b', '', '']);
       assert.equal(await evaluate(`document.getElementById('resultCount').textContent`), 'พบ 6 จาก 12 รายการ');
-      assert.ok(await evaluate(`[...document.querySelectorAll('#docsTableBody tr')].every((tr) => tr.cells[2].textContent === 'หนังสือออก')`));
+      assert.ok(await evaluate(`[...document.querySelectorAll('#docsTableBody tr')].every((tr) => tr.cells[2].textContent === 'หนังสือส่ง')`));
+      assert.equal(await evaluate(`document.getElementById('agencyHead').textContent`), 'ถึง', 'the หนังสือส่ง folder names its agency column ถึง');
 
       await click('[data-view="categories"]');
       await click('[data-del-cat="cat-a"]');
@@ -736,6 +767,11 @@ async function main() {
         return r.width>0 && r.x>=0 && r.right<=innerWidth ? [] : [{ id: el.id || el.className, x: Math.round(r.x), right: Math.round(r.right), width: Math.round(r.width), innerWidth }];
       }))`);
       assert.equal(outside, '[]', 'all endpoint, direction, and reverse controls fit horizontally');
+      // a slider keeps the browser's 2px side margins unless they are cleared, and then sticks 4px out of its box
+      assert.equal(await evaluate(`JSON.stringify([...document.querySelectorAll('#appearanceModalOverlay .tune-range')].filter((el) => {
+        const r = el.getBoundingClientRect(), box = el.parentElement.getBoundingClientRect(), s = getComputedStyle(el.parentElement);
+        return r.left < box.left + parseFloat(s.paddingLeft) - .5 || r.right > box.right - parseFloat(s.paddingRight) + .5;
+      }).map((el) => el.id))`), '[]', 'every slider stays inside its own box');
       assert.ok(await evaluate(`(() => {
         const [start,end]=document.querySelectorAll('.gradient-stop');
         return end.getBoundingClientRect().top>=start.getBoundingClientRect().bottom;

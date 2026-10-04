@@ -40,7 +40,8 @@ const fixturePdf = (() => {
   return pdf + `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
 })();
 const fixtureStore = {
-  categories: [{ id: 'cat-a', name: 'หนังสือเข้า' }, { id: 'cat-b', name: 'หนังสือออก' }],
+  // named like the live folders, whose agency field the form calls จาก and ถึง
+  categories: [{ id: 'cat-a', name: 'หนังสือรับ' }, { id: 'cat-b', name: 'หนังสือส่ง' }],
   documents: Array.from({ length: 12 }, (_, i) => ({
     id: `seed-${i}`, title: `เอกสารทดสอบ ${i + 1}`, docNumber: `ทดสอบ/${i + 1}`,
     category: i % 2 ? 'cat-b' : 'cat-a', agency: 'หน่วยงานทดสอบ', date: '2026-09-10',
