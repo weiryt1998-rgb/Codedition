@@ -186,27 +186,54 @@ async function main() {
       await click('#globalSearch');
       await cdp('Input.insertText', { text: 'เอกสารทดสอบ 12' });
       await waitFor(`document.querySelector('#view-documents').classList.contains('is-active')`);
-      assert.equal(await evaluate(`document.querySelectorAll('#docsTableBody tr').length`), 1);
+      assert.equal(await evaluate(`document.querySelectorAll('#docGroups tbody tr').length`), 1);
       await click('#clearFilters');
     });
-    await check('Pagination and category filters work in the browser', async () => {
-      await click('[data-page="2"]');
-      assert.equal(await evaluate(`document.querySelectorAll('#docsTableBody tr').length`), 4);
+    await check('Each category box pages on its own; keyboard paging keeps focus; the category filter leaves one box', async () => {
+      // four older หนังสือรับ records give that box a second page, while หนังสือส่ง keeps a single page of six
+      await evaluate(`for (let i = 0; i < 4; i++) fixtureStore.documents.push({ id: 'page-' + i, title: 'หน้าสอง ' + i, docNumber: 'หน้า/' + i, category: 'cat-a', deleted: false, createdAtMs: 1 + i }); emitFixture()`);
+      await waitFor('allDocuments.length === 16');
+      const box = (group) => evaluate(`(() => {
+        const box = document.querySelector('[data-group="${group}"]');
+        return { rows: box.querySelectorAll('tbody tr').length, pages: [...box.querySelectorAll('.pagination button')].map((b) => b.textContent) };
+      })()`);
+      assert.deepEqual(await box('cat-a'), { rows: 8, pages: ['‹', '1', '2', '›'] });
+      assert.deepEqual(await box('cat-b'), { rows: 6, pages: [] });
+      // หน้าถัดไป by keyboard: the box re-renders, and focus lands on the new current page since หน้าถัดไป is now off
+      await evaluate(`document.querySelector('[data-group="cat-a"] [aria-label="หน้าถัดไป"]').focus()`);
+      await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+      await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      assert.equal((await box('cat-a')).rows, 2, '6 seed records and 4 more: 8 on the first page, 2 on the second');
+      assert.deepEqual(await evaluate(`[document.activeElement.closest('[data-group]')?.dataset.group, document.activeElement.getAttribute('aria-current'), document.activeElement.textContent]`),
+        ['cat-a', 'page', '2']);
+      assert.deepEqual(await box('cat-b'), { rows: 6, pages: [] }, 'the other box stays as it was');
+      await click('[data-group="cat-a"] [aria-label="หน้าก่อนหน้า"]');
+      assert.equal((await box('cat-a')).rows, 8);
       await evaluate(`document.getElementById('filterCategory').value='cat-b'; document.getElementById('filterCategory').dispatchEvent(new Event('change'))`);
-      assert.equal(await evaluate(`document.querySelectorAll('#docsTableBody tr').length`), 6);
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docGroups h3')].map((h) => h.textContent)`), ['หนังสือส่ง']);
       await evaluate('emitFixture()');
       assert.equal(await evaluate(`document.getElementById('filterCategory').value`), 'cat-b');
       await click('#clearFilters');
+      await evaluate(`fixtureStore.documents = fixtureStore.documents.filter((d) => !d.id.startsWith('page-')); emitFixture()`);
+      await waitFor('allDocuments.length === 12');
     });
-    await check('Rows list newest saved first by default, with no sequence-number column', async () => {
-      // seed-0 (ทดสอบ/1) is the newest of the 12 records
-      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docsTableBody tr')].map((tr) => tr.cells[0].textContent)`),
-        ['ทดสอบ/1', 'ทดสอบ/2', 'ทดสอบ/3', 'ทดสอบ/4', 'ทดสอบ/5', 'ทดสอบ/6', 'ทดสอบ/7', 'ทดสอบ/8']);
+    await check('Boxes follow the paper workflow and list newest saved first, with no sequence-number column', async () => {
+      const boxes = await evaluate(`[...document.querySelectorAll('#docGroups .doc-group')].map((box) => {
+        const heads = [...box.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+        const column = heads.indexOf('เลขที่หนังสือ');
+        return [box.querySelector('h3').textContent, heads[0] ?? null, [...box.querySelectorAll('tbody tr')].map((tr) => tr.cells[column].textContent)];
+      })`);
+      // seed-0 (ทดสอบ/1) is the newest of the 12 records; the box of หนังสือรับ starts with its เลขที่รับ column
+      assert.deepEqual(boxes, [
+        ['หนังสือรับ', 'เลขที่รับ', ['ทดสอบ/1', 'ทดสอบ/3', 'ทดสอบ/5', 'ทดสอบ/7', 'ทดสอบ/9', 'ทดสอบ/11']],
+        ['หนังสือส่ง', 'เลขที่หนังสือ', ['ทดสอบ/2', 'ทดสอบ/4', 'ทดสอบ/6', 'ทดสอบ/8', 'ทดสอบ/10', 'ทดสอบ/12']],
+        ['คำสั่ง', null, []], ['บันทึกข้อความ', null, []], ['คำร้อง', null, []],
+      ]);
       assert.deepEqual(await evaluate(`[...document.querySelectorAll('#recentTable tbody tr')].map((tr) => tr.cells[0].textContent)`),
         ['ทดสอบ/1', 'ทดสอบ/2', 'ทดสอบ/3', 'ทดสอบ/4', 'ทดสอบ/5']);
       assert.equal(await evaluate(`document.querySelectorAll('.col-entry').length`), 0);
-      assert.deepEqual(await evaluate(`['#recentTable', '#docsTable'].map((t) => document.querySelector(t + ' thead th').textContent.trim())`),
-        ['เลขที่หนังสือ', 'เลขที่หนังสือ']);
+      assert.equal(await evaluate(`document.querySelector('#recentTable thead th').textContent.trim()`), 'เลขที่หนังสือ');
+      await screenshot('documents-boxes.png');
     });
     await check('Document and category action IDs preserve quotes and HTML entities', async () => {
       const id = 'record" data-id-marker="injected &quot; literal';
@@ -216,24 +243,24 @@ async function main() {
         allTrash = [{ ...allDocuments[0], deleted: true }];
         allCategories = [{ ...allCategories[0], id }];
         renderDocsTable(); renderTrash(); renderCategories();
-        const actions = ['preview', 'download', 'edit', 'delete', 'restore', 'purge', 'del-cat', 'open-cat'];
+        const actions = ['preview', 'download', 'edit', 'delete', 'restore', 'purge', 'del-cat', 'open-cat', 'add-to', 'group'];
         return {
           values: actions.map(action => document.querySelector('[data-' + action + ']').getAttribute('data-' + action)),
           injected: document.querySelectorAll('[data-id-marker]').length,
         };
       })()`);
-      assert.deepEqual(ids.values, Array(8).fill(id));
+      assert.deepEqual(ids.values, Array(10).fill(id));
       assert.equal(ids.injected, 0, 'Record IDs must not create HTML attributes');
       await reloadApp();
       await click('[data-view="documents"]');
     });
     await check('A document saved without a PDF or title shows "-" and offers no preview or download', async () => {
       await evaluate(`allDocuments = [{ id: 'no-file', title: '', docNumber: 'NOFILE/1', status: 'pending', deleted: false }]; renderDocsTable()`);
-      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docsTableBody [data-preview], #docsTableBody [data-download]')].map((b) => [b.disabled, b.title])`),
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docGroups [data-preview], #docGroups [data-download]')].map((b) => [b.disabled, b.title])`),
         [[true, 'ดูตัวอย่าง (ไม่มีไฟล์ PDF)'], [true, 'ดาวน์โหลด (ไม่มีไฟล์ PDF)']]);
-      assert.equal(await evaluate(`document.querySelector('#docsTableBody .doc-title-cell').textContent`), '-');
-      await click('#docsTableBody [data-preview]');
-      await click('#docsTableBody [data-download]');
+      assert.equal(await evaluate(`document.querySelector('#docGroups .doc-title-cell').textContent`), '-');
+      await click('#docGroups [data-preview]');
+      await click('#docGroups [data-download]');
       await pause(200);
       assert.equal(await evaluate(`document.getElementById('previewModalOverlay').hidden`), true);
       assert.equal(await evaluate(`document.querySelectorAll('#toastStack .toast.error').length`), 0, 'no "broken file" error');
@@ -249,7 +276,7 @@ async function main() {
       assert.equal(await evaluate(`document.activeElement.id`), 'addDocBtn');
       assert.equal(await evaluate(`document.getElementById('app').inert`), false);
     });
-    let createdKey;
+    let createdKey, createdId;
     await check('Invalid PDF is rejected; valid PDF can be added and edited', async () => {
       await click('#addDocBtn');
       await evaluate(`handleFile(new File(['invalid'], 'invalid.pdf', {type:'application/pdf'}))`);
@@ -258,7 +285,8 @@ async function main() {
       await click('#docSaveBtn');
       await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.length===13`);
       // The PDF went to R2 through the Worker; Firestore got metadata only.
-      const saved = await evaluate(`(() => { const d = fixtureStore.documents.find((x) => x.title === 'Browser created'); return { storageKey: d.storageKey, hasFileData: 'fileData' in d, mimeType: d.mimeType, createdBy: d.createdBy, fileName: d.fileName, urgency: d.urgency }; })()`);
+      const saved = await evaluate(`(() => { const d = fixtureStore.documents.find((x) => x.title === 'Browser created'); return { id: d.id, storageKey: d.storageKey, hasFileData: 'fileData' in d, mimeType: d.mimeType, createdBy: d.createdBy, fileName: d.fileName, urgency: d.urgency }; })()`);
+      createdId = saved.id; // later checks open, download and delete this record, the one whose PDF is in R2
       assert.match(saved.storageKey, STORAGE_KEY);
       assert.equal(saved.hasFileData, false);
       assert.deepEqual([saved.mimeType, saved.createdBy, saved.fileName, saved.urgency], ['application/pdf', 'browser-test', 'test.pdf', 'most-urgent']);
@@ -273,7 +301,8 @@ async function main() {
       await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.some(d=>d.title==='Browser edited' && d.urgency==='urgent')`);
       await click('#clearFilters');
       const badge = (docNumber) => evaluate(`(() => {
-        const row = [...document.querySelectorAll('#docsTableBody tr')].find((tr) => tr.cells[0].textContent === ${JSON.stringify(docNumber)});
+        // the หนังสือรับ box has เลขที่รับ first, so the document number may be in the second cell
+        const row = [...document.querySelectorAll('#docGroups tbody tr')].find((tr) => [tr.cells[0], tr.cells[1]].some((td) => td.textContent === ${JSON.stringify(docNumber)}));
         if (!row) throw new Error('Missing row ' + ${JSON.stringify(docNumber)});
         return row.querySelector('.urgency')?.textContent ?? null;
       })()`);
@@ -309,13 +338,12 @@ async function main() {
         save: document.getElementById('docSaveBtn').textContent,
       };
     })()`);
-    await check('Choosing the คำสั่ง category turns the document form into the order form, and the filtered table uses its names', async () => {
+    await check('Choosing the คำสั่ง category turns the document form into the order form; its box adds orders the same way', async () => {
       const chooseOrder = (select) => evaluate(`(() => {
         const s = document.getElementById(${JSON.stringify(select)});
         s.value = [...s.options].find((o) => o.textContent === 'คำสั่ง').value;
         s.dispatchEvent(new Event('change'));
       })()`);
-      const heads = () => evaluate(`['titleHead', 'docNumberHead', 'dateHead', 'agencyHead'].map((id) => document.getElementById(id).textContent)`);
       await waitFor(`document.getElementById('docModalOverlay').hidden`);
       await click('#addDocBtn');
       assert.deepEqual((await docForm()).labels, documentLabels);
@@ -330,19 +358,26 @@ async function main() {
       await click('#addDocBtn');
       assert.deepEqual((await docForm()).labels, documentLabels, 'the next new document starts without a category');
       await closeDocForm();
-      assert.deepEqual(await heads(), documentLabels);
+      // filtered to คำสั่ง only its box is left; with no orders yet it is just the heading and its add button
       await chooseOrder('filterCategory');
-      assert.deepEqual(await heads(), orderLabels);
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docGroups .doc-group')].map((box) => [box.querySelector('h3').textContent, box.querySelector('.panel-tag').textContent, box.querySelector('[data-add-to]').textContent.trim(), box.querySelectorAll('table').length])`),
+        [['คำสั่ง', 'ยังไม่มีเอกสาร', 'เพิ่มคำสั่ง', 0]]);
+      await click('#docGroups [data-add-to]');
+      await waitFor(`!document.getElementById('docModalOverlay').hidden`);
+      const fromBox = await docForm();
+      assert.deepEqual([fromBox.title, fromBox.category.slice(1), fromBox.labels], ['เพิ่มคำสั่งใหม่', ['คำสั่ง', true], orderLabels], 'the คำสั่ง box opens the locked order form');
+      await closeDocForm();
       await click('#clearFilters');
-      assert.deepEqual(await heads(), documentLabels);
     });
-    await check('Choosing หนังสือส่ง, หนังสือรับ or คำร้อง calls the agency field and the filtered column ถึง, จาก or ผู้ยื่นคำร้อง', async () => {
+    await check('Choosing หนังสือส่ง, หนังสือรับ or คำร้อง calls the agency field ถึง, จาก or ผู้ยื่นคำร้อง, and so does the column in their boxes', async () => {
       const choose = (select, name) => evaluate(`(() => {
         const s = document.getElementById(${JSON.stringify(select)});
         s.value = [...s.options].find((o) => o.textContent === ${JSON.stringify(name)}).value;
         s.dispatchEvent(new Event('change'));
       })()`);
-      const agencyHead = () => evaluate(`document.getElementById('agencyHead').textContent`);
+      // the agency column is the fifth from the end, before date, size, status and the actions
+      const agencyColumns = () => evaluate(`Object.fromEntries([...document.querySelectorAll('#docGroups .doc-group')].filter((box) => box.querySelector('thead'))
+        .map((box) => [box.querySelector('h3').textContent, [...box.querySelectorAll('thead th')].at(-5).textContent]))`);
       await click('#addDocBtn');
       await choose('docCategory', 'หนังสือส่ง');
       assert.deepEqual((await docForm()).labels, [...documentLabels.slice(0, 3), 'ถึง']);
@@ -355,16 +390,85 @@ async function main() {
       await screenshot('document-form-petition.png');
       await closeDocForm();
       await click('[data-view="documents"]');
+      // the fixture has no คำร้อง yet, so only these two boxes have a table
+      assert.deepEqual(await agencyColumns(), { 'หนังสือรับ': 'จาก', 'หนังสือส่ง': 'ถึง', 'ไม่ระบุหมวดหมู่': 'หน่วยงาน' });
       await choose('filterCategory', 'หนังสือส่ง');
-      assert.equal(await agencyHead(), 'ถึง');
+      assert.deepEqual(await agencyColumns(), { 'หนังสือส่ง': 'ถึง' });
       await screenshot('documents-outgoing.png');
-      await choose('filterCategory', 'หนังสือรับ');
-      assert.equal(await agencyHead(), 'จาก');
-      await screenshot('documents-incoming.png');
-      await choose('filterCategory', 'คำร้อง');
-      assert.equal(await agencyHead(), 'ผู้ยื่นคำร้อง');
       await click('#clearFilters');
-      assert.equal(await agencyHead(), 'หน่วยงาน');
+    });
+    await check('The หนังสือรับ box adds with เลขที่รับ ready after หมวดหมู่, and lists it first, sorted as numbers', async () => {
+      const choose = (select, name) => evaluate(`(() => {
+        const s = document.getElementById(${JSON.stringify(select)});
+        s.value = [...s.options].find((o) => o.textContent === ${JSON.stringify(name)}).value;
+        s.dispatchEvent(new Event('change'));
+      })()`);
+      const fieldShown = () => evaluate(`document.getElementById('docReceiveNumber').getClientRects().length > 0`);
+      await click('#addDocBtn');
+      await waitFor(`!document.getElementById('docModalOverlay').hidden`);
+      assert.equal(await fieldShown(), false, 'a new document has no category yet');
+      await closeDocForm();
+      // the box's own add button chooses หนังสือรับ, so เลขที่รับ is there from the start
+      await click('[data-group="cat-a"] [data-add-to]');
+      await waitFor(`!document.getElementById('docModalOverlay').hidden`);
+      const fromBox = await docForm();
+      assert.deepEqual([fromBox.title, fromBox.category, fromBox.labels[3], await fieldShown()], ['เพิ่มเอกสารใหม่', ['cat-a', 'หนังสือรับ', false], 'จาก', true]);
+      // the grid cell after หมวดหมู่: the next row, under จาก
+      assert.deepEqual(await evaluate(`(() => {
+        const field = document.getElementById('docReceiveField').getBoundingClientRect();
+        const category = document.getElementById('docCategory').closest('label').getBoundingClientRect();
+        const agency = document.getElementById('docAgency').closest('label').getBoundingClientRect();
+        return { below: field.top >= category.bottom, underAgency: Math.abs(field.left - agency.left) < 1 };
+      })()`), { below: true, underAgency: true });
+      await choose('docCategory', 'หนังสือส่ง');
+      assert.equal(await fieldShown(), false);
+      await choose('docCategory', 'หนังสือรับ');
+      await evaluate(`document.getElementById('docTitle').value='หนังสือรับทดสอบ'; document.getElementById('docNumber').value='สท 0023.3/ว 456'; document.getElementById('docReceiveNumber').value='125'`);
+      await screenshot('document-form-receive.png');
+      await click('#docSaveBtn');
+      await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.some((d) => d.title === 'หนังสือรับทดสอบ')`);
+      assert.equal(await evaluate(`fixtureStore.documents.find((d) => d.title === 'หนังสือรับทดสอบ').receiveNumber`), '125');
+      // an older one numbered 9 must sort before 125, not after it as text would
+      await evaluate(`fixtureStore.documents.find((d) => d.id === 'seed-2').receiveNumber = '9'; emitFixture()`);
+
+      const box = (group) => evaluate(`(() => {
+        const heads = [...document.querySelectorAll('[data-group="${group}"] thead th')];
+        return {
+          heads: heads.slice(0, 2).map((th) => th.textContent.trim()),
+          rounded: getComputedStyle(heads[0]).borderTopLeftRadius,
+          sorted: heads.filter((th) => th.getAttribute('aria-sort') !== 'none' && th.hasAttribute('aria-sort')).map((th) => [th.textContent, th.getAttribute('aria-sort')]),
+          rows: [...document.querySelectorAll('[data-group="${group}"] tbody tr')].map((tr) => [tr.cells[0].textContent, tr.cells[1].textContent]),
+        };
+      })()`);
+      let shown = await box('cat-a');
+      assert.deepEqual([shown.heads, shown.rounded, shown.sorted], [['เลขที่รับ', 'เลขที่หนังสือ'], '12px', []]);
+      assert.deepEqual(shown.rows, [['125', 'สท 0023.3/ว 456'], ['-', 'ทดสอบ/1'], ['9', 'ทดสอบ/3'], ['-', 'ทดสอบ/5'], ['-', 'ทดสอบ/7'], ['-', 'ทดสอบ/9'], ['-', 'ทดสอบ/11']]);
+      const outgoing = await box('cat-b');
+      await screenshot('documents-receive.png');
+      // sorted from the keyboard: the box re-renders, and focus stays on the same header
+      await evaluate(`document.querySelector('[data-group="cat-a"] th[data-sort="receiveNumber"]').focus()`);
+      await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+      await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      shown = await box('cat-a');
+      assert.deepEqual([shown.sorted, shown.rows.map(([number]) => number)], [[['เลขที่รับ', 'ascending']], ['-', '-', '-', '-', '-', '9', '125']]);
+      assert.equal(await evaluate(`document.activeElement.matches('[data-group="cat-a"] th[data-sort="receiveNumber"]')`), true, 'focus stays on the header');
+      await click('[data-group="cat-a"] th[data-sort="receiveNumber"]');
+      shown = await box('cat-a');
+      assert.deepEqual([shown.sorted, shown.rows.map(([number]) => number)], [[['เลขที่รับ', 'descending']], ['125', '9', '-', '-', '-', '-', '-']]);
+      assert.deepEqual(await box('cat-b'), outgoing, 'the หนังสือส่ง box keeps its own order');
+
+      // found by its number from the search box, and the number comes back when editing
+      await evaluate(`document.getElementById('globalSearch').value='125'; document.getElementById('globalSearch').dispatchEvent(new Event('input'))`);
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docGroups .doc-group')].map((b) => [b.dataset.group, b.querySelectorAll('tbody tr').length])`), [['cat-a', 1]]);
+      await click('[data-edit]');
+      await waitFor(`!document.getElementById('docModalOverlay').hidden`);
+      assert.deepEqual([await fieldShown(), await evaluate(`document.getElementById('docReceiveNumber').value`)], [true, '125']);
+      await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await waitFor(`document.getElementById('docModalOverlay').hidden`);
+      await click('#clearFilters');
+      // later checks count the seed documents and open the newest row, so the test record goes away again
+      await evaluate(`fixtureStore.documents = fixtureStore.documents.filter((d) => d.title !== 'หนังสือรับทดสอบ'); delete fixtureStore.documents.find((d) => d.id === 'seed-2').receiveNumber; emitFixture()`);
+      await waitFor('allDocuments.length === 13');
     });
     await check('เพิ่มคำสั่ง opens the order form locked to คำสั่ง; orders save, show their status and edit there', async () => {
       const orderId = await evaluate(`allCategories.find((c) => c.name === 'คำสั่ง').id`);
@@ -392,10 +496,13 @@ async function main() {
       await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.some((d) => d.title === 'คำสั่งทดสอบเบราว์เซอร์')`);
       const saved = await evaluate(`(() => { const d = fixtureStore.documents.find((x) => x.title === 'คำสั่งทดสอบเบราว์เซอร์'); return { category: d.category, status: d.status, agency: d.agency, date: d.date, hasUrgency: 'urgency' in d }; })()`);
       assert.deepEqual(saved, { category: orderId, status: 'in-progress', agency: 'นายก อบต.', date: '2022-03-15', hasUrgency: false });
+      // the คำสั่ง box names its columns like the order form
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('[data-group="${orderId}"] thead th')].map((th) => th.textContent)`),
+        ['เลขที่คำสั่ง', 'ชื่อคำสั่ง', 'ผู้สั่ง', 'วันที่ออกคำสั่ง', 'ขนาดไฟล์', 'สถานะ', 'การดำเนินการ']);
       // the status filter finds it, and its row carries the order status and the พ.ศ. year
       await evaluate(`document.getElementById('filterStatus').value='in-progress'; document.getElementById('filterStatus').dispatchEvent(new Event('change'))`);
-      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docsTableBody tr')].map((tr) => [tr.cells[0].textContent, tr.cells[4].textContent, tr.querySelector('.stamp').textContent])`),
-        [['ทดสอบ/คำสั่ง', '15 มี.ค. 2565', 'กำลังดำเนินการ']]);
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docGroups tbody tr')].map((tr) => [tr.closest('[data-group]').dataset.group, tr.cells[0].textContent, tr.cells[3].textContent, tr.querySelector('.stamp').textContent])`),
+        [[orderId, 'ทดสอบ/คำสั่ง', '15 มี.ค. 2565', 'กำลังดำเนินการ']]);
       await click('[data-edit]');
       await waitFor(`!document.getElementById('docModalOverlay').hidden`);
       const editing = await docForm();
@@ -531,8 +638,8 @@ async function main() {
     });
     await check('PDF preview opens a Blob URL and releases it when closed', async () => {
       await evaluate(`(() => {const range=document.createRange(); range.selectNode(document.getElementById('previewFrame')); const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range);})()`);
-      await click('[data-preview]');
-      // The first row is the document just added, so its PDF comes from R2 through the Worker.
+      // The document added earlier keeps its PDF in R2, so it comes through the Worker.
+      await click(`[data-preview="${createdId}"]`);
       await waitFor(`document.getElementById('previewFrame').src.startsWith('blob:')`);
       assert.ok(apiLog.some((line) => /^GET \/api\/documents\/[^/]+\/file$/.test(line)));
       assert.equal(await evaluate(`document.getElementById('previewPages').hidden`), true, 'desktop keeps the browser PDF viewer');
@@ -552,7 +659,7 @@ async function main() {
       const downloads = await fs.mkdtemp(path.join(output, 'download-'));
       try {
         await cdp('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
-        await click('[data-download]');
+        await click(`[data-download="${createdId}"]`);
         let downloaded;
         for (let i = 0; i < 100; i++) {
           downloaded = (await fs.readdir(downloads)).find((name) => name.endsWith('.pdf'));
@@ -568,7 +675,7 @@ async function main() {
     await check('Legacy base64 documents still open without the Worker', async () => {
       const calls = apiLog.length;
       await evaluate(`document.getElementById('globalSearch').value='ทดสอบ/5'; document.getElementById('globalSearch').dispatchEvent(new Event('input'))`);
-      assert.equal(await evaluate(`document.querySelectorAll('#docsTableBody tr').length`), 1);
+      assert.equal(await evaluate(`document.querySelectorAll('#docGroups tbody tr').length`), 1);
       await click('[data-preview]');
       await waitFor(`document.getElementById('previewFrame').src.startsWith('blob:')`);
       assert.equal(apiLog.length, calls);
@@ -576,14 +683,14 @@ async function main() {
       await click('#clearFilters');
     });
     await check('Trash, restore, and permanent deletion update the interface', async () => {
-      await click('[data-delete]');
+      await click(`[data-delete="${createdId}"]`);
       await click('#confirmActionBtn');
       await waitFor('allTrash.length===1');
       await click('[data-view="trash"]');
       await click('[data-restore]');
       await waitFor('allTrash.length===0 && allDocuments.length===13');
       await click('[data-view="documents"]');
-      await click('[data-delete]');
+      await click(`[data-delete="${createdId}"]`);
       await click('#confirmActionBtn');
       await waitFor('allTrash.length===1');
       await click('[data-view="trash"]');
@@ -626,8 +733,9 @@ async function main() {
       await waitFor(`document.getElementById('view-documents').classList.contains('is-active')`);
       assert.deepEqual(await filters(), ['', 'cat-b', '', '']);
       assert.equal(await evaluate(`document.getElementById('resultCount').textContent`), 'พบ 6 จาก 12 รายการ');
-      assert.ok(await evaluate(`[...document.querySelectorAll('#docsTableBody tr')].every((tr) => tr.cells[2].textContent === 'หนังสือส่ง')`));
-      assert.equal(await evaluate(`document.getElementById('agencyHead').textContent`), 'ถึง', 'the หนังสือส่ง folder names its agency column ถึง');
+      // only that folder's box is left, with its agency column called ถึง
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docGroups .doc-group')].map((box) => [box.querySelector('h3').textContent, box.querySelectorAll('tbody tr').length, [...box.querySelectorAll('thead th')].at(-5).textContent])`),
+        [['หนังสือส่ง', 6, 'ถึง']]);
 
       await click('[data-view="categories"]');
       await click('[data-del-cat="cat-a"]');

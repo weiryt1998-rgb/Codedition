@@ -34,9 +34,6 @@ let allDocuments = [];   // live, non-deleted
 let allTrash = [];       // soft-deleted
 let allCategories = [];
 
-let sortKey = "entry"; // ลำดับการบันทึก ฉบับที่เพิ่งบันทึกอยู่บนสุด
-let sortDir = "desc";
-let currentPage = 1;
 let pendingFileData = null; // { file, name, size } — ตัวไฟล์ส่งไป R2 ตอนบันทึก
 let confirmCallback = null;
 let charts = {};
@@ -1187,6 +1184,12 @@ function documentAgencyLabel(id) {
   const name = Object.keys(AGENCY_LABELS).find((n) => categoryKey(n) === key);
   return name ? AGENCY_LABELS[name] : FIELD_LABELS.document.agency;
 }
+/* หนังสือรับมีเลขที่รับ (เลขทะเบียนรับของ อบต.) แยกจากเลขที่หนังสือของผู้ส่ง เก็บใน receiveNumber
+   มีช่องเฉพาะในฟอร์มหนังสือรับ และมีคอลัมน์เฉพาะในตารางที่กรองดูเฉพาะหนังสือรับ */
+const RECEIVE_CATEGORY = "หนังสือรับ";
+function isReceiveCategory(id) {
+  return !!id && categoryKey(categoryName(id)) === categoryKey(RECEIVE_CATEGORY);
+}
 function isOrderCategory(id) {
   return !!id && categoryKey(categoryName(id)) === categoryKey(ORDER_CATEGORY);
 }
@@ -1235,6 +1238,8 @@ function syncOrderFields() {
   document.getElementById("docYear").hidden = !order;
   document.getElementById("orderLookup").hidden = !order;
   if (order) renderOrderLookup();
+  // ช่องเลขที่รับที่ซ่อนไว้ยังเก็บค่าที่พิมพ์ไว้ เลือกหนังสือรับกลับมาก่อนบันทึกจึงไม่ต้องพิมพ์ใหม่
+  document.getElementById("docReceiveField").hidden = !isReceiveCategory(category.value);
   // เปลี่ยนรายการสถานะเฉพาะตอนสลับระหว่างเอกสารกับคำสั่ง ค่าที่มีในทั้งสองแบบ (ว่าง, รอดำเนินการ) คงไว้
   const status = document.getElementById("docStatus");
   if (status.dataset.mode !== (order ? "order" : "document")) {
@@ -1632,8 +1637,8 @@ document.querySelectorAll("[data-open='addDocBtn']").forEach((b) => b.addEventLi
 document.getElementById("addOrderBtn").addEventListener("click", () => openDocModal(null, { order: true }));
 
 /* ฟอร์มเดียวใช้ทั้งเอกสารและคำสั่ง ปุ่มเพิ่มคำสั่ง ({ order: true }) และการแก้ไขรายการในหมวดคำสั่ง
-   เปิดเป็นฟอร์มคำสั่งที่ล็อกหมวดหมู่ไว้ที่คำสั่ง */
-function openDocModal(doc = null, { order = false } = {}) {
+   เปิดเป็นฟอร์มคำสั่งที่ล็อกหมวดหมู่ไว้ที่คำสั่ง ปุ่มเพิ่มในกล่องหมวด ({ categoryId }) เลือกหมวดนั้นไว้ให้ แต่ยังเปลี่ยนได้ */
+function openDocModal(doc = null, { order = false, categoryId = "" } = {}) {
   fileReadVersion++;
   fileReading = false;
   fileInvalid = false;
@@ -1657,6 +1662,7 @@ function openDocModal(doc = null, { order = false } = {}) {
     document.getElementById("docId").value = doc.id;
     document.getElementById("docTitle").value = doc.title || "";
     document.getElementById("docNumber").value = doc.docNumber || "";
+    document.getElementById("docReceiveNumber").value = doc.receiveNumber || "";
     document.getElementById("docDate").value = doc.date || "";
     document.getElementById("docAgency").value = doc.agency || "";
     category.value = allCategories.some((c) => c.id === doc.category) ? doc.category : "";
@@ -1665,7 +1671,7 @@ function openDocModal(doc = null, { order = false } = {}) {
     if (doc.fileName) fileDropText.textContent = `ไฟล์ปัจจุบัน: ${doc.fileName} — คลิกเพื่อแทนที่`;
   } else {
     document.getElementById("docId").value = "";
-    category.value = "";
+    category.value = allCategories.some((c) => c.id === categoryId) ? categoryId : "";
     document.getElementById("docDate").value = localIsoDate();
   }
   renderYearOptions();
@@ -1713,6 +1719,9 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
   // คำสั่งไม่มีชั้นความเร็ว จึงนับเป็นปกติ
   const urgency = order ? "" : document.getElementById("docUrgency").value;
   if (urgency || existing?.urgency) payload.urgency = urgency;
+  // เลขที่รับก็เขียนแบบเดียวกัน: เฉพาะหนังสือรับที่กรอกไว้ หรือเมื่อต้องล้างค่าเดิม (เช่น ย้ายไปหมวดอื่น)
+  const receiveNumber = isReceiveCategory(category) ? document.getElementById("docReceiveNumber").value.trim() : "";
+  if (receiveNumber || existing?.receiveNumber) payload.receiveNumber = receiveNumber;
 
   const saveBtn = document.getElementById("docSaveBtn");
   setModalBusy("docModalOverlay", true);
@@ -1967,44 +1976,32 @@ async function previewDoc(doc) {
 }
 
 /* =========================================================
-   DOCUMENTS TABLE: search, filter, sort, paginate
+   DOCUMENTS VIEW: search and filter, then one box per category,
+   each with its own table, sort order and pages
    ========================================================= */
 document.getElementById("globalSearch").addEventListener("input", () => {
   if (!document.getElementById("view-documents").classList.contains("is-active")) switchView("documents");
-  currentPage = 1;
+  resetGroupPages();
   renderDocsTable();
 });
-document.getElementById("filterCategory").addEventListener("change", () => { currentPage = 1; renderDocsTable(); });
-document.getElementById("filterStatus").addEventListener("change", () => { currentPage = 1; renderDocsTable(); });
-document.getElementById("filterDate").addEventListener("change", () => { currentPage = 1; renderDocsTable(); });
+document.getElementById("filterCategory").addEventListener("change", () => { resetGroupPages(); renderDocsTable(); });
+document.getElementById("filterStatus").addEventListener("change", () => { resetGroupPages(); renderDocsTable(); });
+document.getElementById("filterDate").addEventListener("change", () => { resetGroupPages(); renderDocsTable(); });
 /* ล้างตัวกรองทั้งหมด หรือเหลือไว้แค่หมวดหมู่เดียวตอนเปิดแฟ้ม (ตารางจึงมีเอกสารครบตามจำนวนบนแฟ้ม) */
 function resetDocFilters(category = "") {
   document.getElementById("globalSearch").value = "";
   document.getElementById("filterCategory").value = category;
   document.getElementById("filterStatus").value = "";
   document.getElementById("filterDate").value = "";
-  currentPage = 1;
+  resetGroupPages();
   renderDocsTable();
 }
 document.getElementById("clearFilters").addEventListener("click", () => resetDocFilters());
-document.querySelectorAll("#docsTable th[data-sort]").forEach((th) => {
-  th.tabIndex = 0;
-  th.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); th.click(); }
-  });
-  th.addEventListener("click", () => {
-    const key = th.dataset.sort;
-    if (sortKey === key) sortDir = sortDir === "asc" ? "desc" : "asc";
-    else { sortKey = key; sortDir = "asc"; }
-    currentPage = 1;
-    renderDocsTable();
-  });
-});
 
-/* คำค้น (พิมพ์เล็กแล้ว) ตรงกับชื่อ เลขที่ หน่วยงาน หมวดหมู่ หรือชั้นความเร็ว
+/* คำค้น (พิมพ์เล็กแล้ว) ตรงกับชื่อ เลขที่ เลขที่รับ หน่วยงาน หมวดหมู่ หรือชั้นความเร็ว
    ใช้ทั้งช่องค้นหาด้านบนและช่องค้นหาในฟอร์มคำสั่ง */
 function matchesSearch(d, q) {
-  return !q || [d.title, d.docNumber, d.agency, categoryName(d.category), URGENCY_LABEL[d.urgency]]
+  return !q || [d.title, d.docNumber, d.receiveNumber, d.agency, categoryName(d.category), URGENCY_LABEL[d.urgency]]
     .some((f) => String(f ?? "").toLowerCase().includes(q));
 }
 function getFilteredDocs() {
@@ -2013,7 +2010,7 @@ function getFilteredDocs() {
   const statusFilter = document.getElementById("filterStatus").value;
   const dateFilter = document.getElementById("filterDate").value;
 
-  let list = allDocuments.filter((d) => {
+  return allDocuments.filter((d) => {
     const matchesQuery = matchesSearch(d, q);
     const matchesCat = !catFilter || d.category === catFilter;
     const matchesStatus = !statusFilter
@@ -2021,12 +2018,28 @@ function getFilteredDocs() {
     const matchesDate = !dateFilter || d.date === dateFilter;
     return matchesQuery && matchesCat && matchesStatus && matchesDate;
   });
+}
 
+/* กล่องหมวดเรียงตามงานสารบรรณ หมวดที่สร้างเพิ่มต่อท้ายตามชื่อ และไม่ระบุหมวดหมู่อยู่ท้ายสุด */
+const CATEGORY_ORDER = ["หนังสือรับ", "หนังสือส่ง", "หนังสือเวียน", "คำสั่ง", "บันทึกข้อความ", "คำร้อง"];
+function categoryRank(name) {
+  const rank = CATEGORY_ORDER.findIndex((n) => categoryKey(n) === categoryKey(name));
+  return rank === -1 ? CATEGORY_ORDER.length : rank;
+}
+/* แต่ละกล่องเรียงและแบ่งหน้าของตัวเอง (คีย์คือ id หมวด, "" คือไม่ระบุหมวดหมู่)
+   เริ่มที่ลำดับการบันทึก ฉบับที่เพิ่งบันทึกอยู่บนสุด */
+const groupViews = new Map();
+function groupView(id) {
+  if (!groupViews.has(id)) groupViews.set(id, { sortKey: "entry", sortDir: "desc", page: 1 });
+  return groupViews.get(id);
+}
+function resetGroupPages() { groupViews.forEach((view) => { view.page = 1; }); }
+
+function sortDocs(list, { sortKey, sortDir }) {
   const dir = sortDir === "asc" ? 1 : -1;
-  list.sort((a, b) => {
+  return [...list].sort((a, b) => {
     if (sortKey !== "entry") {
       let av = a[sortKey] ?? "", bv = b[sortKey] ?? "";
-      if (sortKey === "category") { av = categoryName(a.category) || ""; bv = categoryName(b.category) || ""; }
       if (sortKey === "size") { av = a.fileSize || 0; bv = b.fileSize || 0; }
       const order = typeof av === "string" && typeof bv === "string" ? av.localeCompare(bv, "th", { numeric: true }) : (av > bv) - (av < bv);
       if (order) return order * dir;
@@ -2034,53 +2047,29 @@ function getFilteredDocs() {
     // ค่าเริ่มต้น และแถวที่ค่าเท่ากัน (เช่น ออกเอกสารวันเดียวกัน) เรียงตามลำดับที่บันทึก
     return byEntry(a, b) * dir;
   });
-  return list;
 }
-function renderDocsTable() {
-  const list = getFilteredDocs();
-  const tbody = document.getElementById("docsTableBody");
-  const emptyEl = document.getElementById("docsEmpty");
-  const emptyMessage = document.getElementById("docsEmptyMessage");
-  const emptyAddButton = document.getElementById("docsEmptyAddBtn");
 
-  // กรองดูเฉพาะหมวดคำสั่ง หัวคอลัมน์จึงเรียกแบบคำสั่ง เหมือนช่องในฟอร์มคำสั่ง
-  // หมวดที่มีชื่อช่องหน่วยงานของตัวเอง (AGENCY_LABELS) ใช้ชื่อเดียวกับในฟอร์ม
-  const filterCategory = document.getElementById("filterCategory").value;
-  const order = isOrderCategory(filterCategory);
-  const heads = FIELD_LABELS[order ? "order" : "document"];
-  document.getElementById("docNumberHead").textContent = heads.docNumber;
-  document.getElementById("titleHead").textContent = heads.title;
-  document.getElementById("agencyHead").textContent = order ? heads.agency : documentAgencyLabel(filterCategory);
-  document.getElementById("dateHead").textContent = heads.date;
-
-  // sort direction indicator on the header
-  document.querySelectorAll("#docsTable th[data-sort]").forEach((th) => {
-    th.classList.toggle("is-sorted-asc", th.dataset.sort === sortKey && sortDir === "asc");
-    th.classList.toggle("is-sorted-desc", th.dataset.sort === sortKey && sortDir === "desc");
-    th.setAttribute("aria-sort", th.dataset.sort === sortKey ? (sortDir === "asc" ? "ascending" : "descending") : "none");
-  });
-
-  const hasDocuments = allDocuments.length > 0;
-  const hasResults = list.length > 0;
-  emptyEl.hidden = hasResults;
-  document.getElementById("resultCount").textContent =
-    hasDocuments ? `พบ ${list.length} จาก ${allDocuments.length} รายการ` : "";
-  emptyMessage.textContent = hasDocuments ? "ไม่พบเอกสารที่ตรงกับตัวกรอง" : "ยังไม่มีเอกสารในระบบ";
-  emptyAddButton.hidden = hasDocuments;
-  document.querySelector("#docsTable").style.display = hasResults ? "table" : "none";
-
-  const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
-  currentPage = Math.min(currentPage, totalPages);
-  const pageItems = list.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-
-  tbody.innerHTML = pageItems.map((d) => {
-    // เอกสารที่บันทึกโดยไม่แนบ PDF ไม่มีอะไรให้ดูหรือดาวน์โหลด ปิดปุ่มไว้แทนการกดแล้วแจ้งว่าไฟล์เสีย
-    const fileButton = (label) => d.storageKey || d.fileData ? `title="${label}"` : `title="${label} (ไม่มีไฟล์ PDF)" disabled`;
-    return `
+/* คอลัมน์ของกล่องหมวด ไม่มีคอลัมน์หมวดหมู่เพราะหัวกล่องบอกอยู่แล้ว
+   กล่องคำสั่งเรียกหัวคอลัมน์แบบคำสั่ง หมวดที่มีชื่อช่องหน่วยงานของตัวเอง (AGENCY_LABELS) ใช้ชื่อเดียวกับในฟอร์ม
+   และกล่องหนังสือรับมีเลขที่รับเป็นคอลัมน์แรก เหมือนสมุดทะเบียนรับ */
+function groupColumns(id) {
+  const order = isOrderCategory(id);
+  const labels = FIELD_LABELS[order ? "order" : "document"];
+  return [
+    ...(isReceiveCategory(id) ? [["receiveNumber", "เลขที่รับ"]] : []),
+    ["docNumber", labels.docNumber], ["title", labels.title],
+    ["agency", order ? labels.agency : documentAgencyLabel(id)],
+    ["date", labels.date], ["size", "ขนาดไฟล์"], ["status", "สถานะ"],
+  ];
+}
+function docRow(d, receive) {
+  // เอกสารที่บันทึกโดยไม่แนบ PDF ไม่มีอะไรให้ดูหรือดาวน์โหลด ปิดปุ่มไว้แทนการกดแล้วแจ้งว่าไฟล์เสีย
+  const fileButton = (label) => d.storageKey || d.fileData ? `title="${label}"` : `title="${label} (ไม่มีไฟล์ PDF)" disabled`;
+  return `
     <tr>
+      ${receive ? `<td class="mono">${escapeHtml(d.receiveNumber || "-")}</td>` : ""}
       <td class="mono">${escapeHtml(d.docNumber || "-")}</td>
       <td class="doc-title-cell">${urgencyBadge(d.urgency)}${escapeHtml(d.title || "-")}${d.description ? `<div class="doc-sub">${escapeHtml(truncate(d.description, 60))}</div>` : ""}</td>
-      <td>${escapeHtml(categoryName(d.category) || "-")}</td>
       <td>${escapeHtml(d.agency || "-")}</td>
       <td class="mono">${formatDate(d.date)}</td>
       <td class="mono">${d.fileSize ? formatFileSize(d.fileSize) : "-"}</td>
@@ -2094,11 +2083,135 @@ function renderDocsTable() {
         </div>
       </td>
     </tr>`;
-  }).join("");
-
-  bindRowActions(tbody);
-  renderPagination(totalPages);
 }
+/* กล่องของหมวดเดียว: หัวกล่อง (ชื่อ จำนวน ปุ่มเพิ่ม) ตาราง และหน้า หมวดที่ยังไม่มีเอกสารเหลือแค่หัวกล่อง */
+function renderDocGroup(group, docs, index, narrowed) {
+  const view = groupView(group.id);
+  const columns = groupColumns(group.id);
+  // หมวดที่เปลี่ยนชื่อจนคอลัมน์ที่กำลังเรียงอยู่หายไป (เช่น เลขที่รับ) กลับไปเรียงตามลำดับการบันทึก
+  if (view.sortKey !== "entry" && !columns.some(([key]) => key === view.sortKey)) Object.assign(view, { sortKey: "entry", sortDir: "desc" });
+  const totalPages = Math.max(1, Math.ceil(docs.length / PAGE_SIZE));
+  view.page = Math.min(Math.max(1, view.page), totalPages);
+  const rows = sortDocs(docs, view).slice((view.page - 1) * PAGE_SIZE, view.page * PAGE_SIZE);
+  const heads = columns.map(([key, label]) => {
+    const dir = view.sortKey === key ? view.sortDir : "";
+    const sorted = dir ? ` class="is-sorted-${dir}" aria-sort="${dir === "asc" ? "ascending" : "descending"}"` : ` aria-sort="none"`;
+    return `<th data-sort="${key}" tabindex="0"${sorted}>${escapeHtml(label)}</th>`;
+  }).join("");
+  const name = escapeHtml(group.name);
+  const add = group.id
+    ? `<button class="btn btn-ghost btn-sm" data-add-to="${escapeHtml(group.id)}" title="เพิ่ม${name}"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>เพิ่ม${name}</span></button>`
+    : "";
+  let body = "";
+  if (docs.length) {
+    body = `
+      <div class="table-scroll">
+        <table class="doc-table">
+          <thead><tr>${heads}<th class="col-actions">การดำเนินการ</th></tr></thead>
+          <tbody>${rows.map((d) => docRow(d, columns[0][0] === "receiveNumber")).join("")}</tbody>
+        </table>
+      </div>
+      ${totalPages > 1 ? `<nav class="pagination" aria-label="หน้าของ${name}">${paginationHtml(view.page, totalPages)}</nav>` : ""}`;
+  } else if (narrowed) {
+    body = `<p class="doc-group-empty">ไม่พบเอกสารที่ตรงกับตัวกรองในหมวดนี้</p>`;
+  }
+  return `
+    <section class="panel panel-flush doc-group" data-group="${escapeHtml(group.id)}" aria-labelledby="docGroupTitle${index}">
+      <div class="doc-group-head">
+        <div class="doc-group-name">
+          <span class="doc-group-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg></span>
+          <h3 id="docGroupTitle${index}">${name}</h3>
+        </div>
+        <span class="panel-tag">${docs.length || narrowed ? `${docs.length} รายการ` : "ยังไม่มีเอกสาร"}</span>
+        ${add}
+      </div>${body}
+    </section>`;
+}
+function renderDocsTable() {
+  const list = getFilteredDocs();
+  const filterCategory = document.getElementById("filterCategory").value;
+  // ค้นหา หรือกรองสถานะ/วันที่อยู่ แสดงเฉพาะหมวดที่มีเอกสารตรงกัน ไม่งั้นแสดงทุกหมวด แม้หมวดที่ยังไม่มีเอกสาร
+  const narrowed = Boolean(document.getElementById("globalSearch").value.trim()
+    || document.getElementById("filterStatus").value || document.getElementById("filterDate").value);
+  // เอกสารของหมวดที่ถูกลบไปแล้วอยู่ในกล่องไม่ระบุหมวดหมู่ เหมือนที่ฟอร์มแก้ไขแสดง
+  const known = new Set(allCategories.map((c) => c.id));
+  const byGroup = new Map();
+  list.forEach((d) => {
+    const id = known.has(d.category) ? d.category : "";
+    if (!byGroup.has(id)) byGroup.set(id, []);
+    byGroup.get(id).push(d);
+  });
+  const groups = [...allCategories].sort((a, b) => categoryRank(a.name) - categoryRank(b.name))
+    .map((c) => ({ id: c.id, name: c.name }))
+    .concat({ id: "", name: "ไม่ระบุหมวดหมู่" })
+    .filter((g) => (filterCategory ? g.id === filterCategory : byGroup.has(g.id) || (g.id !== "" && !narrowed)));
+
+  const hasDocuments = allDocuments.length > 0;
+  document.getElementById("resultCount").textContent =
+    hasDocuments ? `พบ ${list.length} จาก ${allDocuments.length} รายการ` : "";
+  document.getElementById("docsEmpty").hidden = groups.length > 0;
+  document.getElementById("docsEmptyMessage").textContent = hasDocuments ? "ไม่พบเอกสารที่ตรงกับตัวกรอง" : "ยังไม่มีเอกสารในระบบ";
+  document.getElementById("docsEmptyAddBtn").hidden = hasDocuments;
+
+  const container = document.getElementById("docGroups");
+  const focused = focusedGroupControl(container);
+  container.innerHTML = groups.map((g, i) => renderDocGroup(g, byGroup.get(g.id) || [], i, narrowed)).join("");
+  bindRowActions(container);
+  restoreGroupControl(container, focused);
+}
+
+/* กล่องถูกสร้างใหม่ทุกครั้งที่ข้อมูล การเรียง หรือหน้าเปลี่ยน จึงจำปุ่มที่โฟกัสอยู่ แล้วโฟกัสปุ่มเดียวกันในกล่องใหม่
+   คนที่ใช้คีย์บอร์ดกดเรียงหรือเปลี่ยนหน้าแล้วจะไม่หลุดกลับไปต้นหน้า */
+const GROUP_CONTROLS = ["data-sort", "data-add-to", "data-preview", "data-download", "data-edit", "data-delete"];
+function focusedGroupControl(container) {
+  const el = document.activeElement;
+  const group = el?.closest?.("[data-group]");
+  if (!group || !container.contains(group)) return null;
+  // ปุ่มเปลี่ยนหน้าเปลี่ยนเลขหน้าในตัวทุกครั้ง จึงจำจากชื่อปุ่ม (หน้าก่อนหน้า หน้าถัดไป หน้า 3)
+  const attr = el.closest(".pagination") ? "aria-label" : GROUP_CONTROLS.find((name) => el.hasAttribute(name));
+  return attr ? { group: group.dataset.group, attr, value: el.getAttribute(attr) } : null;
+}
+function restoreGroupControl(container, saved) {
+  const group = saved && [...container.querySelectorAll("[data-group]")].find((g) => g.dataset.group === saved.group);
+  if (!group) return;
+  const pager = saved.attr === "aria-label";
+  let target = [...group.querySelectorAll(pager ? ".pagination button" : `[${saved.attr}]`)]
+    .find((el) => el.getAttribute(saved.attr) === saved.value);
+  // ถึงหน้าสุดท้ายแล้ว ปุ่มหน้าถัดไปถูกปิด จึงโฟกัสเลขหน้าปัจจุบันแทน
+  if (pager && (!target || target.disabled)) target = group.querySelector('.pagination [aria-current="page"]');
+  target?.focus({ preventScroll: true });
+}
+
+function sortGroup(id, key) {
+  const view = groupView(id);
+  if (view.sortKey === key) view.sortDir = view.sortDir === "asc" ? "desc" : "asc";
+  else Object.assign(view, { sortKey: key, sortDir: "asc" });
+  view.page = 1;
+  renderDocsTable();
+}
+function showGroupPage(id, page) {
+  groupView(id).page = page;
+  renderDocsTable();
+}
+/* ปุ่มเพิ่มในกล่องหมวด เปิดฟอร์มที่เลือกหมวดนั้นไว้ให้ ส่วนกล่องคำสั่งเปิดฟอร์มคำสั่ง */
+function addToCategory(id) {
+  openDocModal(null, isOrderCategory(id) ? { order: true } : { categoryId: id });
+}
+/* ฟังคลิกที่กล่องนอกสุดที่เดียว เพราะหัวคอลัมน์ ปุ่มเปลี่ยนหน้า และปุ่มเพิ่ม ถูกสร้างใหม่ทุกครั้ง */
+document.getElementById("docGroups").addEventListener("click", (e) => {
+  const group = e.target.closest("[data-group]");
+  if (!group) return;
+  const sort = e.target.closest("th[data-sort]");
+  const page = e.target.closest("[data-page]");
+  const add = e.target.closest("[data-add-to]");
+  if (sort) sortGroup(group.dataset.group, sort.dataset.sort);
+  else if (page) showGroupPage(group.dataset.group, Number(page.dataset.page));
+  else if (add) addToCategory(add.dataset.addTo);
+});
+document.getElementById("docGroups").addEventListener("keydown", (e) => {
+  const sort = e.target.closest("th[data-sort]");
+  if (sort && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); sort.click(); }
+});
 
 function bindRowActions(scope) {
   scope.querySelectorAll("[data-preview]").forEach((b) => b.addEventListener("click", () => previewDoc(findDoc(b.dataset.preview))));
@@ -2108,20 +2221,16 @@ function bindRowActions(scope) {
 }
 function findDoc(id) { return allDocuments.find((d) => d.id === id) || allTrash.find((d) => d.id === id); }
 
-function renderPagination(totalPages) {
-  const el = document.getElementById("pagination");
-  if (totalPages <= 1) { el.innerHTML = ""; return; }
-  let html = `<button data-page="${currentPage - 1}" ${currentPage === 1 ? "disabled" : ""} aria-label="หน้าก่อนหน้า">‹</button>`;
-  const pages = [...new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1])].filter((p) => p >= 1 && p <= totalPages).sort((a, b) => a - b);
+function paginationHtml(page, totalPages) {
+  let html = `<button data-page="${page - 1}" ${page === 1 ? "disabled" : ""} aria-label="หน้าก่อนหน้า">‹</button>`;
+  const pages = [...new Set([1, totalPages, page - 1, page, page + 1])].filter((p) => p >= 1 && p <= totalPages).sort((a, b) => a - b);
   let previous = 0;
   for (const i of pages) {
     if (i - previous > 1) html += `<span aria-hidden="true">…</span>`;
-    html += `<button class="${i === currentPage ? "is-active" : ""}" data-page="${i}" aria-label="หน้า ${i}" ${i === currentPage ? 'aria-current="page"' : ""}>${i}</button>`;
+    html += `<button class="${i === page ? "is-active" : ""}" data-page="${i}" aria-label="หน้า ${i}" ${i === page ? 'aria-current="page"' : ""}>${i}</button>`;
     previous = i;
   }
-  html += `<button data-page="${currentPage + 1}" ${currentPage === totalPages ? "disabled" : ""} aria-label="หน้าถัดไป">›</button>`;
-  el.innerHTML = html;
-  el.querySelectorAll("[data-page]").forEach((b) => b.addEventListener("click", () => { currentPage = Number(b.dataset.page); renderDocsTable(); }));
+  return html + `<button data-page="${page + 1}" ${page === totalPages ? "disabled" : ""} aria-label="หน้าถัดไป">›</button>`;
 }
 
 /* =========================================================

@@ -742,6 +742,20 @@ tr:hover .row-actions { opacity: 1; }
 .row-actions [data-delete]:hover, .row-actions [data-purge]:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
 .row-actions [data-restore]:hover { background: var(--success-bg); color: var(--success); border-color: var(--success); }
 
+/* หน้าเอกสารทั้งหมด: กล่องละหมวด หัวกล่องมีชื่อหมวด จำนวน และปุ่มเพิ่มในหมวดนั้น
+   ชื่อหมวดที่ตั้งเองยาวได้ถึง 100 ตัวอักษร ชื่อจึงตัดบรรทัดได้ และข้อความบนปุ่มย่อด้วย … */
+.doc-group-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; padding: 10px 12px 14px; }
+.doc-group-name { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.doc-group-ico {
+  flex: none; width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center;
+  background: var(--primary-100); color: var(--primary);
+}
+.doc-group-ico svg { width: 18px; height: 18px; }
+.doc-group-head h3 { min-width: 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+.doc-group-head .btn { margin-left: auto; max-width: 100%; }
+.doc-group-head .btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.doc-group-empty { padding: 0 12px 10px; font-size: 13.5px; color: var(--text-muted); }
+
 /* Stamp-style status badge — evokes an official document seal */
 .stamp {
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px 4px 9px;

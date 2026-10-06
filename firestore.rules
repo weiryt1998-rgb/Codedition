@@ -62,13 +62,16 @@ service cloud.firestore {
 
     function validDocument(data) {
       return data.keys().hasOnly([
-          'title', 'docNumber', 'date', 'agency', 'category', 'status', 'urgency',
+          'title', 'docNumber', 'receiveNumber', 'date', 'agency', 'category', 'status', 'urgency',
           'description', 'deleted', 'deletedAt', 'createdAt', 'createdAtMs',
           'updatedAt', 'fileName', 'fileSize', 'fileData',
           'storageKey', 'mimeType', 'createdBy'
         ])
         && data.title is string && data.title.size() <= 300
         && data.docNumber is string && data.docNumber.size() <= 100
+        // เลขที่รับ, optional: only หนังสือรับ has one. The web app writes it only when
+        // one is filled in, or '' when one is cleared. A record without it has none.
+        && (!('receiveNumber' in data) || (data.receiveNumber is string && data.receiveNumber.size() <= 100))
         && data.date is string && data.date.size() <= 10
         && data.agency is string && data.agency.size() <= 300
         && data.category is string && data.category.size() <= 200

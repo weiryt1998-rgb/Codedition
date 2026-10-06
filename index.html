@@ -390,32 +390,16 @@
           <span class="result-count mono" id="resultCount" role="status"></span>
         </div>
 
-        <div class="panel panel-flush">
-          <div class="table-scroll">
-            <table class="doc-table" id="docsTable">
-              <thead>
-                <tr>
-                  <th data-sort="docNumber" id="docNumberHead">เลขที่หนังสือ</th>
-                  <th data-sort="title" id="titleHead">ชื่อเอกสาร</th>
-                  <th data-sort="category">หมวดหมู่</th>
-                  <th data-sort="agency" id="agencyHead">หน่วยงาน</th>
-                  <th data-sort="date" id="dateHead">วันที่ออกเอกสาร</th>
-                  <th data-sort="size">ขนาดไฟล์</th>
-                  <th data-sort="status">สถานะ</th>
-                  <th class="col-actions">การดำเนินการ</th>
-                </tr>
-              </thead>
-              <tbody id="docsTableBody"></tbody>
-            </table>
-          </div>
-          <div class="empty-state" id="docsEmpty" hidden>
+        <!-- กล่องละหมวด แต่ละกล่องมีตาราง การเรียง และหน้าของตัวเอง สร้างใน renderDocsTable() -->
+        <div id="docGroups"></div>
+        <div class="panel panel-flush" id="docsEmpty" hidden>
+          <div class="empty-state">
             <span class="empty-art">
               <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/></svg>
             </span>
             <p id="docsEmptyMessage">ยังไม่มีเอกสารในระบบ</p>
             <button class="btn btn-primary" id="docsEmptyAddBtn" data-open="addDocBtn">เพิ่มเอกสารแรกของคุณ</button>
           </div>
-          <nav class="pagination" id="pagination" aria-label="หน้าเอกสาร"></nav>
         </div>
       </section>
 
@@ -506,6 +490,10 @@
         </label>
         <label>หมวดหมู่
           <select id="docCategory"><option value="">ไม่ระบุหมวดหมู่</option></select>
+        </label>
+        <!-- หนังสือรับเท่านั้น: เลขที่รับของ อบต. แยกจากเลขที่หนังสือของผู้ส่ง -->
+        <label id="docReceiveField" hidden>เลขที่รับ
+          <input type="text" id="docReceiveNumber" maxlength="100" placeholder="เช่น 125">
         </label>
         <label id="docUrgencyField">ชั้นความเร็ว
           <select id="docUrgency">

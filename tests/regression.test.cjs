@@ -190,6 +190,25 @@ function setup({
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+// The documents page as a person reads it: one box per category, with its title, count, add button,
+// column heads, and rows as { column head: cell text }.
+function docBoxes(elements) {
+  return elements.get('docGroups').innerHTML.split('<section ').slice(1).map((box) => {
+    const heads = [...box.matchAll(/<th data-sort="[^"]*"[^>]*>([^<]*)<\/th>/g)].map((m) => m[1]);
+    const rows = [...box.matchAll(/<tr>([\s\S]*?)<\/tr>/g)]
+      .map((m) => [...m[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => c[1].replace(/<[^>]*>/g, '').trim()))
+      .filter((cells) => cells.length);
+    return {
+      group: box.match(/data-group="([^"]*)"/)[1],
+      title: box.match(/<h3 [^>]*>([^<]*)<\/h3>/)[1],
+      tag: box.match(/<span class="panel-tag">([^<]*)<\/span>/)[1],
+      add: box.match(/data-add-to="[^"]*"[^>]*>[\s\S]*?<span>([^<]*)<\/span>/)?.[1] ?? null,
+      note: box.match(/<p class="doc-group-empty">([^<]*)<\/p>/)?.[1] ?? null,
+      heads,
+      rows: rows.map((cells) => Object.fromEntries(heads.map((head, i) => [head, cells[i]]))),
+    };
+  });
+}
 function pdf(name = 'document.pdf', content = '%PDF-1.7\n%%EOF', type = 'application/pdf') {
   const bytes = new TextEncoder().encode(content);
   return {
@@ -325,15 +344,15 @@ test('global search opens results and tolerates legacy numeric metadata', async 
   elements.get('globalSearch').value = '123';
   await elements.get('globalSearch').fire('input');
   assert.ok(elements.get('view-documents').classList.contains('is-active'));
-  assert.match(elements.get('docsTableBody').innerHTML, /Test/);
+  assert.match(elements.get('docGroups').innerHTML, /Test/);
 });
 
 test('document numbers sort naturally and pagination stays bounded', () => {
-  const { run, elements } = setup();
-  assert.equal(run('allDocuments = [{docNumber:"10"},{docNumber:"2"}]; sortKey="docNumber"; sortDir="asc"; getFilteredDocs()[0].docNumber'), '2');
-  run('currentPage = 500; renderPagination(1000)');
-  assert.equal((elements.get('pagination').innerHTML.match(/<button/g) || []).length, 7);
-  assert.match(elements.get('pagination').innerHTML, /aria-current="page"/);
+  const { run } = setup();
+  assert.equal(run('sortDocs([{docNumber:"10"},{docNumber:"2"}], { sortKey: "docNumber", sortDir: "asc" })[0].docNumber'), '2');
+  const pages = run('paginationHtml(500, 1000)');
+  assert.equal((pages.match(/<button/g) || []).length, 7);
+  assert.match(pages, /aria-current="page"/);
 });
 
 test('rows list newest saved first by default, without sequence numbers', () => {
@@ -345,16 +364,16 @@ test('rows list newest saved first by default, without sequence numbers', () => 
     { id: "a", title: "บันทึกแรก", date: "2026-06-01", createdAtMs: 1000 },
     { id: "z", title: "เอกสารเก่าไม่มีเวลา", date: "2026-03-01" },
   ]; renderDocsTable()`);
-  const rows = () => [...elements.get('docsTableBody').innerHTML.matchAll(/<td class="doc-title-cell">([^<]*)/g)].map((m) => m[1]);
+  const rows = () => docBoxes(elements)[0].rows.map((row) => row['ชื่อเอกสาร']);
   assert.deepEqual(rows(), ['บันทึกล่าสุด', 'บันทึกที่สอง', 'บันทึกแรก', 'เอกสารเก่าไม่มีเวลา']);
-  assert.doesNotMatch(elements.get('docsTableBody').innerHTML, /col-entry/);
-  run('sortKey = "date"; sortDir = "desc"; renderDocsTable()');
+  assert.doesNotMatch(elements.get('docGroups').innerHTML, /col-entry/);
+  run('Object.assign(groupView(""), { sortKey: "date", sortDir: "desc" }); renderDocsTable()');
   assert.deepEqual(rows(), ['บันทึกแรก', 'เอกสารเก่าไม่มีเวลา', 'บันทึกที่สอง', 'บันทึกล่าสุด']);
   // documents issued on the same day appear in the order they were saved
   run(`allDocuments = [
     { id: "x", title: "บันทึกทีหลัง", date: "2026-09-10", createdAtMs: 20 },
     { id: "y", title: "บันทึกก่อน", date: "2026-09-10", createdAtMs: 10 },
-  ]; sortDir = "asc"; renderDocsTable()`);
+  ]; groupView("").sortDir = "asc"; renderDocsTable()`);
   assert.deepEqual(rows(), ['บันทึกก่อน', 'บันทึกทีหลัง']);
 });
 
@@ -370,7 +389,7 @@ test('record IDs stay escaped in document, trash and category action attributes'
     renderDocsTable(); renderTrash(); renderCategories();
   `);
   for (const [elementId, actions] of [
-    ['docsTableBody', ['preview', 'download', 'edit', 'delete']],
+    ['docGroups', ['preview', 'download', 'edit', 'delete', 'add-to', 'group']],
     ['trashTableBody', ['restore', 'purge']],
     ['categoryGrid', ['del-cat', 'open-cat']],
   ]) {
@@ -515,7 +534,7 @@ test('the urgency choice is saved, restored when editing, shown before the title
     { id: "c", title: "เอกสารเดิม" },
     { id: "d", title: "ค่าแปลก", urgency: "<b>x</b>" },
   ]; renderDocsTable()`);
-  const markup = elements.get('docsTableBody').innerHTML;
+  const markup = elements.get('docGroups').innerHTML;
   assert.ok(markup.includes('<span class="urgency urgency-most-urgent">ด่วนที่สุด</span>ขอเชิญประชุม'));
   assert.equal((markup.match(/class="urgency /g) || []).length, 1, 'only the urgent record has a badge');
   assert.ok(!markup.includes('<b>'));
@@ -524,8 +543,7 @@ test('the urgency choice is saved, restored when editing, shown before the title
 
   elements.get('globalSearch').value = 'ด่วนที่สุด';
   await elements.get('globalSearch').fire('input');
-  assert.equal((elements.get('docsTableBody').innerHTML.match(/<tr>/g) || []).length, 1);
-  assert.match(elements.get('docsTableBody').innerHTML, /ขอเชิญประชุม/);
+  assert.deepEqual(docBoxes(elements).flatMap((box) => box.rows.map((row) => row['ชื่อเอกสาร'])), ['ด่วนที่สุดขอเชิญประชุม']);
 });
 
 test('the document and order forms, the labels, the filter, the stamps and firestore.rules agree on the statuses', () => {
@@ -578,11 +596,10 @@ const formText = (elements, ...ids) => ids.map((id) => elements.get(id).textCont
 const formLabels = (elements) => formText(elements, 'docTitleLabel', 'docNumberLabel', 'docDateLabel', 'docAgencyLabel');
 const statusOptions = (elements) => [...elements.get('docStatus').innerHTML.matchAll(/<option value="([^"]*)">([^<]*)</g)].map((m) => m[2]);
 
-test('choosing the คำสั่ง category turns the document form into the order form, and the filtered table uses the same names', async () => {
+test('choosing the คำสั่ง category turns the document form into the order form, and the คำสั่ง box uses the same names', async () => {
   const { run, elements } = setup();
   run(`allCategories = [{ id: "order", name: " คำสั่ง " }, { id: "memo", name: "บันทึกข้อความ" }, { id: "old", name: "หนังสือคำสั่ง" }]; renderCategoryOptions()`);
   const placeholders = () => ['docTitle', 'docNumber', 'docAgency'].map((id) => elements.get(id).placeholder);
-  const heads = () => formText(elements, 'titleHead', 'docNumberHead', 'dateHead', 'agencyHead');
   const status = elements.get('docStatus');
   const choose = (id) => { elements.get('docCategory').value = id; return elements.get('docCategory').fire('change'); };
   run('openDocModal()');
@@ -615,13 +632,17 @@ test('choosing the คำสั่ง category turns the document form into the 
   run(`allCategories = [{ id: "old", name: "คำสั่ง" }]; renderCategoryOptions()`);
   assert.deepEqual(formLabels(elements), ORDER_LABELS);
 
-  run('allDocuments = []; renderDocsTable()');
-  assert.deepEqual(heads(), DOCUMENT_LABELS);
+  // on the documents page the คำสั่ง box names its columns like the order form; other boxes keep the document names
+  run(`allCategories = [{ id: "old", name: "คำสั่ง" }, { id: "memo", name: "บันทึกข้อความ" }]; renderCategoryOptions();
+    allDocuments = [{ id: "o1", category: "old" }, { id: "m1", category: "memo" }]; renderDocsTable()`);
+  const heads = () => Object.fromEntries(docBoxes(elements).map((box) => [box.title, box.heads.slice(0, 4)]));
+  assert.deepEqual(heads(), {
+    'คำสั่ง': ['เลขที่คำสั่ง', 'ชื่อคำสั่ง', 'ผู้สั่ง', 'วันที่ออกคำสั่ง'],
+    'บันทึกข้อความ': ['เลขที่หนังสือ', 'ชื่อเอกสาร', 'หน่วยงาน', 'วันที่ออกเอกสาร'],
+  });
   elements.get('filterCategory').value = 'old';
   await elements.get('filterCategory').fire('change');
-  assert.deepEqual(heads(), ORDER_LABELS);
-  await elements.get('clearFilters').fire('click');
-  assert.deepEqual(heads(), DOCUMENT_LABELS);
+  assert.deepEqual(heads(), { 'คำสั่ง': ['เลขที่คำสั่ง', 'ชื่อคำสั่ง', 'ผู้สั่ง', 'วันที่ออกคำสั่ง'] }, 'filtered to คำสั่ง, only its box is left');
 });
 
 test('the หนังสือส่ง, หนังสือรับ and คำร้อง categories call the agency field and column ถึง, จาก and ผู้ยื่นคำร้อง, also when editing', async () => {
@@ -652,24 +673,194 @@ test('the หนังสือส่ง, หนังสือรับ and ค
   run('openDocModal()');
   assert.equal(agency(), 'หน่วยงาน', 'the next new document starts with หน่วยงาน again');
 
-  // the table filtered to one of them names its agency column the same way
-  const head = () => elements.get('agencyHead').textContent;
-  const filter = (id) => { elements.get('filterCategory').value = id; return elements.get('filterCategory').fire('change'); };
-  run('allDocuments = []; renderDocsTable()');
-  assert.equal(head(), 'หน่วยงาน');
-  await filter('out');
-  assert.deepEqual(formText(elements, 'titleHead', 'docNumberHead', 'dateHead', 'agencyHead'), [...DOCUMENT_LABELS.slice(0, 3), 'ถึง']);
-  await filter('in');
-  assert.equal(head(), 'จาก');
-  await filter('petition');
-  assert.equal(head(), 'ผู้ยื่นคำร้อง');
-  await filter('order');
-  assert.equal(head(), 'ผู้สั่ง');
-  await filter('memo');
-  assert.equal(head(), 'หน่วยงาน');
-  await filter('in');
+  // on the documents page each of their boxes names its agency column the same way
+  run(`allDocuments = ["out", "in", "petition", "memo", "order"].map((category) => ({ id: category, category })); renderDocsTable()`);
+  const agencyColumns = () => Object.fromEntries(docBoxes(elements).map((box) => [box.title.trim(), box.heads.at(-4)]));
+  assert.deepEqual(agencyColumns(), { 'หนังสือรับ': 'จาก', 'หนังสือส่ง': 'ถึง', 'คำสั่ง': 'ผู้สั่ง', 'บันทึกข้อความ': 'หน่วยงาน', 'คำร้อง': 'ผู้ยื่นคำร้อง' });
+  elements.get('filterCategory').value = 'out';
+  await elements.get('filterCategory').fire('change');
+  assert.deepEqual(agencyColumns(), { 'หนังสือส่ง': 'ถึง' });
+});
+
+test('only the หนังสือรับ form has a เลขที่รับ field, right after หมวดหมู่, as long as firestore.rules allows', async () => {
+  const { run, elements } = setup();
+  run(`allCategories = [{ id: "in", name: " หนังสือรับ " }, { id: "out", name: "หนังสือส่ง" }, { id: "petition", name: "คำร้อง" }, { id: "order", name: "คำสั่ง" }]; renderCategoryOptions()`);
+  const field = elements.get('docReceiveField');
+  const choose = (id) => { elements.get('docCategory').value = id; return elements.get('docCategory').fire('change'); };
+  run('openDocModal()');
+  assert.equal(field.hidden, true, 'a new document has no category yet');
+  await choose('in');
+  assert.equal(field.hidden, false);
+  for (const id of ['out', 'petition', 'order', '']) {
+    await choose(id);
+    assert.equal(field.hidden, true, id);
+  }
+  run('openDocModal(null, { order: true })');
+  assert.equal(field.hidden, true, 'the order form');
+  run('openDocModal({ id: "a", category: "in", receiveNumber: "124" })');
+  assert.deepEqual([field.hidden, elements.get('docReceiveNumber').value], [false, '124']);
+  run('openDocModal({ id: "b", category: "out" })');
+  assert.equal(field.hidden, true);
+
+  const afterCategory = html.split('<select id="docCategory">')[1].split('</label>')[1];
+  assert.match(afterCategory, /^\s*(<!--[^>]*-->\s*)?<label id="docReceiveField" hidden>เลขที่รับ\s*<input type="text" id="docReceiveNumber"/);
+  // a field the rules don't list, or a longer number than they allow, would be refused with permission-denied
+  const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
+  assert.match(rules.match(/hasOnly\(\[([^\]]*)\]/)[1], /'receiveNumber'/);
+  assert.equal(html.match(/id="docReceiveNumber" maxlength="(\d+)"/)[1], rules.match(/data\.receiveNumber is string && data\.receiveNumber\.size\(\) <= (\d+)/)[1]);
+});
+
+test('เลขที่รับ is written only for หนังสือรับ, or as "" to clear one the record no longer shows', async () => {
+  const save = async (existing, change) => {
+    const app = setup({ authMode: 'ready' });
+    app.context.existing = existing;
+    app.run(`allCategories = [{ id: "in", name: "หนังสือรับ" }, { id: "out", name: "หนังสือส่ง" }]; renderCategoryOptions();
+      allDocuments = existing ? [existing] : []; openDocModal(existing)`);
+    await change(app.elements);
+    const saving = app.elements.get('docForm').fire('submit');
+    await flush();
+    app.complete();
+    await saving;
+    return app.writes[0];
+  };
+  const choose = (elements, id) => { elements.get('docCategory').value = id; return elements.get('docCategory').fire('change'); };
+  const type = (elements, text) => { elements.get('docReceiveNumber').value = text; };
+
+  const created = await save(null, async (elements) => { await choose(elements, 'in'); type(elements, ' 125 '); });
+  assert.deepEqual([created.category, created.receiveNumber], ['in', '125']);
+  const blank = await save(null, (elements) => choose(elements, 'in'));
+  assert.equal('receiveNumber' in blank, false, 'left empty, it is not written, so saving still works under rules that predate the field');
+  const moved = await save(null, async (elements) => { await choose(elements, 'in'); type(elements, '125'); await choose(elements, 'out'); });
+  assert.deepEqual([moved.category, 'receiveNumber' in moved], ['out', false], 'a number typed before choosing another category is not saved');
+
+  const received = { id: 'r1', title: 'ขอเชิญประชุม', category: 'in', receiveNumber: '124' };
+  assert.equal((await save(received, () => {})).receiveNumber, '124', 'kept when something else is edited');
+  assert.equal((await save(received, (elements) => type(elements, '130'))).receiveNumber, '130');
+  assert.equal((await save(received, (elements) => type(elements, ''))).receiveNumber, '', 'emptied, the stored number is cleared');
+  assert.equal((await save(received, (elements) => choose(elements, 'out'))).receiveNumber, '', 'moved out of หนังสือรับ, its hidden number is cleared');
+  assert.equal('receiveNumber' in await save({ id: 'o1', title: 'หนังสือส่ง', category: 'out' }, () => {}), false, 'other records are written exactly as before');
+});
+
+test('the หนังสือรับ box starts with a เลขที่รับ column that sorts as numbers, other boxes have none, and search finds the number', async () => {
+  const { run, elements } = setup();
+  run(`allCategories = [{ id: "in", name: "หนังสือรับ" }, { id: "out", name: "หนังสือส่ง" }]; renderCategoryOptions()`);
+  run(`allDocuments = [
+    { id: "a", category: "in", docNumber: "สท 0023.3/ว 456", receiveNumber: "125", title: "ขอเชิญประชุม", createdAtMs: 5 },
+    { id: "b", category: "in", docNumber: "สท 0023.1/ว 789", receiveNumber: "9", title: "แจ้งโอนงบประมาณ", createdAtMs: 4 },
+    { id: "c", category: "in", docNumber: "มท 0810.5/ว 12", title: "ยังไม่ได้ลงเลขรับ", createdAtMs: 3 },
+    { id: "d", category: "out", docNumber: "สท 75301/1", title: "หนังสือส่ง", createdAtMs: 2 },
+    { id: "f", category: "in", docNumber: "สท 0023.5/ว 3", receiveNumber: "10", title: "ขอความร่วมมือ", createdAtMs: 1 },
+  ]; renderDocsTable()`);
+  const box = (title) => docBoxes(elements).find((b) => b.title === title);
+  const numbers = () => box('หนังสือรับ').rows.map((row) => row['เลขที่รับ']);
+
+  assert.deepEqual(box('หนังสือรับ').heads.slice(0, 3), ['เลขที่รับ', 'เลขที่หนังสือ', 'ชื่อเอกสาร']);
+  assert.deepEqual(box('หนังสือรับ').rows.map((row) => [row['เลขที่รับ'], row['เลขที่หนังสือ']]),
+    [['125', 'สท 0023.3/ว 456'], ['9', 'สท 0023.1/ว 789'], ['-', 'มท 0810.5/ว 12'], ['10', 'สท 0023.5/ว 3']], 'newest saved first, as everywhere');
+  assert.deepEqual(box('หนังสือส่ง').heads.slice(0, 2), ['เลขที่หนังสือ', 'ชื่อเอกสาร'], 'no เลขที่รับ outside หนังสือรับ');
+  run('sortGroup("in", "receiveNumber")');
+  assert.deepEqual(numbers(), ['-', '9', '10', '125'], 'numbers sort as numbers');
+  assert.match(elements.get('docGroups').innerHTML, /<th data-sort="receiveNumber" tabindex="0" class="is-sorted-asc" aria-sort="ascending">เลขที่รับ<\/th>/);
+  run('sortGroup("in", "receiveNumber")');
+  assert.deepEqual(numbers(), ['125', '10', '9', '-']);
+
+  // the search box finds a record by its เลขที่รับ, and only boxes with a match stay
+  elements.get('globalSearch').value = '125';
+  await elements.get('globalSearch').fire('input');
+  assert.deepEqual(docBoxes(elements).map((b) => [b.title, b.rows.map((row) => row['เลขที่หนังสือ'])]), [['หนังสือรับ', ['สท 0023.3/ว 456']]]);
+
+  run(`allDocuments = [{ id: "x", category: "in", receiveNumber: "<b>1</b>" }]; document.getElementById("globalSearch").value = ""; renderDocsTable()`);
+  assert.deepEqual(numbers(), ['&lt;b&gt;1&lt;/b&gt;']);
+});
+
+test('the documents page has one box per category, in paper-workflow order, and empty ones show unless a filter narrows the list', async () => {
+  const { run, elements } = setup();
+  // Firestore lists categories by name; the ones staff made follow the six known ones, still by name
+  run(`allCategories = ["คำร้อง", "คำสั่ง", "งานพัสดุ", "บันทึกข้อความ", "ประกาศ", "หนังสือรับ", "หนังสือส่ง", "หนังสือเวียน"].map((name) => ({ id: name, name }));
+    renderCategoryOptions();
+    allDocuments = [
+      { id: "a", category: "หนังสือรับ", title: "หนังสือเชิญประชุม", status: "pending", createdAtMs: 4 },
+      { id: "b", category: "คำสั่ง", title: "แต่งตั้งคณะกรรมการ", createdAtMs: 3 },
+      { id: "c", category: "", title: "ยังไม่ได้เลือกหมวด", createdAtMs: 2 },
+      { id: "d", category: "หมวดที่ถูกลบแล้ว", title: "หมวดเดิมถูกลบ", createdAtMs: 1 },
+    ]; renderDocsTable()`);
+  const boxes = () => docBoxes(elements).map((box) => [box.title, box.tag, box.add]);
+  const filter = (id, value) => { elements.get(id).value = value; return elements.get(id).fire(id === 'globalSearch' ? 'input' : 'change'); };
+  assert.deepEqual(boxes(), [
+    ['หนังสือรับ', '1 รายการ', 'เพิ่มหนังสือรับ'], ['หนังสือส่ง', 'ยังไม่มีเอกสาร', 'เพิ่มหนังสือส่ง'],
+    ['หนังสือเวียน', 'ยังไม่มีเอกสาร', 'เพิ่มหนังสือเวียน'], ['คำสั่ง', '1 รายการ', 'เพิ่มคำสั่ง'],
+    ['บันทึกข้อความ', 'ยังไม่มีเอกสาร', 'เพิ่มบันทึกข้อความ'], ['คำร้อง', 'ยังไม่มีเอกสาร', 'เพิ่มคำร้อง'],
+    ['งานพัสดุ', 'ยังไม่มีเอกสาร', 'เพิ่มงานพัสดุ'], ['ประกาศ', 'ยังไม่มีเอกสาร', 'เพิ่มประกาศ'],
+    // a record of a deleted category reads as uncategorised, as the edit form shows it
+    ['ไม่ระบุหมวดหมู่', '2 รายการ', null],
+  ]);
+  assert.equal(elements.get('docsEmpty').hidden, true);
+  assert.equal(docBoxes(elements).find((box) => box.title === 'หนังสือส่ง').heads.length, 0, 'an empty box has no table');
+  assert.doesNotMatch(elements.get('docGroups').innerHTML, /data-sort="category"|<th[^>]*>หมวดหมู่</, 'the box title already names the category');
+
+  // a search or a status or date filter leaves only the boxes with a match
+  await filter('globalSearch', 'แต่งตั้ง');
+  assert.deepEqual(boxes(), [['คำสั่ง', '1 รายการ', 'เพิ่มคำสั่ง']]);
+  await filter('globalSearch', '');
+  await filter('filterStatus', 'pending');
+  assert.deepEqual(boxes(), [['หนังสือรับ', '1 รายการ', 'เพิ่มหนังสือรับ']]);
+  await filter('filterStatus', 'rejected');
+  assert.deepEqual(boxes(), []);
+  assert.deepEqual([elements.get('docsEmpty').hidden, elements.get('docsEmptyMessage').textContent, elements.get('docsEmptyAddBtn').hidden],
+    [false, 'ไม่พบเอกสารที่ตรงกับตัวกรอง', true]);
+
+  // the category filter keeps that one box, even when it has nothing to show
   await elements.get('clearFilters').fire('click');
-  assert.equal(head(), 'หน่วยงาน');
+  await filter('filterCategory', 'หนังสือส่ง');
+  assert.deepEqual(docBoxes(elements).map((box) => [box.title, box.tag, box.note]), [['หนังสือส่ง', 'ยังไม่มีเอกสาร', null]]);
+  await filter('globalSearch', 'ไม่มีคำนี้');
+  await filter('filterCategory', 'หนังสือรับ');
+  assert.deepEqual(docBoxes(elements).map((box) => [box.title, box.tag, box.note]), [['หนังสือรับ', '0 รายการ', 'ไม่พบเอกสารที่ตรงกับตัวกรองในหมวดนี้']]);
+
+  // nothing at all yet: the page says so and offers the first document
+  run('allCategories = []; renderCategoryOptions(); allDocuments = []; resetDocFilters()');
+  assert.deepEqual([docBoxes(elements).length, elements.get('docsEmpty').hidden, elements.get('docsEmptyMessage').textContent, elements.get('docsEmptyAddBtn').hidden],
+    [0, false, 'ยังไม่มีเอกสารในระบบ', false]);
+});
+
+test('each box sorts and pages on its own, and a new filter takes every box back to its first page', async () => {
+  const { run, elements } = setup();
+  run(`allCategories = [{ id: "in", name: "หนังสือรับ" }, { id: "out", name: "หนังสือส่ง" }]; renderCategoryOptions();
+    allDocuments = Array.from({ length: 20 }, (_, i) => ({ id: "d" + i, category: i < 10 ? "in" : "out", docNumber: "ที่ " + i, createdAtMs: i }));
+    renderDocsTable()`);
+  const numbers = (title) => docBoxes(elements).find((box) => box.title === title).rows.map((row) => row['เลขที่หนังสือ']);
+  const pager = (group) => elements.get('docGroups').innerHTML.split('<section ').find((box) => box.includes(`data-group="${group}"`))
+    .match(/<nav class="pagination" aria-label="([^"]*)">[\s\S]*?aria-current="page">(\d+)</).slice(1);
+  assert.deepEqual(numbers('หนังสือรับ'), ['ที่ 9', 'ที่ 8', 'ที่ 7', 'ที่ 6', 'ที่ 5', 'ที่ 4', 'ที่ 3', 'ที่ 2']);
+  assert.deepEqual(pager('in'), ['หน้าของหนังสือรับ', '1']);
+  run('showGroupPage("in", 2)');
+  assert.deepEqual([numbers('หนังสือรับ'), pager('in')], [['ที่ 1', 'ที่ 0'], ['หน้าของหนังสือรับ', '2']]);
+  assert.deepEqual([numbers('หนังสือส่ง')[0], pager('out')], ['ที่ 19', ['หน้าของหนังสือส่ง', '1']], 'the other box stays on its page');
+  run('sortGroup("out", "docNumber")');
+  assert.deepEqual(numbers('หนังสือส่ง'), ['ที่ 10', 'ที่ 11', 'ที่ 12', 'ที่ 13', 'ที่ 14', 'ที่ 15', 'ที่ 16', 'ที่ 17']);
+  assert.deepEqual(numbers('หนังสือรับ'), ['ที่ 1', 'ที่ 0'], 'sorting one box leaves the other alone');
+
+  elements.get('filterStatus').value = 'none';
+  await elements.get('filterStatus').fire('change');
+  assert.deepEqual([pager('in'), numbers('หนังสือรับ')[0], numbers('หนังสือส่ง')[0]], [['หน้าของหนังสือรับ', '1'], 'ที่ 9', 'ที่ 10'], 'first pages again, sort kept');
+  // a page that no longer exists after records leave falls back to the last one
+  run('showGroupPage("in", 2); allDocuments = allDocuments.slice(5); renderDocsTable()');
+  assert.deepEqual(numbers('หนังสือรับ'), ['ที่ 9', 'ที่ 8', 'ที่ 7', 'ที่ 6', 'ที่ 5']);
+});
+
+test('a box\'s add button opens the form with its category chosen; the คำสั่ง box opens the order form', () => {
+  const { run, elements } = setup();
+  run(`allCategories = [{ id: "in", name: "หนังสือรับ" }, { id: "order", name: "คำสั่ง" }]; renderCategoryOptions()`);
+  const form = () => [elements.get('docModalTitle').textContent, elements.get('docCategory').value, 'locked' in elements.get('docCategory').dataset];
+  run('addToCategory("in")');
+  assert.deepEqual(form(), ['เพิ่มเอกสารใหม่', 'in', false], 'chosen, but it can still be changed');
+  assert.deepEqual([elements.get('docReceiveField').hidden, elements.get('docAgencyLabel').textContent], [false, 'จาก'], 'เลขที่รับ is ready from the start');
+  run('closeModal("docModalOverlay"); addToCategory("order")');
+  assert.deepEqual(form(), ['เพิ่มคำสั่งใหม่', 'order', true]);
+  run('closeModal("docModalOverlay"); openDocModal()');
+  assert.deepEqual(form(), ['เพิ่มเอกสารใหม่', '', false], 'เพิ่มเอกสาร still starts without a category');
+  run('addToCategory("deleted-meanwhile")');
+  assert.equal(elements.get('docCategory').value, '', 'a category deleted meanwhile is not chosen');
 });
 
 test('the เพิ่มคำสั่ง button opens the order form locked to คำสั่ง and saves an order without urgency', async () => {
@@ -903,7 +1094,7 @@ test('documents without a PDF or a title still read sensibly', () => {
     { id: "legacy", title: "ไฟล์แบบเดิม", fileData: "data:application/pdf;base64,JVBERi0=" },
   ]; allTrash = [{ id: "trashed", title: "" }]; renderDocsTable(); renderTrash()`);
   assert.ok(app.elements.get('trashTableBody').innerHTML.includes('<td class="doc-title-cell">-</td>'));
-  const markup = app.elements.get('docsTableBody').innerHTML;
+  const markup = app.elements.get('docGroups').innerHTML;
   // no PDF: the buttons are disabled instead of reporting a broken file when pressed
   assert.match(markup, /data-preview="none" title="ดูตัวอย่าง \(ไม่มีไฟล์ PDF\)" disabled>/);
   assert.match(markup, /data-download="none" title="ดาวน์โหลด \(ไม่มีไฟล์ PDF\)" disabled>/);
