@@ -182,6 +182,81 @@ async function main() {
       assert.equal(logos.length, 3);
       assert.ok(logos.every((width) => width > 0), 'every logo image decoded');
     });
+    await check('Menu icons are glossy tiles with white icons, and the current page is a raised card', async () => {
+      const nav = await evaluate(`(() => {
+        const active = document.querySelector('.nav-item.is-active'), style = getComputedStyle(active);
+        return {
+          active: active.dataset.view, card: style.backgroundColor, darkText: style.color !== 'rgb(255, 255, 255)',
+          tiles: [...document.querySelectorAll('.nav-ico')].every((ico) => getComputedStyle(ico).backgroundImage.startsWith('linear-gradient')),
+          glyphs: [...new Set([...document.querySelectorAll('.nav-ico svg')].map((svg) => getComputedStyle(svg).stroke))],
+          badge: getComputedStyle(document.getElementById('navCountCats')).backgroundColor,
+          trashAlert: document.getElementById('navCountTrash').classList.contains('is-alert'),
+        };
+      })()`);
+      assert.deepEqual(nav, { active: 'dashboard', card: 'rgb(255, 255, 255)', darkText: true, tiles: true,
+        glyphs: ['rgb(255, 255, 255)'], badge: 'rgba(255, 255, 255, 0.94)', trashAlert: false });
+      // the selected item's label stays on one line, even "เอกสารทั้งหมด" next to a two-digit count
+      await click('[data-view="documents"]');
+      assert.equal(await evaluate(`(() => { const label = document.querySelector('.nav-item.is-active .nav-label'); return label.getClientRects().length === 1 && label.getBoundingClientRect().height < 30; })()`), true);
+      await click('[data-view="dashboard"]');
+      const sidebar = await evaluate(`(() => { const r = document.querySelector('.nav').getBoundingClientRect(); return { x: 0, y: 0, width: r.right + 16, height: r.bottom + 16, scale: 1 }; })()`);
+      const shot = await cdp('Page.captureScreenshot', { format: 'png', clip: sidebar });
+      await fs.writeFile(path.join(output, 'sidebar.png'), Buffer.from(shot.data, 'base64'));
+    });
+    await check('Dashboard stat cards tilt toward the mouse with a glare, and stay flat for reduced motion', async () => {
+      const move = (x, y) => cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+      const card = () => evaluate(`(() => { const c = document.querySelectorAll('.stat-card')[1]; return { rx: c.style.getPropertyValue('--rx'), ry: c.style.getPropertyValue('--ry'), glare: c.querySelectorAll('.fx-glare').length }; })()`);
+      const point = await evaluate(`(() => { const r = document.querySelectorAll('.stat-card')[1].getBoundingClientRect(); return { x: r.left + r.width * .9, y: r.top + r.height * .1 }; })()`);
+      await move(5, 990);
+      assert.deepEqual(await card(), { rx: '', ry: '', glare: 1 });
+      await move(point.x - 10, point.y + 10);
+      await move(point.x, point.y);
+      await waitFor(`document.querySelectorAll('.stat-card')[1].style.getPropertyValue('--rx') !== ''`);
+      // near the top-right corner the card tips its top away and turns toward the right
+      const tilted = await card();
+      assert.ok(parseFloat(tilted.rx) > 3 && parseFloat(tilted.ry) > 3, JSON.stringify(tilted));
+      await waitFor(`getComputedStyle(document.querySelectorAll('.stat-card')[1].querySelector('.fx-glare')).opacity === '1'`);
+      await move(5, 990);
+      await waitFor(`document.querySelectorAll('.stat-card')[1].style.getPropertyValue('--rx') === ''`);
+      await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+      await move(point.x - 10, point.y + 10);
+      await move(point.x, point.y);
+      await pause(200);
+      assert.equal((await card()).rx, '', 'reduced motion keeps the cards flat');
+      await cdp('Emulation.setEmulatedMedia', { features: [] });
+      await move(5, 990);
+      // the point is measured on the card itself, so its visual centre stays level even once the card has tilted and lifted
+      await move(point.x, point.y);
+      await pause(400);
+      const centre = await evaluate(`(() => { const r = document.querySelectorAll('.stat-card')[1].getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      await move(centre.x, centre.y);
+      await pause(300);
+      const level = await card();
+      assert.ok(Math.abs(parseFloat(level.rx)) < 1 && Math.abs(parseFloat(level.ry)) < 1, JSON.stringify(level));
+      await move(5, 990);
+    });
+    await check('Glow and press details: an empty meter has no glow, a pressed top-bar button sinks, a long note does not widen its table', async () => {
+      // nothing rejected: that meter is empty and must not leave a glowing dot
+      await evaluate(`fixtureStore.documents.forEach((d) => { if (d.status === 'rejected') { d.status = 'pending'; d.wasRejected = true; } }); emitFixture()`);
+      await waitFor(`document.getElementById('meterRejected').style.width === '0%'`);
+      assert.deepEqual(await evaluate(`(() => { const m = document.getElementById('meterRejected'); return [m.classList.contains('is-empty'), getComputedStyle(m).boxShadow]; })()`), [true, 'none']);
+      await evaluate(`fixtureStore.documents.forEach((d) => { if (d.wasRejected) { d.status = 'rejected'; delete d.wasRejected; } }); emitFixture()`);
+      // pressing the top bar's เพิ่มเอกสาร shows the sunk shadow, not the hover glow
+      const button = await evaluate(`(() => { const r = document.querySelector('.topbar .btn-primary').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...button });
+      await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...button, button: 'left', clickCount: 1 });
+      await pause(300);
+      assert.match(await evaluate(`getComputedStyle(document.querySelector('.topbar .btn-primary')).boxShadow`), /^rgba\(0, 0, 0, 0\.22\) 0px 2px 5px 0px inset/);
+      await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 700, y: 990 });
+      await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 700, y: 990, button: 'left', clickCount: 1 });
+      assert.equal(await evaluate(`document.getElementById('docModalOverlay').hidden`), true, 'released elsewhere, nothing opened');
+      // a long note and file name are cut with … instead of widening the title column
+      await evaluate(`(() => { const d = fixtureStore.documents[0]; d.description = 'กองคลัง ขอความอนุเคราะห์ตรวจสอบเอกสารประกอบการเบิกจ่ายงบประมาณประจำปี พ.ศ. 2569 โดยด่วน'; d.fileName = 'หนังสือขออนุมัติจัดซื้อจัดจ้าง_ปีงบประมาณ2569_ฉบับแก้ไขครั้งที่2_สำเนาถูกต้อง.pdf'; emitFixture(); switchView('documents'); })()`);
+      await pause(400);
+      assert.deepEqual(await evaluate(`(() => { const box = document.querySelector('[data-group="cat-a"]'), scroll = box.querySelector('.table-scroll'), sub = box.querySelector('.doc-sub');
+        return { fits: scroll.scrollWidth <= scroll.clientWidth, cut: sub.scrollWidth > sub.clientWidth, tooltip: sub.title.endsWith('สำเนาถูกต้อง.pdf') }; })()`), { fits: true, cut: true, tooltip: true });
+      await evaluate(`(() => { const d = fixtureStore.documents[0]; delete d.description; d.fileName = 'sample.pdf'; emitFixture(); switchView('dashboard'); })()`);
+    });
     await check('Global search opens and filters document results', async () => {
       await click('#globalSearch');
       await cdp('Input.insertText', { text: 'เอกสารทดสอบ 12' });
@@ -234,6 +309,11 @@ async function main() {
       assert.equal(await evaluate(`document.querySelectorAll('.col-entry').length`), 0);
       assert.equal(await evaluate(`document.querySelector('#recentTable thead th').textContent.trim()`), 'เลขที่หนังสือ');
       await screenshot('documents-boxes.png');
+      // a 1280px laptop fits even the widest box (หนังสือรับ: เลขที่รับ plus the file icons) without sideways scrolling
+      await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await pause(200);
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docGroups .table-scroll')].filter((s) => s.scrollWidth > s.clientWidth).map((s) => s.closest('.doc-group').querySelector('h3').textContent)`), []);
+      await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
     });
     await check('Document and category action IDs preserve quotes and HTML entities', async () => {
       const id = 'record" data-id-marker="injected &quot; literal';
@@ -242,14 +322,14 @@ async function main() {
         allDocuments = [{ ...allDocuments[0], id }];
         allTrash = [{ ...allDocuments[0], deleted: true }];
         allCategories = [{ ...allCategories[0], id }];
-        renderDocsTable(); renderTrash(); renderCategories();
-        const actions = ['preview', 'download', 'edit', 'delete', 'restore', 'purge', 'del-cat', 'open-cat', 'add-to', 'group'];
+        renderDocsTable(); renderRecentTable(); renderTrash(); renderCategories();
+        const actions = ['preview', 'download', 'edit', 'delete', 'restore', 'purge', 'del-cat', 'open-cat', 'add-to', 'group', 'view-file'];
         return {
           values: actions.map(action => document.querySelector('[data-' + action + ']').getAttribute('data-' + action)),
           injected: document.querySelectorAll('[data-id-marker]').length,
         };
       })()`);
-      assert.deepEqual(ids.values, Array(10).fill(id));
+      assert.deepEqual(ids.values, Array(11).fill(id));
       assert.equal(ids.injected, 0, 'Record IDs must not create HTML attributes');
       await reloadApp();
       await click('[data-view="documents"]');
@@ -259,6 +339,9 @@ async function main() {
       assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docGroups [data-preview], #docGroups [data-download]')].map((b) => [b.disabled, b.title])`),
         [[true, 'ดูตัวอย่าง (ไม่มีไฟล์ PDF)'], [true, 'ดาวน์โหลด (ไม่มีไฟล์ PDF)']]);
       assert.equal(await evaluate(`document.querySelector('#docGroups .doc-title-cell').textContent`), '-');
+      assert.deepEqual(await evaluate(`(() => { const open = document.querySelector('#docGroups .doc-open'); return [open.tagName, open.querySelector('svg').getAttribute('class')]; })()`),
+        ['DIV', 'doc-ico is-none'], 'no file: a grey sheet, and the title is not a button');
+      await click('#docGroups .doc-open');
       await click('#docGroups [data-preview]');
       await click('#docGroups [data-download]');
       await pause(200);
@@ -279,6 +362,9 @@ async function main() {
     let createdKey, createdId;
     await check('Invalid PDF is rejected; valid PDF can be added and edited', async () => {
       await click('#addDocBtn');
+      // the upload arrow is a stroked icon; the PDF icons' styles once shared its class and hid it
+      assert.deepEqual(await evaluate(`(() => { const svg = document.querySelector('#fileDrop svg'), r = svg.getBoundingClientRect(); return [getComputedStyle(svg.querySelector('path')).stroke !== 'none', r.width > 20 && r.height > 20]; })()`),
+        [true, true], 'the drop zone shows its upload arrow');
       await evaluate(`handleFile(new File(['invalid'], 'invalid.pdf', {type:'application/pdf'}))`);
       assert.equal(await evaluate(`document.getElementById('docFormError').hidden`), false);
       await evaluate(`document.getElementById('docTitle').value='Browser created'; document.getElementById('docNumber').value='TEST/100'; document.getElementById('docUrgency').value='most-urgent'; handleFile(new File([fixturePdf], 'test.pdf', {type:'application/pdf'}))`);
@@ -470,9 +556,9 @@ async function main() {
       await evaluate(`fixtureStore.documents = fixtureStore.documents.filter((d) => d.title !== 'หนังสือรับทดสอบ'); delete fixtureStore.documents.find((d) => d.id === 'seed-2').receiveNumber; emitFixture()`);
       await waitFor('allDocuments.length === 13');
     });
-    await check('เพิ่มคำสั่ง opens the order form locked to คำสั่ง; orders save, show their status and edit there', async () => {
+    await check('เพิ่มคำสั่ง in the คำสั่ง box opens the order form locked to คำสั่ง; orders save, show their status and edit there', async () => {
       const orderId = await evaluate(`allCategories.find((c) => c.name === 'คำสั่ง').id`);
-      await click('#addOrderBtn');
+      await click(`[data-add-to="${orderId}"]`);
       await waitFor(`!document.getElementById('docModalOverlay').hidden`);
       assert.deepEqual(await docForm(), {
         title: 'เพิ่มคำสั่งใหม่', labels: orderLabels, category: [orderId, 'คำสั่ง', true], urgencyShown: false,
@@ -519,22 +605,25 @@ async function main() {
       assert.deepEqual([next.title, next.category[2], next.urgencyShown], ['เพิ่มเอกสารใหม่', false, true], 'the document form is unlocked again');
       await closeDocForm();
     });
-    await check('เพิ่มคำสั่ง is only in the top bar, beside เพิ่มเอกสาร, on every page and opens the order form', async () => {
+    await check('The top bar has only เพิ่มเอกสาร on every page; เพิ่มคำสั่ง is the คำสั่ง box\'s button', async () => {
       const places = (selector) => evaluate(`[...document.querySelectorAll(${JSON.stringify(selector)})].filter((el) => el.getClientRects().length)
         .map((el) => el.closest('.topbar') ? 'topbar' : el.closest('.hero') ? 'hero' : el.closest('.view-head') ? 'page-head' : 'other')`);
       for (const [view, expected] of [['dashboard', ['topbar', 'hero']], ['documents', ['topbar', 'page-head']], ['categories', ['topbar']], ['trash', ['topbar']]]) {
         await click(`.nav-item[data-view="${view}"]`);
         assert.deepEqual(await places('#addDocBtn, [data-open="addDocBtn"]'), expected, view);
-        assert.deepEqual(await places('#addOrderBtn, [data-open="addOrderBtn"]'), ['topbar'], view);
+        assert.deepEqual(await evaluate(`[...document.querySelectorAll('.topbar button')].filter((b) => b.getClientRects().length).map((b) => b.textContent.trim()).filter(Boolean)`),
+          ['เพิ่มเอกสาร'], view);
       }
-      // from a page that has no add buttons of its own (รายการที่ลบ)
-      await click('#addOrderBtn');
+      await click('.nav-item[data-view="documents"]');
+      const orderId = await evaluate(`allCategories.find((c) => c.name === 'คำสั่ง').id`);
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'เพิ่มคำสั่ง').map((b) => b.closest('[data-group]')?.dataset.group ?? 'elsewhere')`),
+        [orderId], 'the only เพิ่มคำสั่ง left is in the คำสั่ง box');
+      await click(`[data-add-to="${orderId}"]`);
       await waitFor(`!document.getElementById('docModalOverlay').hidden`);
       const form = await docForm();
       assert.deepEqual([form.title, form.category[1], form.category[2]], ['เพิ่มคำสั่งใหม่', 'คำสั่ง', true]);
       await closeDocForm();
-      assert.equal(await evaluate(`document.activeElement === document.getElementById('addOrderBtn')`), true, 'focus returns to the button');
-      await click('.nav-item[data-view="documents"]');
+      assert.equal(await evaluate(`document.activeElement.matches('[data-add-to="${orderId}"]')`), true, 'focus returns to the button');
     });
     await check('The order form searches saved orders, also by พ.ศ. year, and Enter or Esc there never saves or closes it', async () => {
       const before = await evaluate('allDocuments.length');
@@ -564,7 +653,8 @@ async function main() {
         await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode });
       };
 
-      await click('#addOrderBtn');
+      const orderId = await evaluate(`allCategories.find((c) => c.name === 'คำสั่ง').id`);
+      await click(`[data-add-to="${orderId}"]`);
       await waitFor(`!document.getElementById('docModalOverlay').hidden`);
       let state = await lookup();
       assert.deepEqual([state.shown, state.hits, state.note], [true, [], 'มีคำสั่งที่บันทึกไว้แล้ว 3 รายการ พิมพ์คำค้นหรือเลือกปี พ.ศ. เพื่อดูรายการ']);
@@ -599,7 +689,7 @@ async function main() {
       await waitFor(`document.getElementById('docModalOverlay').hidden`);
 
       // the next order starts with an empty search, and the document form has none
-      await click('#addOrderBtn');
+      await click(`[data-add-to="${orderId}"]`);
       assert.deepEqual(await evaluate(`[document.getElementById('orderSearch').value, document.getElementById('orderSearchYear').value]`), ['', '']);
       await closeDocForm();
       await click('#addDocBtn');
@@ -682,13 +772,45 @@ async function main() {
       await click('#previewModalOverlay [data-close-modal]');
       await click('#clearFilters');
     });
+    await check('A title with a PDF has the red PDF icon and opens the file from the icon, the title, the keyboard and the dashboard', async () => {
+      const openPreview = async (act) => {
+        await act();
+        await waitFor(`document.getElementById('previewFrame').src.startsWith('blob:')`);
+        await click('#previewModalOverlay [data-close-modal]');
+        await waitFor(`document.getElementById('previewModalOverlay').hidden && !document.getElementById('previewFrame').hasAttribute('src')`);
+      };
+      await evaluate(`document.getElementById('globalSearch').value='ทดสอบ/5'; document.getElementById('globalSearch').dispatchEvent(new Event('input'))`);
+      assert.deepEqual(await evaluate(`(() => {
+        const open = document.querySelector('#docGroups .doc-open'), icon = open.querySelector('.doc-ico'), r = icon.getBoundingClientRect();
+        return { tag: open.tagName, icon: icon.getAttribute('class'), size: [Math.round(r.width), Math.round(r.height)],
+          fill: getComputedStyle(icon.querySelector('.sheet')).fill, label: icon.querySelector('text').textContent, sub: open.querySelector('.doc-sub').textContent };
+      })()`), { tag: 'BUTTON', icon: 'doc-ico is-pdf', size: [30, 36], fill: 'rgb(229, 72, 77)', label: 'PDF', sub: 'sample.pdf' });
+      await screenshot('title-pdf-icon.png');
+      await openPreview(() => click('#docGroups .doc-open .doc-ico'));
+      await openPreview(() => click('#docGroups .doc-open-title'));
+      // the title is a button in the tab order, so Enter opens it too
+      await openPreview(async () => {
+        await evaluate(`document.querySelector('#docGroups .doc-open').focus()`);
+        await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+        await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      });
+      await click('#clearFilters');
+      // the dashboard's latest documents open the same way
+      await click('[data-view="dashboard"]');
+      assert.equal(await evaluate(`document.querySelectorAll('#recentTable button.doc-open .doc-ico.is-pdf').length`), 5);
+      await openPreview(() => click('#recentTable .doc-open'));
+      await click('[data-view="documents"]');
+    });
     await check('Trash, restore, and permanent deletion update the interface', async () => {
+      const trashBadge = () => evaluate(`(() => { const b = document.getElementById('navCountTrash'); return [b.textContent, b.classList.contains('is-alert'), getComputedStyle(b).color]; })()`);
       await click(`[data-delete="${createdId}"]`);
       await click('#confirmActionBtn');
       await waitFor('allTrash.length===1');
+      assert.deepEqual(await trashBadge(), ['1', true, 'rgb(190, 53, 53)'], 'the menu count turns red while something is in the trash');
       await click('[data-view="trash"]');
       await click('[data-restore]');
       await waitFor('allTrash.length===0 && allDocuments.length===13');
+      assert.deepEqual((await trashBadge()).slice(0, 2), ['0', false]);
       await click('[data-view="documents"]');
       await click(`[data-delete="${createdId}"]`);
       await click('#confirmActionBtn');
@@ -900,8 +1022,8 @@ async function main() {
       await evaluate(`switchView('dashboard')`);
       await pause(350);
       assert.ok(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'));
-      // the top bar is too narrow on a phone, so the add buttons there are hidden; the banner keeps เพิ่มเอกสาร only
-      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#addOrderBtn, [data-open="addDocBtn"]')].filter((el) => el.getClientRects().length).map((el) => el.textContent.trim())`),
+      // the top bar is too narrow on a phone, so its เพิ่มเอกสาร is hidden; the banner keeps its own
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('[data-open="addDocBtn"]')].filter((el) => el.getClientRects().length).map((el) => el.textContent.trim())`),
         ['เพิ่มเอกสารใหม่']);
       await screenshot('mobile.png');
       await click('#menuToggle');

@@ -187,10 +187,13 @@ function deriveVars(b, dark) {
     "--accent-soft": tint(b.accent, dark ? 0.84 : 0.82),
     "--success": b.success,
     "--success-bg": tint(b.success, dark ? 0.86 : 0.84),
+    "--success-rgb": rgbList(b.success),
     "--warning": b.warning,
     "--warning-bg": tint(b.warning, dark ? 0.86 : 0.84),
+    "--warning-rgb": rgbList(b.warning),
     "--danger": b.danger,
     "--danger-bg": tint(b.danger, dark ? 0.86 : 0.84),
+    "--danger-rgb": rgbList(b.danger),
     "--grad-primary": `linear-gradient(135deg, ${mixHex(b.primary, W, dark ? 0.06 : 0.1)} 0%, ${b.primary} 45%, ${mixHex(b.primary, K, dark ? 0.35 : 0.28)} 100%)`,
     "--grad-start": mixHex(b.primary, W, dark ? 0.06 : 0.1),
     "--grad-end": mixHex(b.primary, K, dark ? 0.35 : 0.28),
@@ -715,7 +718,10 @@ function renderStats() {
     countTo(document.getElementById(`stat${key}`), value);
     const pct = total ? Math.round((value / total) * 100) : 0;
     const meter = document.getElementById(`meter${key}`);
-    if (meter && key !== "Total") meter.style.width = `${pct}%`;
+    if (meter && key !== "Total") {
+      meter.style.width = `${pct}%`;
+      meter.classList.toggle("is-empty", pct === 0); // แถบว่างไม่ต้องมีแสงเรือง
+    }
     const chip = document.getElementById(`chip${key}`);
     if (chip && key !== "Total") chip.textContent = `${pct}%`;
   });
@@ -723,8 +729,41 @@ function renderStats() {
   // sidebar badges
   document.getElementById("navCountDocs").textContent = total;
   document.getElementById("navCountCats").textContent = allCategories.length;
-  document.getElementById("navCountTrash").textContent = allTrash.length;
+  renderTrashBadge();
 }
+/* ตัวเลขรายการที่ลบบนเมนู เป็นสีแดงเมื่อมีเอกสารค้างอยู่ในถังขยะ */
+function renderTrashBadge() {
+  const badge = document.getElementById("navCountTrash");
+  badge.textContent = allTrash.length;
+  badge.classList.toggle("is-alert", allTrash.length > 0);
+}
+
+/* การ์ดสถิติสามมิติ: บนคอมพิวเตอร์ การ์ดเอียงเข้าหาเมาส์และมีแสงสะท้อนตามจุดที่ชี้
+   ส่งมุมและตำแหน่งให้ CSS ทาง --rx --ry --mx --my มือถือ (แตะ ไม่มีการชี้ค้าง) และเครื่องที่ตั้งให้ลดการเคลื่อนไหว การ์ดอยู่นิ่ง */
+const TILT_DEGREES = 10; // ช่วงเอียงทั้งหมด จากกลางการ์ดถึงขอบจึงเอียงได้ข้างละ 5 องศา
+const tiltMedia = window.matchMedia("(hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference)");
+document.querySelectorAll("[data-tilt]").forEach((card) => {
+  card.insertAdjacentHTML("beforeend", '<span class="fx-glare" aria-hidden="true"></span>');
+  let frame = 0;
+  card.addEventListener("pointermove", (e) => {
+    if (!tiltMedia.matches || e.pointerType === "touch" || e.target !== card) return;
+    // ส่วนในการ์ดไม่รับเมาส์ (CSS) offsetX/offsetY จึงเป็นพิกัดบนตัวการ์ดเอง ถูกต้องแม้การ์ดกำลังเอียง ลอยอยู่ หรือหน้าเพิ่งเลื่อน
+    // ต่างจากกรอบของ getBoundingClientRect ซึ่งเพี้ยนตามมุมที่การ์ดเอียงอยู่
+    const x = Math.min(1, Math.max(0, e.offsetX / card.clientWidth));
+    const y = Math.min(1, Math.max(0, e.offsetY / card.clientHeight));
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      card.style.setProperty("--rx", `${((0.5 - y) * TILT_DEGREES).toFixed(2)}deg`);
+      card.style.setProperty("--ry", `${((x - 0.5) * TILT_DEGREES).toFixed(2)}deg`);
+      card.style.setProperty("--mx", `${(x * 100).toFixed(1)}%`);
+      card.style.setProperty("--my", `${(y * 100).toFixed(1)}%`);
+    });
+  });
+  card.addEventListener("pointerleave", () => {
+    cancelAnimationFrame(frame);
+    ["--rx", "--ry", "--mx", "--my"].forEach((name) => card.style.removeProperty(name));
+  });
+});
 
 /* อ่านสีจากตัวแปร CSS โดยตรง กราฟจึงเปลี่ยนตามธีมและสีที่ผู้ใช้ตั้งเองเสมอ */
 function chartColors() {
@@ -1155,11 +1194,12 @@ function renderRecentTable() {
   tbody.innerHTML = recent.map((d) => `
     <tr>
       <td class="mono">${escapeHtml(d.docNumber || "-")}</td>
-      <td class="doc-title-cell">${urgencyBadge(d.urgency)}${escapeHtml(d.title || "-")}</td>
+      <td class="doc-title-cell">${docTitle(d)}</td>
       <td>${escapeHtml(categoryName(d.category) || "-")}</td>
       <td class="mono">${formatDate(d.date)}</td>
       <td>${statusStamp(d.status)}</td>
     </tr>`).join("") || `<tr><td colspan="5" class="doc-sub">ยังไม่มีเอกสาร</td></tr>`;
+  bindRowActions(tbody); // ชื่อเอกสารที่แนบ PDF กดเปิดดูได้จากแดชบอร์ดเหมือนในหน้าเอกสาร
 }
 
 /* =========================================================
@@ -1196,7 +1236,7 @@ function isOrderCategory(id) {
 function orderCategoryId() {
   return allCategories.find((c) => categoryKey(c.name) === categoryKey(ORDER_CATEGORY))?.id || "";
 }
-/* ฟอร์มคำสั่ง: เปิดจากปุ่มเพิ่มคำสั่งหรือแก้ไขคำสั่ง (หมวดหมู่ล็อกไว้ที่คำสั่ง) หรือเลือกหมวดคำสั่งในฟอร์มเพิ่มเอกสาร */
+/* ฟอร์มคำสั่ง: เปิดจากปุ่มเพิ่มคำสั่งในกล่องคำสั่งหรือแก้ไขคำสั่ง (หมวดหมู่ล็อกไว้ที่คำสั่ง) หรือเลือกหมวดคำสั่งในฟอร์มเพิ่มเอกสาร */
 function docFormIsOrder() {
   const category = document.getElementById("docCategory");
   return "locked" in category.dataset || isOrderCategory(category.value);
@@ -1634,9 +1674,8 @@ async function handleFile(file) {
    ========================================================= */
 document.getElementById("addDocBtn").addEventListener("click", () => openDocModal());
 document.querySelectorAll("[data-open='addDocBtn']").forEach((b) => b.addEventListener("click", () => openDocModal()));
-document.getElementById("addOrderBtn").addEventListener("click", () => openDocModal(null, { order: true }));
 
-/* ฟอร์มเดียวใช้ทั้งเอกสารและคำสั่ง ปุ่มเพิ่มคำสั่ง ({ order: true }) และการแก้ไขรายการในหมวดคำสั่ง
+/* ฟอร์มเดียวใช้ทั้งเอกสารและคำสั่ง ปุ่มเพิ่มคำสั่งในกล่องคำสั่ง ({ order: true }) และการแก้ไขรายการในหมวดคำสั่ง
    เปิดเป็นฟอร์มคำสั่งที่ล็อกหมวดหมู่ไว้ที่คำสั่ง ปุ่มเพิ่มในกล่องหมวด ({ categoryId }) เลือกหมวดนั้นไว้ให้ แต่ยังเปลี่ยนได้ */
 function openDocModal(doc = null, { order = false, categoryId = "" } = {}) {
   fileReadVersion++;
@@ -2064,12 +2103,12 @@ function groupColumns(id) {
 }
 function docRow(d, receive) {
   // เอกสารที่บันทึกโดยไม่แนบ PDF ไม่มีอะไรให้ดูหรือดาวน์โหลด ปิดปุ่มไว้แทนการกดแล้วแจ้งว่าไฟล์เสีย
-  const fileButton = (label) => d.storageKey || d.fileData ? `title="${label}"` : `title="${label} (ไม่มีไฟล์ PDF)" disabled`;
+  const fileButton = (label) => hasAttachment(d) ? `title="${label}"` : `title="${label} (ไม่มีไฟล์ PDF)" disabled`;
   return `
     <tr>
       ${receive ? `<td class="mono">${escapeHtml(d.receiveNumber || "-")}</td>` : ""}
       <td class="mono">${escapeHtml(d.docNumber || "-")}</td>
-      <td class="doc-title-cell">${urgencyBadge(d.urgency)}${escapeHtml(d.title || "-")}${d.description ? `<div class="doc-sub">${escapeHtml(truncate(d.description, 60))}</div>` : ""}</td>
+      <td class="doc-title-cell">${docTitle(d)}</td>
       <td>${escapeHtml(d.agency || "-")}</td>
       <td class="mono">${formatDate(d.date)}</td>
       <td class="mono">${d.fileSize ? formatFileSize(d.fileSize) : "-"}</td>
@@ -2162,7 +2201,7 @@ function renderDocsTable() {
 
 /* กล่องถูกสร้างใหม่ทุกครั้งที่ข้อมูล การเรียง หรือหน้าเปลี่ยน จึงจำปุ่มที่โฟกัสอยู่ แล้วโฟกัสปุ่มเดียวกันในกล่องใหม่
    คนที่ใช้คีย์บอร์ดกดเรียงหรือเปลี่ยนหน้าแล้วจะไม่หลุดกลับไปต้นหน้า */
-const GROUP_CONTROLS = ["data-sort", "data-add-to", "data-preview", "data-download", "data-edit", "data-delete"];
+const GROUP_CONTROLS = ["data-sort", "data-add-to", "data-view-file", "data-preview", "data-download", "data-edit", "data-delete"];
 function focusedGroupControl(container) {
   const el = document.activeElement;
   const group = el?.closest?.("[data-group]");
@@ -2215,6 +2254,7 @@ document.getElementById("docGroups").addEventListener("keydown", (e) => {
 
 function bindRowActions(scope) {
   scope.querySelectorAll("[data-preview]").forEach((b) => b.addEventListener("click", () => previewDoc(findDoc(b.dataset.preview))));
+  scope.querySelectorAll("[data-view-file]").forEach((b) => b.addEventListener("click", () => previewDoc(findDoc(b.dataset.viewFile))));
   scope.querySelectorAll("[data-download]").forEach((b) => b.addEventListener("click", () => downloadDoc(findDoc(b.dataset.download))));
   scope.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => openDocModal(findDoc(b.dataset.edit))));
   scope.querySelectorAll("[data-delete]").forEach((b) => b.addEventListener("click", () => softDeleteDoc(b.dataset.delete)));
@@ -2241,7 +2281,7 @@ function renderTrash() {
   const emptyEl = document.getElementById("trashEmpty");
   emptyEl.hidden = allTrash.length !== 0;
   document.getElementById("trashTable").style.display = allTrash.length === 0 ? "none" : "table";
-  document.getElementById("navCountTrash").textContent = allTrash.length;
+  renderTrashBadge();
 
   // ที่เพิ่งลบอยู่บนสุด (Firestore ส่งมาเรียงตาม id ซึ่งเท่ากับไม่เรียงเลย)
   const byDeletedAt = [...allTrash].sort((a, b) => (Number(b.deletedAt) || 0) - (Number(a.deletedAt) || 0));
@@ -2274,6 +2314,29 @@ function statusStamp(status) {
 function urgencyBadge(urgency) {
   if (!Object.hasOwn(URGENCY_LABEL, urgency)) return "";
   return `<span class="urgency urgency-${urgency}">${URGENCY_LABEL[urgency]}</span>`;
+}
+/* ไอคอนไฟล์หน้าชื่อเอกสาร: แผ่น PDF สีแดง ฉบับที่ยังไม่แนบไฟล์เป็นแผ่นสีเทามีเส้นแทนตัวหนังสือ */
+function fileIcon(hasFile) {
+  const sheet = `<path class="sheet" d="M5.5 1H19l10 10v20a4 4 0 0 1-4 4H5.5a4 4 0 0 1-4-4V5a4 4 0 0 1 4-4z"/><path class="fold" d="M19 1l10 10h-6a4 4 0 0 1-4-4V1z"/>`;
+  return hasFile
+    ? `<svg class="doc-ico is-pdf" viewBox="0 0 30 36" aria-hidden="true">${sheet}<text x="15.25" y="28.5" text-anchor="middle">PDF</text></svg>`
+    : `<svg class="doc-ico is-none" viewBox="0 0 30 36" aria-hidden="true">${sheet}<path class="lines" d="M7.5 20h12M7.5 25.5h8"/></svg>`;
+}
+/* เอกสารมีไฟล์ให้เปิดดูไหม: ไฟล์ใน R2 (storageKey) หรือ PDF แบบเดิมที่เก็บเป็น base64 (fileData) */
+function hasAttachment(d) {
+  return Boolean(d?.storageKey || d?.fileData);
+}
+/* ชื่อเอกสารมีไอคอนไฟล์อยู่หน้า และบรรทัดเล็กใต้ชื่อเป็นหมายเหตุกับชื่อไฟล์ (ยาวเกินตัดด้วย … ชี้ค้างเห็นข้อความเต็ม)
+   ฉบับที่แนบ PDF ทั้งไอคอนและชื่อเป็นปุ่มเปิดดูไฟล์ (ทำงานเหมือนปุ่มรูปตา) ฉบับที่ไม่มีไฟล์กดไม่ได้ */
+function docTitle(d) {
+  const hasFile = hasAttachment(d);
+  const fileName = hasFile ? d.fileName : "";
+  const sub = [d.description ? truncate(d.description, 60) : "", fileName].filter(Boolean).join(" · ");
+  const full = [d.description ? truncate(d.description, 300) : "", fileName].filter(Boolean).join(" · ");
+  const inner = `${fileIcon(hasFile)}<span class="doc-open-text"><span class="doc-open-title">${urgencyBadge(d.urgency)}${escapeHtml(d.title || "-")}</span>${sub ? `<span class="doc-sub" title="${escapeHtml(full)}">${escapeHtml(sub)}</span>` : ""}</span>`;
+  return hasFile
+    ? `<button class="doc-open" data-view-file="${escapeHtml(d.id)}">${inner}</button>`
+    : `<div class="doc-open">${inner}</div>`;
 }
 /* วันที่ตามเวลาเครื่อง (YYYY-MM-DD) ไม่ใช่ตามเวลา UTC ที่อาจยังเป็นเมื่อวาน */
 function localIsoDate(date = new Date()) {

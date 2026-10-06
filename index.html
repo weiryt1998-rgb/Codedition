@@ -198,10 +198,6 @@
       </div>
 
       <div class="topbar-actions">
-        <button class="btn btn-primary btn-sm hide-sm" id="addOrderBtn">
-          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-          เพิ่มคำสั่ง
-        </button>
         <button class="btn btn-primary btn-sm hide-sm" data-open="addDocBtn">
           <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
           เพิ่มเอกสาร
@@ -227,6 +223,7 @@
       <section id="view-dashboard" class="view is-active">
 
         <div class="hero">
+          <span class="hero-light" aria-hidden="true"></span>
           <div class="hero-copy">
             <span class="pill">ภาพรวมระบบ</span>
             <h2 class="hero-title">
@@ -251,7 +248,7 @@
         </div>
 
         <div class="stat-grid">
-          <article class="stat-card" data-tone="blue">
+          <article class="stat-card" data-tone="blue" data-tilt>
             <div class="stat-top">
               <span class="stat-icon">
                 <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/></svg>
@@ -263,7 +260,7 @@
             <div class="meter"><span id="meterTotal" style="width:100%"></span></div>
           </article>
 
-          <article class="stat-card" data-tone="green">
+          <article class="stat-card" data-tone="green" data-tilt>
             <div class="stat-top">
               <span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span>
               <span class="stat-chip" id="chipApproved">0%</span>
@@ -273,7 +270,7 @@
             <div class="meter"><span id="meterApproved" style="width:0%"></span></div>
           </article>
 
-          <article class="stat-card" data-tone="gold">
+          <article class="stat-card" data-tone="gold" data-tilt>
             <div class="stat-top">
               <span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 3M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/></svg></span>
               <span class="stat-chip" id="chipPending">0%</span>
@@ -283,7 +280,7 @@
             <div class="meter"><span id="meterPending" style="width:0%"></span></div>
           </article>
 
-          <article class="stat-card" data-tone="red">
+          <article class="stat-card" data-tone="red" data-tilt>
             <div class="stat-top">
               <span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></span>
               <span class="stat-chip" id="chipRejected">0%</span>

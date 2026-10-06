@@ -40,6 +40,10 @@
   --warning-bg: #FBF0DA;
   --danger: #BE3535;
   --danger-bg: #FBE6E6;
+  /* สีสถานะเป็นเลข r, g, b ไว้ทำแสงเรืองโปร่งแสง script.js ตั้งค่าเดียวกันนี้จากสีสถานะของแต่ละโหมด */
+  --success-rgb: 23, 128, 90;
+  --warning-rgb: 181, 119, 26;
+  --danger-rgb: 190, 53, 53;
 
   /* gradients */
   --grad-primary: linear-gradient(135deg, #8960B7 0%, #7851A9 45%, #533273 100%);
@@ -61,6 +65,11 @@
   --shadow: 0 18px 40px -24px rgba(var(--primary-rgb), .45);
   --shadow-lg: 0 40px 80px -40px rgba(49, 24, 74, .55);
   --ring: 0 0 0 1px var(--border);
+  /* สามมิติ: แสงที่ขอบบน เงาลึกใต้ปุ่มและการ์ด (เป็นเลข r, g, b) และแสงจาง ๆ บนหัวกล่อง */
+  --bevel-light: rgba(255, 255, 255, .85);
+  --depth-rgb: 48, 32, 63;
+  --panel-sheen: rgba(var(--primary-rgb), .05);
+  --btn-gloss: rgba(255, 255, 255, .26);
 
   --font-display: "Sarabun", system-ui, sans-serif;
   --font-body: "Sarabun", system-ui, sans-serif;
@@ -102,6 +111,9 @@
   --warning-bg: #33270F;
   --danger: #EB7A7A;
   --danger-bg: #351616;
+  --success-rgb: 70, 198, 141;
+  --warning-rgb: 231, 185, 83;
+  --danger-rgb: 235, 122, 122;
 
   --grad-primary: linear-gradient(135deg, #403057 0%, #302440 55%, #20182D 100%);
   --grad-start: #403057;
@@ -113,6 +125,10 @@
   --shadow-sm: 0 6px 18px -10px rgba(0, 0, 0, .7);
   --shadow: 0 22px 48px -28px rgba(0, 0, 0, .85);
   --shadow-lg: 0 48px 90px -45px rgba(0, 0, 0, .9);
+  --bevel-light: rgba(255, 255, 255, .08);
+  --depth-rgb: 0, 0, 0;
+  --panel-sheen: rgba(255, 255, 255, .035);
+  --btn-gloss: rgba(255, 255, 255, .12);
 
   color-scheme: dark;
 }
@@ -245,12 +261,18 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 }
 
 /* =========================== Buttons =========================== */
+/* ปุ่มนูนสามมิติ: ขอบบนรับแสง ขอบล่างเป็นเงา ครึ่งบนมีเงามัน (::before) และเงาตกกระทบเป็นสีของปุ่มจึงดูเรืองแสง
+   ชี้แล้วลอยขึ้นเรืองแสงชัดขึ้นพร้อมประกายวิ่งผ่าน (::after) กดแล้วยุบลง */
 .btn {
-  position: relative; overflow: hidden;
+  position: relative; overflow: hidden; isolation: isolate;
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   padding: 11px 20px; border-radius: 999px; border: 1px solid transparent;
   font-size: 14.5px; font-weight: 600; cursor: pointer; white-space: nowrap; color: var(--text);
-  transition: transform .16s var(--ease), box-shadow .2s var(--ease), background .2s var(--ease), border-color .2s var(--ease);
+  transition: transform .18s var(--ease), box-shadow .25s var(--ease), background .2s var(--ease), border-color .2s var(--ease), filter .2s var(--ease);
+}
+.btn::before {
+  content: ""; position: absolute; inset: 1px 1px 50%; z-index: -1; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(180deg, var(--btn-gloss), rgba(255, 255, 255, 0));
 }
 .btn svg { width: 16px; height: 16px; stroke-width: 2.2; }
 .btn-sm { padding: 8px 15px; font-size: 13.5px; }
@@ -259,33 +281,63 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
   transform: translateX(-120%); transition: transform .6s var(--ease);
 }
 .btn:hover::after { transform: translateX(120%); }
-.btn:active { transform: translateY(1px) scale(.99); }
 
 .btn-primary {
   background: var(--grad-primary); color: var(--on-primary);
-  box-shadow: 0 10px 24px -12px rgba(var(--primary-rgb), .9), inset 0 1px 0 rgba(255,255,255,.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), inset 0 -2px 0 rgba(0, 0, 0, .16),
+    0 1px 2px rgba(var(--depth-rgb), .2), 0 10px 22px -10px rgba(var(--primary-rgb), .85);
 }
-.btn-primary:hover { box-shadow: 0 16px 30px -14px rgba(var(--primary-rgb), 1), inset 0 1px 0 rgba(255,255,255,.24); transform: translateY(-1px); }
+.btn-primary:hover {
+  transform: translateY(-2px); filter: brightness(1.06) saturate(1.05);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .42), inset 0 -2px 0 rgba(0, 0, 0, .16),
+    0 3px 6px rgba(var(--depth-rgb), .16), 0 16px 32px -12px rgba(var(--primary-rgb), 1), 0 0 0 4px rgba(var(--primary-rgb), .14);
+}
 
-.btn-ghost { background: var(--surface); color: var(--text); border-color: var(--border); box-shadow: var(--shadow-xs); }
-.btn-ghost:hover { background: var(--surface-2); border-color: var(--primary-400); color: var(--primary); }
+.btn-ghost {
+  background: linear-gradient(180deg, var(--surface), var(--surface-2)); color: var(--text); border-color: var(--border);
+  box-shadow: inset 0 1px 0 var(--bevel-light), 0 1px 2px rgba(var(--depth-rgb), .08), 0 6px 14px -10px rgba(var(--primary-rgb), .45);
+}
+.btn-ghost:hover {
+  transform: translateY(-1px); border-color: var(--primary-400); color: var(--primary);
+  background: linear-gradient(180deg, var(--surface), var(--primary-100));
+  box-shadow: inset 0 1px 0 var(--bevel-light), 0 2px 4px rgba(var(--depth-rgb), .08),
+    0 12px 24px -12px rgba(var(--primary-rgb), .6), 0 0 0 4px rgba(var(--primary-rgb), .1);
+}
 
-.btn-danger { background: linear-gradient(135deg, #D14A4A, #A82C2C); color: #fff; box-shadow: 0 10px 22px -14px rgba(190, 53, 53, .9); }
-.btn-danger:hover { transform: translateY(-1px); }
+.btn-danger {
+  background: linear-gradient(135deg, #D14A4A, #A82C2C); color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), inset 0 -2px 0 rgba(0, 0, 0, .18),
+    0 1px 2px rgba(var(--depth-rgb), .2), 0 10px 22px -12px rgba(190, 53, 53, .9);
+}
+.btn-danger:hover {
+  transform: translateY(-2px); filter: brightness(1.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4), inset 0 -2px 0 rgba(0, 0, 0, .18),
+    0 3px 6px rgba(var(--depth-rgb), .16), 0 16px 30px -12px rgba(190, 53, 53, 1), 0 0 0 4px rgba(190, 53, 53, .14);
+}
+/* กดแล้วยุบลง เงาเข้าไปข้างใน ต้องชนะสถานะชี้ของปุ่มทุกแบบ รวมปุ่มบนแบนเนอร์และแถบบนสุด
+   ซึ่งเขียนไว้ทีหลังด้วยความเจาะจง (0,3,0) จึงใช้ .btn.btn:hover:active (0,4,0) */
+.btn:active, .btn.btn:hover:active {
+  transform: translateY(1px) scale(.99); filter: none;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, .22), 0 3px 8px -5px rgba(var(--depth-rgb), .45);
+}
 
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 40px; height: 40px; border-radius: 14px; border: 1px solid var(--border);
   background: var(--surface); color: var(--text-muted); cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--bevel-light), 0 1px 2px rgba(var(--depth-rgb), .06);
   transition: all .18s var(--ease);
 }
 .icon-btn svg { width: 18px; height: 18px; }
-.icon-btn:hover:not(:disabled) { background: var(--primary-100); color: var(--primary); border-color: var(--primary-400); transform: translateY(-1px); }
+.icon-btn:hover:not(:disabled) {
+  background: var(--primary-100); color: var(--primary); border-color: var(--primary-400); transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 var(--bevel-light), 0 6px 14px -8px rgba(var(--primary-rgb), .7), 0 0 0 3px rgba(var(--primary-rgb), .12);
+}
 .link-btn {
   background: none; border: none; color: var(--primary); font-weight: 600; cursor: pointer; font-size: 13.5px;
-  padding: 6px 10px; border-radius: 999px; transition: background .18s var(--ease);
+  padding: 6px 10px; border-radius: 999px; transition: background .18s var(--ease), box-shadow .18s var(--ease);
 }
-.link-btn:hover { background: var(--primary-100); }
+.link-btn:hover { background: var(--primary-100); box-shadow: inset 0 1px 0 var(--bevel-light), 0 6px 16px -8px rgba(var(--primary-rgb), .6); }
 
 /* theme toggle: sun ⇄ moon */
 .theme-btn { position: relative; }
@@ -338,61 +390,63 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
   padding: 11px 12px; border-radius: 14px; cursor: pointer; font-size: 17.4px; font-weight: 500;
   transition: color .18s var(--ease), background .18s var(--ease);
 }
-.nav-item::before {
-  content: ""; position: absolute; left: 0; top: 50%; width: 3px; height: 0; border-radius: 999px;
-  background: var(--grad-accent); transform: translateY(-50%); transition: height .25s var(--ease);
-}
-/* ไอคอนเมนูทำเป็นปุ่มนูน: ไล่เฉดจากมุมบนซ้าย + ขอบสว่างด้านบนและเงาจมด้านล่าง
-   ทำให้ดูเป็นวัตถุมีความหนา ไม่ใช่สี่เหลี่ยมแบน ๆ */
+/* ไอคอนเมนูเป็นเม็ดนูนไล่สีม่วงอมฟ้า ไอคอนสีขาว: เงามันครึ่งบน ขอบบนรับแสง ขอบล่างจม
+   และเงาตกกระทบสีเดียวกับเม็ด ทำให้ดูมีความหนาและเรืองแสงบนแถบม่วงทุกเฉดที่ผู้ใช้ปรับได้ */
 .nav-ico {
   display: grid; place-items: center; width: 38.4px; height: 38.4px; border-radius: 13.2px;
-  background: linear-gradient(150deg, rgba(255, 255, 255, .15), rgba(255, 255, 255, .03));
-  border: 1px solid rgba(255, 255, 255, .1);
+  color: #FFFFFF;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .34), rgba(255, 255, 255, 0) 52%),
+    linear-gradient(145deg, #A397FF 0%, #7F70F5 48%, #5F4FDB 100%);
+  border: 1px solid rgba(255, 255, 255, .3);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, .2),
-    inset 0 -2px 4px rgba(23, 10, 36, .38),
-    0 4px 10px -7px rgba(0, 0, 0, .9);
+    inset 0 1px 0 rgba(255, 255, 255, .55),
+    inset 0 -2px 4px rgba(40, 22, 120, .35),
+    0 2px 3px rgba(20, 8, 33, .22),
+    0 8px 16px -8px rgba(64, 44, 190, .8);
   transition: background .2s var(--ease), box-shadow .2s var(--ease),
-    transform .2s var(--ease), color .2s var(--ease), border-color .2s var(--ease);
+    transform .2s var(--ease), filter .2s var(--ease), border-color .2s var(--ease);
 }
 .nav-ico svg {
-  width: 20.4px; height: 20.4px; stroke-width: 1.9;
-  filter: drop-shadow(0 1px 1px rgba(20, 8, 33, .5));
+  width: 20.4px; height: 20.4px; stroke-width: 2;
+  filter: drop-shadow(0 1px 1px rgba(36, 20, 110, .5));
 }
 .nav-label { flex: 1; }
+/* ป้ายตัวเลขเป็นเม็ดขาว ตัวเลขรายการที่ลบเป็นสีแดงเมื่อมีเอกสารค้างในถังขยะ (.is-alert จาก script.js) */
 .nav-badge {
-  font-size: 13.8px; padding: 2px 8px; border-radius: 999px; font-weight: 600;
-  background: rgba(255, 255, 255, .1); color: var(--on-primary-muted);
+  font-size: 13.8px; padding: 2px 9px; border-radius: 999px; font-weight: 600;
+  background: rgba(255, 255, 255, .94); color: #3B2A55;
+  box-shadow: inset 0 -1px 0 rgba(48, 32, 63, .08), 0 2px 6px -2px rgba(20, 8, 33, .35);
 }
+.nav-badge.is-alert { background: var(--danger-bg); color: var(--danger); }
 .nav-item:hover { background: rgba(255, 255, 255, .07); color: var(--on-primary); }
 .nav-item:hover .nav-ico {
-  transform: translateY(-1px);
-  background: linear-gradient(150deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, .06));
-  border-color: rgba(255, 255, 255, .18);
+  transform: translateY(-2px); filter: brightness(1.08);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, .28),
-    inset 0 -2px 4px rgba(23, 10, 36, .32),
-    0 7px 14px -8px rgba(0, 0, 0, .95);
+    inset 0 1px 0 rgba(255, 255, 255, .6),
+    inset 0 -2px 4px rgba(40, 22, 120, .3),
+    0 3px 5px rgba(20, 8, 33, .2),
+    0 12px 22px -8px rgba(64, 44, 190, .9);
 }
-.nav-item.is-active {
-  background: rgba(255, 255, 255, .13); color: var(--on-primary);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12);
+/* เมนูที่เลือกอยู่เป็นแผ่นลอย (ขาวในโหมดสว่าง) ตัวหนังสือเข้ม และเม็ดไอคอนเข้มขึ้นพร้อมวงแสงรอบ
+   ตัวหนังสือหนาเท่าเมนูอื่น ตัวหนากว่านี้ทำให้ "เอกสารทั้งหมด" ตกบรรทัดเมื่อมีตัวเลขสองหลัก */
+.nav-item.is-active, .nav-item.is-active:hover {
+  background: var(--surface); color: var(--text);
+  box-shadow: inset 0 1px 0 var(--bevel-light), 0 2px 6px rgba(20, 8, 33, .12), 0 14px 28px -16px rgba(20, 8, 33, .6);
 }
-.nav-item.is-active::before { height: 22px; }
-/* เมนูที่เลือกอยู่ยกเด่นขึ้นมาอีกชั้น ด้วยขอบสว่างและเงาสีเน้นใต้ปุ่ม */
 .nav-item.is-active .nav-ico {
-  background: var(--grad-accent); color: #38224E;
-  border-color: color-mix(in srgb, var(--accent) 60%, #FFFFFF);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .3), rgba(255, 255, 255, 0) 52%),
+    linear-gradient(145deg, #8B7CFA 0%, #5A48E0 55%, #3F2FB8 100%);
+  border-color: rgba(255, 255, 255, .35);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, .62),
-    inset 0 -2px 5px rgba(81, 39, 115, .3),
-    0 8px 16px -8px color-mix(in srgb, var(--accent) 95%, transparent);
+    inset 0 1px 0 rgba(255, 255, 255, .5),
+    inset 0 -2px 4px rgba(30, 16, 100, .4),
+    0 0 0 3px rgba(127, 112, 245, .22),
+    0 10px 20px -8px rgba(63, 47, 184, .85);
 }
-.nav-item.is-active .nav-ico svg {
-  stroke-width: 2;
-  filter: drop-shadow(0 1px 0 rgba(248, 241, 255, .55));
-}
-.nav-item.is-active .nav-badge { background: rgba(255, 255, 255, .2); color: var(--on-primary); }
+.nav-item.is-active .nav-badge:not(.is-alert) { background: var(--primary-100); color: var(--primary); }
+.nav-item.is-active .nav-badge { box-shadow: inset 0 1px 0 var(--bevel-light); }
 
 .side-foot { display: flex; flex-direction: column; gap: 12px; padding-top: 78px; }
 /* ป้ายชื่อเป็นบัตรน้ำตาลขอบทอง มีต้นทานตะวันขึ้นอยู่บนป้าย
@@ -550,7 +604,21 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
   display: flex; align-items: center; justify-content: center; gap: 12px;
   border-radius: var(--radius-lg); padding: 34px 220px 36px; margin-bottom: 22px;
   background: var(--grad-primary); color: var(--on-primary);
-  box-shadow: var(--shadow);
+  /* ขอบบนรับแสง ขอบล่างเข้ม และเงาฟุ้งสีม่วงใต้แบนเนอร์ ให้ดูเป็นแผ่นหนาลอยอยู่ */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), inset 0 -1px 0 rgba(0, 0, 0, .2),
+    0 2px 6px rgba(var(--depth-rgb), .12), 0 28px 56px -28px rgba(var(--primary-rgb), .75);
+}
+/* แสงนวลสองดวง (ขาวกับทอง) ลอยช้า ๆ อยู่ใต้เนื้อหาแบนเนอร์ */
+.hero-light {
+  position: absolute; inset: -40%; pointer-events: none;
+  background:
+    radial-gradient(20% 28% at 32% 42%, rgba(255, 255, 255, .16), rgba(255, 255, 255, 0) 70%),
+    radial-gradient(16% 24% at 68% 62%, rgba(255, 214, 140, .14), rgba(255, 214, 140, 0) 70%);
+  animation: heroLight 18s ease-in-out infinite alternate;
+}
+@keyframes heroLight {
+  from { transform: translate3d(-7%, -4%, 0) rotate(0deg); }
+  to { transform: translate3d(7%, 5%, 0) rotate(10deg); }
 }
 .hero::before {
   content: ""; position: absolute; inset: 0;
@@ -584,10 +652,26 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 }
 .hero-copy p { color: var(--on-primary-muted); font-size: 14.5px; line-height: 1.7; }
 .hero-actions { display: flex; justify-content: center; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
-/* ปุ่มม่วงจะกลืนไปกับพื้นม่วง ปุ่มบนแบนเนอร์และแถบบนสุดจึงเป็นปุ่มสีม่วงอ่อน */
-.hero-actions .btn-primary, .topbar .btn-primary { background: var(--grad-accent); color: #38224E; box-shadow: 0 12px 26px -14px color-mix(in srgb, var(--accent) 90%, transparent); }
-.hero-actions .btn-ghost { background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .18); color: var(--on-primary); }
-.hero-actions .btn-ghost:hover { background: rgba(255, 255, 255, .16); color: var(--on-primary); }
+/* ปุ่มม่วงจะกลืนไปกับพื้นม่วง ปุ่มบนแบนเนอร์และแถบบนสุดจึงเป็นปุ่มสีม่วงอ่อน นูนแบบเดียวกับปุ่มอื่น
+   ชี้แล้วเรืองแสงขาวรอบปุ่ม ปุ่มรองบนแบนเนอร์เป็นกระจกฝ้า */
+.hero-actions .btn-primary, .topbar .btn-primary {
+  background: var(--grad-accent); color: #38224E; --btn-gloss: rgba(255, 255, 255, .55);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), inset 0 -2px 0 rgba(56, 34, 78, .12),
+    0 1px 2px rgba(20, 8, 33, .22), 0 10px 24px -12px rgba(20, 8, 33, .6);
+}
+.hero-actions .btn-primary:hover, .topbar .btn-primary:hover {
+  box-shadow: inset 0 1px 0 #FFFFFF, inset 0 -2px 0 rgba(56, 34, 78, .12), 0 2px 4px rgba(20, 8, 33, .22),
+    0 14px 30px -12px rgba(20, 8, 33, .65), 0 0 22px rgba(255, 255, 255, .32), 0 0 0 4px rgba(255, 255, 255, .16);
+}
+.hero-actions .btn-ghost {
+  background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .22); color: var(--on-primary);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); --btn-gloss: rgba(255, 255, 255, .14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 10px 24px -14px rgba(20, 8, 33, .6);
+}
+.hero-actions .btn-ghost:hover {
+  background: rgba(255, 255, 255, .16); border-color: rgba(255, 255, 255, .4); color: var(--on-primary);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 14px 28px -14px rgba(20, 8, 33, .65), 0 0 20px rgba(255, 255, 255, .18);
+}
 .hero-art {
   position: absolute; z-index: 1; left: 34px; top: 50%; transform: translateY(-50%);
   display: grid; place-items: center; width: 170px; height: 170px; color: var(--accent);
@@ -597,49 +681,105 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 .hero-art svg { display: block; width: 100%; height: 100%; animation: spin 60s linear infinite; }
 .hero-art img {
   display: block; width: 84%; height: 84%; border-radius: 50%;
-  box-shadow: 0 0 0 5px rgba(255, 255, 255, .12), 0 14px 30px -14px rgba(20, 8, 33, .8);
+  /* วงแสงทองนวลรอบตรา */
+  box-shadow: 0 0 0 5px rgba(255, 255, 255, .12), 0 0 34px 4px rgba(255, 222, 150, .3), 0 14px 30px -14px rgba(20, 8, 33, .8);
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* =========================== Stat cards =========================== */
+/* การ์ดสามมิติ: ผิวไล่แสงสีของการ์ดจากด้านบน ขอบบนรับแสง เงาใกล้กับเงาฟุ้งสีของการ์ดทำให้ดูลอยและเรืองแสง
+   บนคอมพิวเตอร์ การ์ดเอียงเข้าหาเมาส์ (--rx --ry จาก script.js) และมีแสงสะท้อนตามจุดที่ชี้ (.fx-glare ที่ --mx --my)
+   สีของแต่ละการ์ดอยู่ใน --tone-rgb (เลข r, g, b ตรงกับ --primary --success --warning --danger ของแต่ละโหมด) */
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 22px; }
 .stat-card {
+  --tone-rgb: var(--primary-rgb);
   position: relative; overflow: hidden;
-  background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(var(--tone-rgb), .07), rgba(var(--tone-rgb), 0) 55%), var(--surface);
+  border: 1px solid var(--border-soft); border-radius: var(--radius);
   padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 5px;
-  box-shadow: var(--shadow-sm);
-  transition: transform .22s var(--ease), box-shadow .22s var(--ease), border-color .22s var(--ease);
+  box-shadow: inset 0 1px 0 var(--bevel-light), 0 1px 2px rgba(var(--depth-rgb), .06),
+    0 10px 22px -14px rgba(var(--tone-rgb), .45), 0 22px 44px -30px rgba(var(--depth-rgb), .4);
+  transform: perspective(900px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) translateY(var(--lift, 0px));
+  transition: transform .5s var(--ease), box-shadow .3s var(--ease), border-color .3s var(--ease);
 }
+/* แถบแสงสีของการ์ดที่ขอบบน */
 .stat-card::before {
-  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px;
-  background: var(--tone); opacity: .9;
+  content: ""; position: absolute; left: 12%; right: 12%; top: 0; height: 2px; border-radius: 0 0 4px 4px;
+  background: linear-gradient(90deg, rgba(var(--tone-rgb), 0), rgb(var(--tone-rgb)), rgba(var(--tone-rgb), 0));
+  box-shadow: 0 0 14px 1px rgba(var(--tone-rgb), .65);
 }
 .stat-card::after {
   content: ""; position: absolute; right: -30px; top: -30px; width: 110px; height: 110px; border-radius: 50%;
   background: var(--tone); opacity: .07; transition: transform .4s var(--ease);
 }
-.stat-card:hover { transform: translateY(-4px); box-shadow: var(--shadow); border-color: var(--border); }
-.stat-card:hover::after { transform: scale(1.5); }
-.stat-card[data-tone="blue"]  { --tone: var(--primary); --tone-bg: var(--primary-100); }
-.stat-card[data-tone="green"] { --tone: var(--success); --tone-bg: var(--success-bg); }
-.stat-card[data-tone="gold"]  { --tone: var(--warning); --tone-bg: var(--warning-bg); }
-.stat-card[data-tone="red"]   { --tone: var(--danger);  --tone-bg: var(--danger-bg); }
+@media (hover: hover) {
+  /* ระหว่างชี้ การเอียงตามเมาส์ต้องไว ออกแล้วค่อย ๆ คืนตัว */
+  .stat-card:hover {
+    --lift: -5px;
+    transition: transform .14s ease-out, box-shadow .3s var(--ease), border-color .3s var(--ease);
+    border-color: rgba(var(--tone-rgb), .35);
+    box-shadow: inset 0 1px 0 var(--bevel-light), 0 2px 4px rgba(var(--depth-rgb), .06),
+      0 20px 40px -16px rgba(var(--tone-rgb), .55), 0 0 0 1px rgba(var(--tone-rgb), .1), 0 34px 64px -34px rgba(var(--depth-rgb), .5);
+  }
+  .stat-card:hover::after { transform: scale(1.5); }
+  .stat-card:hover .fx-glare { opacity: 1; }
+}
+/* แสงสะท้อนตามเมาส์: แสงสีของการ์ดกว้าง ๆ กับจุดแสงขาวตรงกลาง อยู่ใต้ตัวหนังสือ */
+.fx-glare {
+  position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0;
+  background:
+    radial-gradient(150px circle at var(--mx, 50%) var(--my, 0%), rgba(255, 255, 255, .55), rgba(255, 255, 255, 0) 70%),
+    radial-gradient(280px circle at var(--mx, 50%) var(--my, 0%), rgba(var(--tone-rgb), .16), rgba(var(--tone-rgb), 0) 70%);
+  transition: opacity .35s var(--ease);
+}
+[data-theme="dark"] .fx-glare {
+  background:
+    radial-gradient(150px circle at var(--mx, 50%) var(--my, 0%), rgba(255, 255, 255, .1), rgba(255, 255, 255, 0) 70%),
+    radial-gradient(280px circle at var(--mx, 50%) var(--my, 0%), rgba(var(--tone-rgb), .22), rgba(var(--tone-rgb), 0) 70%);
+}
+.stat-card[data-tone="blue"]  { --tone: var(--primary); --tone-bg: var(--primary-100); --tone-rgb: var(--primary-rgb); }
+.stat-card[data-tone="green"] { --tone: var(--success); --tone-bg: var(--success-bg); --tone-rgb: var(--success-rgb); }
+.stat-card[data-tone="gold"]  { --tone: var(--warning); --tone-bg: var(--warning-bg); --tone-rgb: var(--warning-rgb); }
+.stat-card[data-tone="red"]   { --tone: var(--danger);  --tone-bg: var(--danger-bg); --tone-rgb: var(--danger-rgb); }
+/* ส่วนในการ์ดไม่รับเมาส์ จุดที่ชี้จึงวัดบนตัวการ์ดเอง (offsetX/offsetY ใน script.js) */
+.stat-card[data-tilt] > * { pointer-events: none; }
 
 .stat-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; position: relative; z-index: 1; }
+/* ไอคอนเป็นเม็ดนูนมันวาวสีของการ์ด เงาด้านล่างเรืองแสงสีเดียวกัน */
 .stat-icon {
   width: 42px; height: 42px; border-radius: 13px; display: grid; place-items: center;
-  background: var(--tone-bg); color: var(--tone);
+  color: var(--surface);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .34), rgba(255, 255, 255, 0) 55%), rgb(var(--tone-rgb));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45), inset 0 -2px 4px rgba(0, 0, 0, .16), 0 8px 16px -8px rgba(var(--tone-rgb), .85);
 }
-.stat-icon svg { width: 20px; height: 20px; stroke-width: 2; }
+.stat-icon svg { width: 20px; height: 20px; stroke-width: 2.2; }
 .stat-chip {
   font-size: 11.5px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
   background: var(--tone-bg, var(--primary-100)); color: var(--tone, var(--primary)); font-family: var(--font-mono);
 }
+.stat-card .stat-chip { box-shadow: inset 0 1px 0 var(--bevel-light), 0 0 0 1px rgba(var(--tone-rgb), .14); }
 .stat-value { font-size: 30px; font-weight: 700; line-height: 1.1; position: relative; z-index: 1; }
+/* ตัวเลขนูน: เส้นแสงใต้ตัวอักษรกับเงาเรืองสีของการ์ด */
+.stat-card .stat-value { text-shadow: 0 1px 0 var(--bevel-light), 0 8px 18px rgba(var(--tone-rgb), .3); }
 .stat-label { font-size: 12.5px; color: var(--text-muted); font-weight: 600; position: relative; z-index: 1; }
 
 .meter { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; margin-top: 12px; position: relative; z-index: 1; }
 .meter span { display: block; height: 100%; border-radius: inherit; background: var(--tone, var(--primary)); transition: width .7s var(--ease); }
+/* แถบในการ์ดสถิติเป็นหลอดแสง: ร่องลึก แถบไล่สีเรืองแสง และประกายวิ่งผ่านเป็นระยะ */
+.stat-card .meter { height: 7px; overflow: visible; box-shadow: inset 0 1px 2px rgba(var(--depth-rgb), .16); }
+.stat-card .meter span {
+  position: relative; overflow: hidden;
+  background: linear-gradient(90deg, rgba(var(--tone-rgb), .6), rgb(var(--tone-rgb)));
+  box-shadow: 0 0 10px rgba(var(--tone-rgb), .55);
+}
+/* แถบ 0% กว้างศูนย์แต่เงาเรืองยังวาดเป็นจุดแสง ร่องไม่ได้ตัดขอบแล้ว จึงปิดเงา (.is-empty จาก renderStats) */
+.stat-card .meter span.is-empty { box-shadow: none; }
+.stat-card .meter span::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, .65), rgba(255, 255, 255, 0));
+  transform: translateX(-100%); animation: meterShine 3.6s ease-in-out infinite;
+}
+@keyframes meterShine { 0% { transform: translateX(-100%); } 55%, 100% { transform: translateX(100%); } }
 
 /* =========================== Panels & charts =========================== */
 .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 22px; }
@@ -660,6 +800,21 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
   font-size: 11px; font-weight: 600; padding: 5px 11px; border-radius: 999px;
   background: var(--primary-100); color: var(--primary);
 }
+/* กล่องกราฟและเอกสารล่าสุดในแดชบอร์ด: แสงจาง ๆ ที่หัวกล่อง ขอบบนรับแสง เงาฟุ้งสีม่วง
+   ชี้แล้วลอยขึ้นและเรืองแสง (ไม่เอียงตามเมาส์ จุดที่ชี้บนกราฟจะได้ตรง) */
+#view-dashboard .panel {
+  background: linear-gradient(180deg, var(--panel-sheen), rgba(255, 255, 255, 0) 140px), var(--surface);
+  box-shadow: inset 0 1px 0 var(--bevel-light), 0 1px 2px rgba(var(--depth-rgb), .05), 0 18px 40px -26px rgba(var(--primary-rgb), .55);
+  transition: transform .3s var(--ease), box-shadow .3s var(--ease), border-color .3s var(--ease);
+}
+@media (hover: hover) {
+  #view-dashboard .panel:hover {
+    transform: translateY(-3px); border-color: rgba(var(--primary-rgb), .25);
+    box-shadow: inset 0 1px 0 var(--bevel-light), 0 2px 4px rgba(var(--depth-rgb), .06),
+      0 28px 54px -28px rgba(var(--primary-rgb), .7), 0 0 0 1px rgba(var(--primary-rgb), .06);
+  }
+}
+#view-dashboard .panel-tag { box-shadow: inset 0 1px 0 var(--bevel-light), 0 4px 10px -6px rgba(var(--primary-rgb), .6); }
 /* Chart.js วัดขนาดจากกล่องที่ครอบ canvas จึงกำหนดความสูงที่กล่อง
    (ถ้าบังคับที่ canvas ตรง ๆ Chart.js จะวาดสูงกว่าที่แสดงจริง ภาพจะถูกบีบแนวตั้ง) */
 .chart-box { position: relative; height: 220px; }
@@ -710,8 +865,10 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 /* =========================== Table =========================== */
 .table-scroll { overflow-x: auto; }
 .doc-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.8px; }
+/* ช่องตารางเว้นข้างละ 12px กล่องหนังสือรับมีถึง 8 คอลัมน์ (มีเลขที่รับและไอคอนไฟล์)
+   ต้องพอดีจอโน้ตบุ๊ก 1280px โดยไม่ต้องเลื่อนตารางด้านข้าง */
 .doc-table th {
-  text-align: left; padding: 12px 14px; color: var(--text-faint); font-size: 11px; font-weight: 700;
+  text-align: left; padding: 12px; color: var(--text-faint); font-size: 11px; font-weight: 700;
   text-transform: uppercase; letter-spacing: .08em; white-space: nowrap;
   border-bottom: 1px solid var(--border); background: var(--surface-2);
   cursor: default; user-select: none; transition: color .18s var(--ease);
@@ -727,15 +884,37 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 .doc-table th.is-sorted-desc::after { content: "↓"; opacity: 1; color: var(--primary); }
 .doc-table th.col-actions, .doc-table td.col-actions { cursor: default; text-align: right; }
 .doc-table th.col-actions::after { content: none; }
-.doc-table td { padding: 14px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }
+.doc-table td { padding: 14px 12px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }
 .doc-table tbody tr { transition: background .16s var(--ease); }
 .doc-table tbody tr:hover { background: var(--surface-2); }
 .doc-table tbody tr:last-child td { border-bottom: none; }
-.doc-title-cell { font-weight: 600; max-width: 300px; }
+.doc-title-cell { font-weight: 600; max-width: 340px; }
 .doc-sub { color: var(--text-muted); font-size: 12px; font-weight: 400; margin-top: 2px; }
+/* ชื่อเอกสาร: ไอคอนไฟล์ ชื่อ และบรรทัดเล็ก (หมายเหตุ · ชื่อไฟล์) ฉบับที่แนบ PDF ทั้งก้อนเป็นปุ่มเปิดดู
+   ชี้แล้วชื่อเป็นสีหลัก ให้รู้ว่ากดได้ */
+/* max-width จำกัดความกว้างที่ตารางคำนวณจากชื่อยาว ๆ (max-width ที่ td เบราว์เซอร์ไม่ใช้ตอนจัดคอลัมน์) */
+.doc-open {
+  display: flex; align-items: center; gap: 12px; width: 100%; max-width: 320px; margin: 0; padding: 0;
+  border: 0; background: none; color: inherit; font: inherit; text-align: left;
+}
+button.doc-open { cursor: pointer; }
+.doc-open-text { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
+.doc-open-title { transition: color .18s var(--ease); }
+button.doc-open:hover .doc-open-title { color: var(--primary); }
+/* บรรทัดเล็กไม่นับความยาวของตัวเองตอนตารางคำนวณความกว้างคอลัมน์ (width: 0) แต่กางเต็มช่อง (min-width: 100%)
+   ยาวเกินจึงถูกตัดด้วย … แทนที่จะถ่างคอลัมน์ชื่อจนตารางล้นกล่อง */
+.doc-open .doc-sub { width: 0; min-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-ico { flex: none; width: 30px; height: 36px; stroke: none; }
+.doc-ico .sheet { fill: #E5484D; }
+.doc-ico .fold { fill: #F7A9AB; }
+.doc-ico text { fill: #FFFFFF; font-family: var(--font-body); font-size: 8.5px; font-weight: 700; letter-spacing: .04em; }
+.doc-ico.is-pdf { filter: drop-shadow(0 4px 6px rgba(229, 72, 77, .3)); }
+.doc-ico.is-none .sheet { fill: var(--surface-3); stroke: var(--border); stroke-width: 1; }
+.doc-ico.is-none .fold { fill: var(--border); }
+.doc-ico.is-none .lines { fill: none; stroke: var(--text-faint); stroke-width: 1.6; stroke-linecap: round; }
 .doc-table .mono { font-size: 12.5px; color: var(--text-muted); white-space: nowrap; }
 
-.row-actions { display: flex; gap: 6px; justify-content: flex-end; opacity: .55; transition: opacity .18s var(--ease); }
+.row-actions { display: flex; gap: 4px; justify-content: flex-end; opacity: .55; transition: opacity .18s var(--ease); }
 tr:hover .row-actions { opacity: 1; }
 .row-actions .icon-btn { width: 33px; height: 33px; border-radius: 10px; }
 .row-actions .icon-btn svg { width: 15px; height: 15px; }
@@ -800,11 +979,15 @@ tr:hover .row-actions { opacity: 1; }
   min-width: 36px; height: 36px; border-radius: 11px; border: 1px solid var(--border);
   background: var(--surface); color: var(--text-muted); cursor: pointer; font-size: 13px;
   font-family: var(--font-mono); transition: all .18s var(--ease);
+  box-shadow: inset 0 1px 0 var(--bevel-light), 0 1px 2px rgba(var(--depth-rgb), .06);
 }
-.pagination button:hover { border-color: var(--primary-400); color: var(--primary); }
+.pagination button:hover:not(:disabled) {
+  border-color: var(--primary-400); color: var(--primary);
+  box-shadow: inset 0 1px 0 var(--bevel-light), 0 6px 14px -8px rgba(var(--primary-rgb), .6);
+}
 .pagination button.is-active {
   background: var(--grad-primary); color: var(--on-primary); border-color: transparent;
-  box-shadow: 0 8px 18px -10px rgba(var(--primary-rgb), .9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), inset 0 -2px 0 rgba(0, 0, 0, .14), 0 8px 18px -10px rgba(var(--primary-rgb), .9);
 }
 
 /* =========================== Toolbar / filters =========================== */
@@ -1187,7 +1370,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .hero { padding-inline: 164px; }
   .hero-art { left: 24px; width: 124px; height: 124px; }
   .search-wrap { max-width: 320px; }
-  /* ปุ่มเพิ่มคำสั่งและเพิ่มเอกสารบนแถบด้านบนกินที่ ช่องค้นหาจึงแคบลง ซ่อนป้าย Ctrl K (ปุ่มลัดยังใช้ได้) ให้เหลือที่พิมพ์ */
+  /* ช่องค้นหาแคบลงในจอขนาดกลาง ซ่อนป้าย Ctrl K (ปุ่มลัดยังใช้ได้) ให้เหลือที่พิมพ์ */
   .search-kbd { display: none; }
   .search-wrap input { padding-right: 16px; }
 }
@@ -1236,7 +1419,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .search-wrap input { height: 40px; padding-top: 0; padding-bottom: 0; padding-right: 16px; }
   /* ตารางเลื่อนด้านข้างได้อยู่แล้ว จึงไม่บีบคอลัมน์จนข้อความหักทีละคำ */
   .doc-table td { white-space: nowrap; }
-  .doc-table td.doc-title-cell { white-space: normal; min-width: 180px; }
+  .doc-table td.doc-title-cell { white-space: normal; min-width: 220px; }
   .toast-stack { left: 14px; right: 14px; bottom: 14px; }
   .toast { min-width: 0; max-width: none; }
 }

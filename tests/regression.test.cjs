@@ -196,7 +196,7 @@ function docBoxes(elements) {
   return elements.get('docGroups').innerHTML.split('<section ').slice(1).map((box) => {
     const heads = [...box.matchAll(/<th data-sort="[^"]*"[^>]*>([^<]*)<\/th>/g)].map((m) => m[1]);
     const rows = [...box.matchAll(/<tr>([\s\S]*?)<\/tr>/g)]
-      .map((m) => [...m[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => c[1].replace(/<[^>]*>/g, '').trim()))
+      .map((m) => [...m[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => c[1].replace(/<svg[\s\S]*?<\/svg>/g, '').replace(/<[^>]*>/g, '').trim()))
       .filter((cells) => cells.length);
     return {
       group: box.match(/data-group="([^"]*)"/)[1],
@@ -863,14 +863,16 @@ test('a box\'s add button opens the form with its category chosen; the คำส
   assert.equal(elements.get('docCategory').value, '', 'a category deleted meanwhile is not chosen');
 });
 
-test('the เพิ่มคำสั่ง button opens the order form locked to คำสั่ง and saves an order without urgency', async () => {
+test('the คำสั่ง box\'s เพิ่มคำสั่ง button opens the order form locked to คำสั่ง and saves an order without urgency', async () => {
   const app = setup({ authMode: 'ready' });
   const { run, elements } = app;
   const toasts = recordToasts(app);
   const category = elements.get('docCategory');
   run(`allCategories = [{ id: "memo", name: "บันทึกข้อความ" }, { id: "order", name: "คำสั่ง" }]; renderCategoryOptions()`);
+  // the top bar no longer has its own เพิ่มคำสั่ง; the box's button is the way in
+  assert.doesNotMatch(html, /id="addOrderBtn"|>\s*เพิ่มคำสั่ง\s*</);
   elements.get('docUrgency').value = 'most-urgent'; // left over from an earlier document; the order form hides it
-  await elements.get('addOrderBtn').fire('click');
+  run('addToCategory("order")');
   assert.equal(elements.get('docModalOverlay').hidden, false);
   assert.deepEqual(formText(elements, 'docModalTitle', 'docModalSubtitle', 'docSaveBtn'), ['เพิ่มคำสั่งใหม่', 'กรอกรายละเอียดคำสั่งและแนบไฟล์ PDF', 'บันทึกคำสั่ง']);
   assert.deepEqual(formLabels(elements), ORDER_LABELS);
@@ -1085,6 +1087,34 @@ test('editing writes urgency only when one is chosen or has to be cleared back t
   assert.equal((await edit({ ...old, urgency: 'most-urgent' }, '')).urgency, '', 'going back to ปกติ clears the stored level');
 });
 
+test('a title with a PDF has a red PDF icon and opens the file; one without a file has a grey icon and is not a button', () => {
+  const app = setup();
+  // the dashboard's recent table is reached through a selector the DOM double does not keep, so hold on to it here
+  const recent = { innerHTML: '', querySelectorAll: () => [] };
+  const query = app.context.document.querySelector;
+  app.context.document.querySelector = (selector) => (selector === '#recentTable tbody' ? recent : query(selector));
+  app.run(`allCategories = [{ id: "in", name: "หนังสือรับ" }]; renderCategoryOptions();
+    allDocuments = [
+      { id: "r2", category: "in", title: "คำวินิจฉัย", description: "กองคลัง", fileName: "2373.pdf", storageKey: "${STORAGE_KEY}", createdAtMs: 3 },
+      { id: "legacy", category: "in", title: "หนังสือเดิม", fileName: "<b>x</b>.pdf", fileData: "data:application/pdf;base64,JVBERi0=", urgency: "urgent", createdAtMs: 2 },
+      { id: "none", category: "in", title: "ยังไม่ได้แนบไฟล์", description: "กองช่าง", fileName: "ค้างจากเดิม.pdf", createdAtMs: 1 },
+    ]; renderDocsTable(); renderRecentTable()`);
+  for (const markup of [app.elements.get('docGroups').innerHTML, recent.innerHTML]) {
+    const cells = [...markup.matchAll(/<td class="doc-title-cell">([\s\S]*?)<\/td>/g)].map((m) => m[1]);
+    assert.equal(cells.length, 3);
+    // with a file: one button holding the red icon, the title and "หมายเหตุ · ชื่อไฟล์"
+    assert.match(cells[0], /^<button class="doc-open" data-view-file="r2"><svg class="doc-ico is-pdf"[^>]*aria-hidden="true">[\s\S]*<text[^>]*>PDF<\/text><\/svg>/);
+    assert.match(cells[0], /<span class="doc-open-title">คำวินิจฉัย<\/span><span class="doc-sub" title="กองคลัง · 2373\.pdf">กองคลัง · 2373\.pdf<\/span><\/span><\/button>$/);
+    assert.match(cells[1], /data-view-file="legacy"/, 'a legacy base64 PDF opens too');
+    assert.match(cells[1], /<span class="doc-open-title"><span class="urgency urgency-urgent">ด่วน<\/span>หนังสือเดิม<\/span>/);
+    assert.match(cells[1], />&lt;b&gt;x&lt;\/b&gt;\.pdf<\/span>/, 'file names are escaped');
+    // without a file: a grey sheet and plain text, and a leftover file name is not shown
+    assert.match(cells[2], /^<div class="doc-open"><svg class="doc-ico is-none"/);
+    assert.doesNotMatch(cells[2], /<button|data-view-file|PDF<\/text>|ค้างจากเดิม/);
+    assert.match(cells[2], /<span class="doc-sub" title="กองช่าง">กองช่าง<\/span>/);
+  }
+});
+
 test('documents without a PDF or a title still read sensibly', () => {
   const app = setup();
   app.context.window.getSelection = () => ({ removeAllRanges() {} });
@@ -1102,7 +1132,7 @@ test('documents without a PDF or a title still read sensibly', () => {
     assert.match(markup, new RegExp(`data-preview="${id}" title="ดูตัวอย่าง">`));
     assert.match(markup, new RegExp(`data-download="${id}" title="ดาวน์โหลด">`));
   }
-  assert.ok(markup.includes('<td class="doc-title-cell">-</td>'), 'a missing title shows "-" like the other columns');
+  assert.ok(markup.includes('<span class="doc-open-title">-</span>'), 'a missing title shows "-" like the other columns');
 
   // the preview heading names the dialog, so it falls back instead of going blank
   app.context.data = 'data:application/pdf;base64,' + btoa('%PDF-1.7');
@@ -1476,6 +1506,59 @@ test('the status filter can find documents saved without a status', () => {
   elements.get('filterStatus').value = 'completed';
   assert.deepEqual(titles(), ['คำสั่งเสร็จสิ้น']);
   assert.match(html.match(/<select id="filterStatus">([\s\S]*?)<\/select>/)[1], /<option value="none">ไม่ระบุสถานะ<\/option>/);
+});
+
+test('the status colours\' r, g, b channels come from the theme, so the 3D cards follow them', () => {
+  const { run } = setup();
+  for (const mode of ['light', 'dark']) {
+    const vars = JSON.parse(run(`JSON.stringify(deriveVars(APPEARANCE_DEFAULTS.${mode}, ${mode === 'dark'}))`));
+    for (const name of ['success', 'warning', 'danger']) {
+      assert.equal(vars[`--${name}-rgb`], run(`rgbList(APPEARANCE_DEFAULTS.${mode}.${name})`), `${mode} ${name}`);
+    }
+  }
+  // the stylesheet's own values (used before the script runs) match, and the cards read the variables
+  const css = fs.readFileSync(path.join(root, 'style.css'), 'utf8');
+  const light = css.slice(css.indexOf(':root {'), css.indexOf('[data-theme="dark"] {'));
+  const dark = css.slice(css.indexOf('[data-theme="dark"] {'));
+  for (const [block, mode] of [[light, 'light'], [dark, 'dark']]) {
+    for (const name of ['success', 'warning', 'danger']) {
+      assert.equal(block.match(new RegExp(`--${name}-rgb: ([^;]+);`))[1], run(`rgbList(APPEARANCE_DEFAULTS.${mode}.${name})`), `${mode} ${name} in style.css`);
+    }
+  }
+  assert.match(css, /\[data-tone="green"\] \{[^}]*--tone-rgb: var\(--success-rgb\)/);
+});
+
+test('an empty stat meter is marked, so its glow is switched off', () => {
+  const { run, elements } = setup();
+  run(`allDocuments = [{ id: "a", status: "approved" }, { id: "b", status: "approved" }, { id: "c", status: "pending" }]; renderStats()`);
+  const empty = (id) => elements.get(id).classList.contains('is-empty');
+  assert.deepEqual([empty('meterApproved'), empty('meterPending'), empty('meterRejected')], [false, false, true]);
+  run(`allDocuments = [{ id: "a", status: "rejected" }]; renderStats()`);
+  assert.deepEqual([empty('meterApproved'), empty('meterRejected')], [true, false]);
+});
+
+test('the note under a title shows its first 60 characters, and the tooltip carries the whole note and the file name', () => {
+  const { run } = setup();
+  const note = 'ขอความอนุเคราะห์ตรวจสอบเอกสารประกอบการเบิกจ่ายงบประมาณประจำปี พ.ศ. 2569 ภายในวันที่ 15';
+  run(`allDocuments = [{ id: "a", title: "หนังสือ", description: ${JSON.stringify(note)}, fileName: "2373.pdf", storageKey: "${STORAGE_KEY}" }]`);
+  const markup = run('docTitle(allDocuments[0])');
+  const [, tooltip, shown] = markup.match(/<span class="doc-sub" title="([^"]*)">([^<]*)<\/span>/);
+  assert.equal(tooltip, `${note} · 2373.pdf`);
+  assert.equal(shown, `${note.slice(0, 60)}… · 2373.pdf`);
+  assert.equal(run('hasAttachment(allDocuments[0])'), true);
+  assert.equal(run('hasAttachment({ fileName: "เหลือแต่ชื่อ.pdf" })'), false, 'a file name alone is no attachment');
+});
+
+test('the menu\'s trash count turns red while the trash has something, from either list stream', () => {
+  const { run, elements } = setup();
+  const badge = elements.get('navCountTrash');
+  const state = () => [badge.textContent, badge.classList.contains('is-alert')];
+  run('allTrash = [{ id: "a" }, { id: "b" }]; renderTrash()');
+  assert.deepEqual(state(), ['2', true]);
+  run('allTrash = []; renderStats()');
+  assert.deepEqual(state(), ['0', false]);
+  run('allTrash = [{ id: "a" }]; renderStats()');
+  assert.deepEqual(state(), ['1', true]);
 });
 
 test('the trash lists the most recently deleted first', () => {
