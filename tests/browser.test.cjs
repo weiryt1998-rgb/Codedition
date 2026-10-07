@@ -77,7 +77,7 @@ async function main() {
     return file.startsWith(assetsDir + path.sep) ? file : null;
   };
   const server = http.createServer(async (req, res) => {
-    const files = { '/style.css': 'style.css', '/script.js': 'script.js', '/fixture.js': 'tests/browser-fixture.js' };
+    const files = { '/style.css': 'style.css', '/script.js': 'script.js', '/sunflower.js': 'sunflower.js', '/fixture.js': 'tests/browser-fixture.js' };
     const url = new URL(req.url, 'http://localhost');
     try {
       if (url.pathname === '/__fixture/documents' && req.method === 'POST') {
@@ -527,8 +527,9 @@ async function main() {
         };
       })()`);
       let shown = await box('cat-a');
-      assert.deepEqual([shown.heads, shown.rounded, shown.sorted], [['เลขที่รับ', 'เลขที่หนังสือ'], '12px', []]);
-      assert.deepEqual(shown.rows, [['125', 'สท 0023.3/ว 456'], ['-', 'ทดสอบ/1'], ['9', 'ทดสอบ/3'], ['-', 'ทดสอบ/5'], ['-', 'ทดสอบ/7'], ['-', 'ทดสอบ/9'], ['-', 'ทดสอบ/11']]);
+      // largest เลขที่รับ on top from the start; ones without a number follow, newest saved first
+      assert.deepEqual([shown.heads, shown.rounded, shown.sorted], [['เลขที่รับ', 'เลขที่หนังสือ'], '12px', [['เลขที่รับ', 'descending']]]);
+      assert.deepEqual(shown.rows, [['125', 'สท 0023.3/ว 456'], ['9', 'ทดสอบ/3'], ['-', 'ทดสอบ/1'], ['-', 'ทดสอบ/5'], ['-', 'ทดสอบ/7'], ['-', 'ทดสอบ/9'], ['-', 'ทดสอบ/11']]);
       const outgoing = await box('cat-b');
       await screenshot('documents-receive.png');
       // sorted from the keyboard: the box re-renders, and focus stays on the same header
@@ -877,6 +878,75 @@ async function main() {
       await waitFor(`document.getElementById('view-documents').classList.contains('is-active')`);
       assert.deepEqual(await filters(), ['', 'cat-a', '', '']);
       await click('#clearFilters');
+    });
+    await check('The sunflower wilts without water, the can revives it, it dies at 25 minutes and replants as a seed, and the switch pauses it', async () => {
+      const MINUTE = 60000;
+      const saved = () => evaluate(`JSON.parse(localStorage.getItem('govdocs-sunflower'))`);
+      const setGame = async (dry, grown, on = true) => {
+        await evaluate(`localStorage.setItem('govdocs-sunflower', JSON.stringify({ on: ${on}, plantedAt: Date.now() - ${grown * MINUTE}, wateredAt: Date.now() - ${dry * MINUTE}, pausedAt: ${on ? 'null' : 'Date.now()'} })); true`);
+        await reloadApp();
+      };
+      const shown = () => evaluate(`(() => {
+        const can = document.getElementById('sunflowerCan'), replant = document.getElementById('sunflowerReplant');
+        const svg = document.querySelector('.officer-sunflower');
+        return {
+          on: document.getElementById('sunflowerSwitch').getAttribute('aria-checked'), wilt: svg.dataset.wilt,
+          can: can.getClientRects().length > 0, replant: replant.getClientRects().length > 0, status: can.hidden ? replant.title : can.title,
+          headTop: Math.round(svg.querySelector('.sunflower-bloom').getBoundingClientRect().top - svg.getBoundingClientRect().top),
+        };
+      })()`);
+
+      // a device that never played starts with a bloomed plant, watered when the page opened, and remembers that time
+      const first = await saved();
+      assert.deepEqual([first.on, first.wateredAt - first.plantedAt, Date.now() - first.wateredAt < 10 * MINUTE], [true, 13 * MINUTE, true]);
+      await setGame(0, 99);
+      const fresh = await shown();
+      assert.deepEqual([fresh.on, fresh.wilt, fresh.can, fresh.replant, fresh.status], ['true', '0', true, false, 'รดน้ำ · สดชื่น · เพิ่งรดน้ำ']);
+
+      // 17 minutes dry: the neck has bent over and the head hangs (the sway moves it a few pixels, hence the margins)
+      await setGame(17, 99);
+      const drooping = await shown();
+      assert.deepEqual([drooping.wilt, drooping.status], ['3', 'รดน้ำ · สีเริ่มเปลี่ยน · รดน้ำล่าสุด 17 นาทีที่แล้ว']);
+      assert.ok(drooping.headTop > fresh.headTop + 15, `the head hangs lower (${drooping.headTop} vs ${fresh.headTop})`);
+      await click('#sunflowerCan');
+      await pause(700);
+      // mid-pour the can flies over the plant without making the sidebar scroll sideways, and still takes
+      // presses itself: otherwise a tap on it lands on the menu behind (a landscape phone opened รายการที่ลบ)
+      assert.deepEqual(await evaluate(`(() => {
+        const s = document.querySelector('.sidebar'), can = document.getElementById('sunflowerCan'), r = can.getBoundingClientRect();
+        return [document.querySelector('.officer-banner').classList.contains('is-watering'), s.scrollWidth <= s.clientWidth, can.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2))];
+      })()`), [true, true, true]);
+      const wateredAt = (await saved()).wateredAt;
+      await evaluate(`document.getElementById('sunflowerCan').click(); true`);
+      assert.equal((await saved()).wateredAt, wateredAt, 'a press during the pour does not water again');
+      await waitFor(`!document.querySelector('.officer-banner').classList.contains('is-watering')`);
+      await pause(200);
+      const watered = await shown();
+      assert.deepEqual([watered.wilt, watered.status, Math.abs(watered.headTop - fresh.headTop) <= 4], ['0', 'รดน้ำ · สดชื่น · เพิ่งรดน้ำ', true]);
+      assert.ok(Date.now() - (await saved()).wateredAt < 5000);
+
+      // 26 minutes dry: dead, the can gives way to ปลูกใหม่, which plants a seed
+      await setGame(26, 99);
+      assert.deepEqual(await shown().then(({ wilt, can, replant, status }) => [wilt, can, replant, status]), ['5', false, true, 'ทานตะวันตายแล้ว กดปลูกใหม่ได้เลย']);
+      await screenshot('sunflower-dead.png');
+      await click('#sunflowerReplant');
+      const planted = await saved();
+      assert.deepEqual([planted.plantedAt === planted.wateredAt, Date.now() - planted.plantedAt < 5000], [true, true]);
+      assert.deepEqual(await evaluate(`[document.activeElement.id, ...['.sunflower-soil', '.sunflower-seed', '.sunflower-stem'].map((s) => document.querySelector(s).getAttribute('opacity'))]`),
+        ['sunflowerCan', '1', '1', '0'], 'the seed sits in fresh soil, and focus moves to the can');
+      assert.match((await shown()).status, /^รดน้ำ · เมล็ด · สดชื่น · เพิ่งรดน้ำ$/);
+
+      // switched off: the clock stops and the plant is the bloomed decoration again, with no can
+      await click('#sunflowerSwitch');
+      const off = await saved();
+      assert.deepEqual([off.on, typeof off.pausedAt], [false, 'number']);
+      assert.deepEqual(await shown().then(({ on, wilt, can, replant, headTop }) => [on, wilt, can, replant, Math.abs(headTop - fresh.headTop) <= 4]), ['false', '0', false, false, true]);
+      // an hour later, switched back on: it is exactly as dry as when it was paused
+      await evaluate(`localStorage.setItem('govdocs-sunflower', JSON.stringify({ on: false, plantedAt: Date.now() - 80 * ${MINUTE}, wateredAt: Date.now() - 67 * ${MINUTE}, pausedAt: Date.now() - 60 * ${MINUTE} })); true`);
+      await reloadApp();
+      await click('#sunflowerSwitch');
+      assert.equal((await shown()).status, 'รดน้ำ · เริ่มเฉา · รดน้ำล่าสุด 7 นาทีที่แล้ว');
+      await setGame(0, 99);
     });
     await check('Theme changes and persists across reload', async () => {
       const previous = await evaluate('activeMode()');

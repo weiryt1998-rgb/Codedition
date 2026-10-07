@@ -756,8 +756,10 @@ test('the หนังสือรับ box starts with a เลขที่ร
 
   assert.deepEqual(box('หนังสือรับ').heads.slice(0, 3), ['เลขที่รับ', 'เลขที่หนังสือ', 'ชื่อเอกสาร']);
   assert.deepEqual(box('หนังสือรับ').rows.map((row) => [row['เลขที่รับ'], row['เลขที่หนังสือ']]),
-    [['125', 'สท 0023.3/ว 456'], ['9', 'สท 0023.1/ว 789'], ['-', 'มท 0810.5/ว 12'], ['10', 'สท 0023.5/ว 3']], 'newest saved first, as everywhere');
+    [['125', 'สท 0023.3/ว 456'], ['10', 'สท 0023.5/ว 3'], ['9', 'สท 0023.1/ว 789'], ['-', 'มท 0810.5/ว 12']], 'largest เลขที่รับ first, as numbers');
+  assert.match(elements.get('docGroups').innerHTML, /<th data-sort="receiveNumber" tabindex="0" class="is-sorted-desc" aria-sort="descending">เลขที่รับ<\/th>/);
   assert.deepEqual(box('หนังสือส่ง').heads.slice(0, 2), ['เลขที่หนังสือ', 'ชื่อเอกสาร'], 'no เลขที่รับ outside หนังสือรับ');
+  assert.doesNotMatch(elements.get('docGroups').innerHTML, /data-group="out"[\s\S]*is-sorted/, 'other boxes still start in saved order');
   run('sortGroup("in", "receiveNumber")');
   assert.deepEqual(numbers(), ['-', '9', '10', '125'], 'numbers sort as numbers');
   assert.match(elements.get('docGroups').innerHTML, /<th data-sort="receiveNumber" tabindex="0" class="is-sorted-asc" aria-sort="ascending">เลขที่รับ<\/th>/);
@@ -1641,4 +1643,57 @@ test('custom properties only use color-mix() inside @supports, so older browsers
     } else block += ch;
   }
   assert.deepEqual(unguarded, []);
+});
+
+// sunflower.js on its own: the timing rules of the game, without a page (the browser suite drives the page).
+test('the sunflower changes every 5 minutes without water, dies at 25, stops growing when dead, and pausing freezes it', () => {
+  const storage = new Map();
+  const context = vm.createContext({
+    document: { querySelector: () => null },
+    localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)) },
+  });
+  vm.runInContext(fs.readFileSync(path.join(root, 'sunflower.js'), 'utf8'), context);
+  const run = (code) => JSON.parse(vm.runInContext(`JSON.stringify(${code})`, context));
+  const MINUTE = 60000;
+
+  assert.deepEqual(run('[0, 4.9, 5, 9.9, 10, 15, 20, 24.9, 25, 300].map((m) => SUNFLOWER_WILT_LABELS[sunflowerWiltStage(m)])'),
+    ['สดชื่น', 'สดชื่น', 'เริ่มเฉา', 'เริ่มเฉา', 'คอตก', 'สีเริ่มเปลี่ยน', 'เหี่ยวมาก', 'เหี่ยวมาก', 'ตายแล้ว', 'ตายแล้ว']);
+  assert.deepEqual(run('[0, 1.9, 2, 5, 9, 12, 13, 99].map(sunflowerGrowthLabel)'),
+    ['เมล็ด', 'เมล็ด', 'ต้นอ่อน', 'กำลังโต', 'ดอกตูม', 'กำลังบาน', 'บานเต็มที่', 'บานเต็มที่']);
+  assert.deepEqual(run('[[0.5, 99], [12.7, 99], [1, 3], [25, 99]].map(([dry, grown]) => sunflowerStatus({ dry, grown }))'), [
+    'สดชื่น · เพิ่งรดน้ำ', 'คอตก · รดน้ำล่าสุด 12 นาทีที่แล้ว', 'ต้นอ่อน · สดชื่น · รดน้ำล่าสุด 1 นาทีที่แล้ว', 'ทานตะวันตายแล้ว กดปลูกใหม่ได้เลย',
+  ]);
+
+  // the pose changes a little at a time between the marks, and the bloomed, watered plant is the original drawing
+  const pose = (dry, grown = 99) => run(`sunflowerPose(${dry}, ${grown})`);
+  const look = ({ bend, neck, face, leafDroop, colour, petals }) => [bend, neck, face, leafDroop, colour, petals];
+  assert.deepEqual(look(pose(4.9)), look(pose(0)), 'nothing wilts in the first 5 minutes');
+  assert.deepEqual([pose(0).bend, pose(0).neck, pose(0).face, pose(0).stem, pose(0).bloom, pose(0).bud, pose(0).seed], [0, 0, 1, 47, 1, 1, 0]);
+  assert.ok(pose(10).neck < pose(12.5).neck && pose(12.5).neck < pose(15).neck);
+  assert.ok(pose(15).colour === 0 && pose(17.5).colour > 0, 'the colour starts to change at 15 minutes');
+  assert.deepEqual([pose(24.9).dead, pose(25).dead, pose(25).innerPetals], [false, true, 0]);
+  assert.deepEqual([pose(0, 0).seed, pose(0, 0).stem, pose(0, 3).sprout, pose(0, 10.5).bud > 0, pose(0, 10.5).bloomOpacity], [1, 0, 1, true, 0]);
+
+  // a plant left 40 minutes died at 25, so it stopped growing then
+  const ages = (state, now) => run(`sunflowerAges(${JSON.stringify(state)}, ${now})`);
+  assert.deepEqual(ages({ on: true, plantedAt: 0, wateredAt: 0, pausedAt: null }, 40 * MINUTE), { dry: 40, grown: 25 });
+  // switched off at minute 10 and on again at minute 60: still 7 minutes dry and 10 minutes grown
+  const off = run(`sunflowerSwitched({ on: true, plantedAt: 0, wateredAt: ${3 * MINUTE}, pausedAt: null }, false, ${10 * MINUTE})`);
+  assert.deepEqual(off, { on: false, plantedAt: 0, wateredAt: 3 * MINUTE, pausedAt: 10 * MINUTE });
+  assert.deepEqual(ages(off, 500 * MINUTE), { dry: 7, grown: 10 });
+  const on = run(`sunflowerSwitched(${JSON.stringify(off)}, true, ${60 * MINUTE})`);
+  assert.deepEqual([on, ages(on, 60 * MINUTE)], [{ on: true, plantedAt: 50 * MINUTE, wateredAt: 53 * MINUTE, pausedAt: null }, { dry: 7, grown: 10 }]);
+
+  // a new device, or storage with something unreadable, starts with a bloomed plant watered now
+  const fresh = { on: true, plantedAt: 1000 * MINUTE - 13 * MINUTE, wateredAt: 1000 * MINUTE, pausedAt: null };
+  assert.deepEqual(run(`sunflowerLoad(${1000 * MINUTE})`), fresh);
+  storage.set('govdocs-sunflower', '{"on":true,"plantedAt":"soon"}');
+  assert.deepEqual(run(`sunflowerLoad(${1000 * MINUTE})`), fresh);
+  storage.set('govdocs-sunflower', JSON.stringify({ on: false, plantedAt: 5, wateredAt: 6 }));
+  assert.deepEqual(run(`sunflowerLoad(${1000 * MINUTE})`), { on: false, plantedAt: 5, wateredAt: 6, pausedAt: 1000 * MINUTE }, 'paused without a pause time: paused from now');
+});
+
+test('index.html loads sunflower.js after script.js, and the browser suite serves it', () => {
+  assert.match(html, /<script src="script\.js"><\/script>\s*<script src="sunflower\.js"><\/script>/);
+  assert.match(fs.readFileSync(path.join(__dirname, 'browser.test.cjs'), 'utf8'), /'\/sunflower\.js': 'sunflower\.js'/);
 });

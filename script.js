@@ -2066,10 +2066,13 @@ function categoryRank(name) {
   return rank === -1 ? CATEGORY_ORDER.length : rank;
 }
 /* แต่ละกล่องเรียงและแบ่งหน้าของตัวเอง (คีย์คือ id หมวด, "" คือไม่ระบุหมวดหมู่)
-   เริ่มที่ลำดับการบันทึก ฉบับที่เพิ่งบันทึกอยู่บนสุด */
+   เริ่มที่ลำดับการบันทึก ฉบับที่เพิ่งบันทึกอยู่บนสุด ยกเว้นหนังสือรับเริ่มที่เลขที่รับมากสุดอยู่บนสุด */
 const groupViews = new Map();
+function defaultGroupSort(id) {
+  return { sortKey: isReceiveCategory(id) ? "receiveNumber" : "entry", sortDir: "desc" };
+}
 function groupView(id) {
-  if (!groupViews.has(id)) groupViews.set(id, { sortKey: "entry", sortDir: "desc", page: 1 });
+  if (!groupViews.has(id)) groupViews.set(id, { ...defaultGroupSort(id), page: 1 });
   return groupViews.get(id);
 }
 function resetGroupPages() { groupViews.forEach((view) => { view.page = 1; }); }
@@ -2127,8 +2130,8 @@ function docRow(d, receive) {
 function renderDocGroup(group, docs, index, narrowed) {
   const view = groupView(group.id);
   const columns = groupColumns(group.id);
-  // หมวดที่เปลี่ยนชื่อจนคอลัมน์ที่กำลังเรียงอยู่หายไป (เช่น เลขที่รับ) กลับไปเรียงตามลำดับการบันทึก
-  if (view.sortKey !== "entry" && !columns.some(([key]) => key === view.sortKey)) Object.assign(view, { sortKey: "entry", sortDir: "desc" });
+  // หมวดที่เปลี่ยนชื่อจนคอลัมน์ที่กำลังเรียงอยู่หายไป (เช่น เลขที่รับ) กลับไปเรียงแบบเริ่มต้นของหมวด
+  if (view.sortKey !== "entry" && !columns.some(([key]) => key === view.sortKey)) Object.assign(view, defaultGroupSort(group.id));
   const totalPages = Math.max(1, Math.ceil(docs.length / PAGE_SIZE));
   view.page = Math.min(Math.max(1, view.page), totalPages);
   const rows = sortDocs(docs, view).slice((view.page - 1) * PAGE_SIZE, view.page * PAGE_SIZE);
