@@ -3,12 +3,19 @@
    ไม่รดน้ำแล้วต้นค่อย ๆ เหี่ยวตามเวลาจริง: 5 นาทีเริ่มเฉา 10 นาทีคอตก 15 นาทีสีเริ่มเปลี่ยน
    20 นาทีเหี่ยวมาก ครบ 25 นาทีตาย ต้องกดปลูกใหม่ เมล็ดค่อย ๆ งอกจนบานเต็มที่ใน 13 นาที ระหว่างนั้นก็ต้องรดน้ำ
    สถานะเก็บใน localStorage ของเครื่องนั้นเท่านั้น ไม่แตะ Firestore
+   ใส่ปุ๋ยได้ครั้งเดียวตอนที่ต้นยังโตไม่เต็มที่ ต้นจะโตเร็วขึ้น 13 เท่า บานเต็มที่ใน 1 นาทีแทน 13 นาที (ถ้าใส่ตอนปลูก) ไม่ใส่ก็ไม่เป็นอะไร
+   แมลงวันบินมาตอมเป็นระยะ (วาดบน canvas) ตัวที่ตอมอยู่ทำให้ต้นแห้งเร็วขึ้นมาก (ตัวเดียว 10 เท่า สามตัว 28 เท่า) กดหรือแตะที่ตัวเพื่อตบทิ้ง
+   แมลงมาเฉพาะตอนที่เปิดเกม ต้นยังไม่ตาย และมองเห็นต้นอยู่บนจอ รดน้ำแล้วความแห้งที่แมลงทำไว้ก็หายไปด้วย
    ปิดเกมแล้วนาฬิกาของเกมหยุด ต้นกลับเป็นของประดับที่บานสดเหมือนเดิม เปิดอีกครั้งก็เล่นต่อจากจุดเดิม
    ========================================================= */
 const SUNFLOWER_KEY = "govdocs-sunflower";
 const SUNFLOWER_MINUTE = 60 * 1000;
 const SUNFLOWER_DEAD_AT = 25;    // นาทีหลังรดน้ำครั้งล่าสุด
 const SUNFLOWER_BLOOMED_AT = 13; // นาทีหลังปลูก
+const SUNFLOWER_FERTILIZED_BLOOM = 1; // ใส่ปุ๋ยแล้ว การโตที่เคยใช้ 13 นาทีใช้แค่ 1 นาที
+const SUNFLOWER_BUG_MAX = 3;            // แมลงตอมพร้อมกันได้มากสุด
+const SUNFLOWER_BUG_GAPS = [20, 25, 30]; // วินาทีก่อนตัวที่ 1, 2, 3 มา (นับต่อจากตัวก่อน) แล้ววนใหม่
+const SUNFLOWER_BUG_BITE = 9;           // ตอมหนึ่งนาที ต้นแห้งเพิ่มกี่นาที ต่อตัว (ตัวเดียวก็เหี่ยวเร็วขึ้น 10 เท่า)
 const SUNFLOWER_WILT_LABELS = ["สดชื่น", "เริ่มเฉา", "คอตก", "สีเริ่มเปลี่ยน", "เหี่ยวมาก", "ตายแล้ว"];
 // ขั้นการโต: [นาทีหลังปลูกที่เริ่มขั้นนี้, ชื่อขั้น]
 const SUNFLOWER_GROWTH_STAGES = [[0, "เมล็ด"], [2, "ต้นอ่อน"], [5, "กำลังโต"], [9, "ดอกตูม"], [12, "กำลังบาน"], [13, "บานเต็มที่"]];
@@ -89,42 +96,69 @@ function sunflowerGrowthLabel(grown) {
   return SUNFLOWER_GROWTH_STAGES.filter(([from]) => grown >= from).pop()[1];
 }
 
-/* นาทีที่ไม่ได้รดน้ำ และนาทีที่โตมา ตามนาฬิกาของเกม ซึ่งหยุดเดินตอนปิดเกม ต้นที่ตายแล้วไม่โตต่อ */
+/* นาทีที่ไม่ได้รดน้ำ และนาทีที่โตมา ตามนาฬิกาของเกม ซึ่งหยุดเดินตอนปิดเกม ต้นที่ตายแล้วไม่โตต่อ
+   fertilizedAt คือเวลาที่ใส่ปุ๋ย (null ถ้ายังไม่ได้ใส่) นับจากนั้นต้นโตเร็วขึ้น 13 เท่า
+   bitten คือมิลลิวินาทีที่แห้งเพิ่มเพราะแมลงตอมตั้งแต่รดน้ำครั้งล่าสุด */
 function sunflowerAges(state, now) {
   const clock = state.on ? now : state.pausedAt;
-  const deathAt = state.wateredAt + SUNFLOWER_DEAD_AT * SUNFLOWER_MINUTE;
+  const dryFrom = state.wateredAt - (state.bitten || 0);
+  const deathAt = dryFrom + SUNFLOWER_DEAD_AT * SUNFLOWER_MINUTE;
+  const growthEnd = Math.min(clock, deathAt);
+  // คูณก่อนหาร เวลาหลังใส่ปุ๋ยจึงได้การโตครบ 13 นาทีพอดี ไม่คลาดเพราะเศษทศนิยม
+  const boost = state.fertilizedAt == null ? 0
+    : Math.max(0, growthEnd - state.fertilizedAt) * (SUNFLOWER_BLOOMED_AT - SUNFLOWER_FERTILIZED_BLOOM) / SUNFLOWER_FERTILIZED_BLOOM;
   return {
-    dry: Math.max(0, (clock - state.wateredAt) / SUNFLOWER_MINUTE),
-    grown: Math.max(0, (Math.min(clock, deathAt) - state.plantedAt) / SUNFLOWER_MINUTE),
+    dry: Math.max(0, (clock - dryFrom) / SUNFLOWER_MINUTE),
+    grown: Math.max(0, (growthEnd - state.plantedAt + boost) / SUNFLOWER_MINUTE),
   };
 }
-function sunflowerStatus({ dry, grown }) {
+// bitten เป็นนาที: ความแห้งที่มาจากแมลงไม่นับเป็นเวลาตั้งแต่รดน้ำ
+function sunflowerStatus({ dry, grown }, fertilized = false, bitten = 0) {
   if (dry >= SUNFLOWER_DEAD_AT) return "ทานตะวันตายแล้ว กดปลูกใหม่ได้เลย";
-  const minutes = Math.floor(dry);
+  const minutes = Math.floor(Math.max(0, dry - bitten));
+  const growing = grown < SUNFLOWER_BLOOMED_AT;
   return [
-    grown < SUNFLOWER_BLOOMED_AT ? sunflowerGrowthLabel(grown) : "",
+    growing ? sunflowerGrowthLabel(grown) : "",
+    growing && fertilized ? "ใส่ปุ๋ยแล้ว" : "",
     SUNFLOWER_WILT_LABELS[sunflowerWiltStage(dry)],
     minutes < 1 ? "เพิ่งรดน้ำ" : `รดน้ำล่าสุด ${minutes} นาทีที่แล้ว`,
   ].filter(Boolean).join(" · ");
 }
+/* ใส่ปุ๋ยได้ครั้งเดียวต่อการปลูก และเฉพาะตอนที่ต้นยังมีชีวิตแต่ยังโตไม่เต็มที่ */
+function sunflowerCanFertilize(state, { dry, grown }) {
+  return state.on && state.fertilizedAt == null && dry < SUNFLOWER_DEAD_AT && grown < SUNFLOWER_BLOOMED_AT;
+}
+function sunflowerFertilizerHint(state, { dry, grown }) {
+  if (dry >= SUNFLOWER_DEAD_AT) return "ทานตะวันตายแล้ว ใส่ปุ๋ยไม่ได้";
+  if (grown >= SUNFLOWER_BLOOMED_AT) return "ทานตะวันบานเต็มที่แล้ว ไม่ต้องใส่ปุ๋ย";
+  if (state.fertilizedAt != null) return "ใส่ปุ๋ยแล้ว ต้นกำลังโตเร็วขึ้น";
+  return `ใส่ปุ๋ย · ต้นจะโตเร็วขึ้น ${SUNFLOWER_BLOOMED_AT / SUNFLOWER_FERTILIZED_BLOOM} เท่า`;
+}
 
 /* เครื่องที่ยังไม่เคยเล่นเริ่มด้วยต้นที่บานเต็มที่และเพิ่งรดน้ำ */
 function sunflowerNewGame(now) {
-  return { on: true, plantedAt: now - SUNFLOWER_BLOOMED_AT * SUNFLOWER_MINUTE, wateredAt: now, pausedAt: null };
+  return { on: true, plantedAt: now - SUNFLOWER_BLOOMED_AT * SUNFLOWER_MINUTE, wateredAt: now, fertilizedAt: null, bitten: 0, pausedAt: null };
 }
 function sunflowerSwitched(state, on, now) {
   if (on === state.on) return state;
   if (!on) return { ...state, on: false, pausedAt: now };
-  // เลื่อนเวลาที่ปลูกและรดน้ำออกไปเท่าช่วงที่ปิดเกม ต้นจึงอยู่ในสภาพเดิมตอนเปิดกลับมา
+  // เลื่อนเวลาที่ปลูก รดน้ำ และใส่ปุ๋ยออกไปเท่าช่วงที่ปิดเกม ต้นจึงอยู่ในสภาพเดิมตอนเปิดกลับมา
   const paused = now - state.pausedAt;
-  return { on: true, plantedAt: state.plantedAt + paused, wateredAt: state.wateredAt + paused, pausedAt: null };
+  return {
+    on: true, plantedAt: state.plantedAt + paused, wateredAt: state.wateredAt + paused,
+    fertilizedAt: state.fertilizedAt == null ? null : state.fertilizedAt + paused, bitten: state.bitten || 0, pausedAt: null,
+  };
 }
 function sunflowerLoad(now) {
   try {
     const saved = JSON.parse(localStorage.getItem(SUNFLOWER_KEY) || "null");
     const time = (value) => typeof value === "number" && Number.isFinite(value);
     if (saved && typeof saved.on === "boolean" && time(saved.plantedAt) && time(saved.wateredAt)) {
-      return { on: saved.on, plantedAt: saved.plantedAt, wateredAt: saved.wateredAt, pausedAt: saved.on ? null : (time(saved.pausedAt) ? saved.pausedAt : now) };
+      return {
+        on: saved.on, plantedAt: saved.plantedAt, wateredAt: saved.wateredAt, fertilizedAt: time(saved.fertilizedAt) ? saved.fertilizedAt : null,
+        bitten: time(saved.bitten) && saved.bitten > 0 ? saved.bitten : 0,
+        pausedAt: saved.on ? null : (time(saved.pausedAt) ? saved.pausedAt : now),
+      };
     }
   } catch { /* โหมดส่วนตัวของเบราว์เซอร์อาจอ่านไม่ได้ — เริ่มเกมใหม่ */ }
   return sunflowerNewGame(now);
@@ -218,17 +252,300 @@ function sunflowerDraw(svg, pose) {
   });
 }
 
+/* แมลงวันหนึ่งตัว หันหน้าไปทาง +x: ท้องเขียวเหลือบ อก หัวตาแดง ปีกใสกระพือ เส้นขอบจาง ๆ ให้เห็นบนพื้นม่วงเข้ม */
+function sunflowerDrawFly(ctx, fly) {
+  const flap = fly.state === "swatted" || fly.still ? 0.5 : Math.abs(Math.sin(fly.t * 70 + fly.phase));
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, fly.alpha));
+  ctx.translate(fly.x, fly.y);
+  ctx.rotate(fly.heading + fly.spin);
+  ctx.scale(1.5, 1.5);
+  // แสงจาง ๆ รอบตัว แยกตัวแมลงออกจากเกสรดอกสีเข้มและพื้นม่วงเข้ม
+  ctx.shadowColor = "rgba(255, 244, 214, .7)";
+  ctx.shadowBlur = 3;
+  const belly = ctx.createLinearGradient(-6, -3, 2, 3);
+  belly.addColorStop(0, "#47A07A");
+  belly.addColorStop(1, "#123828");
+  ctx.fillStyle = belly;
+  ctx.strokeStyle = "rgba(255, 255, 255, .4)";
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  ctx.ellipse(-2, 0, 4, 2.8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(0, 0, 0, .35)";
+  ctx.lineWidth = 0.6;
+  [-3.6, -1.9].forEach((x) => {
+    ctx.beginPath();
+    ctx.moveTo(x, -2.3);
+    ctx.quadraticCurveTo(x + 0.7, 0, x, 2.3);
+    ctx.stroke();
+  });
+  ctx.fillStyle = "#1E2A24";
+  ctx.beginPath();
+  ctx.arc(2, 0, 2.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#2A1A14";
+  ctx.beginPath();
+  ctx.arc(4.3, 0, 1.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#D2402F";
+  [-1, 1].forEach((side) => {
+    ctx.beginPath();
+    ctx.arc(4.8, side * 1.05, 1.05, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  // ปีกชี้ไปข้างหลังเฉียงออกข้างลำตัว
+  ctx.shadowColor = "transparent";
+  ctx.fillStyle = "rgba(225, 240, 255, .32)";
+  ctx.strokeStyle = "rgba(255, 255, 255, .6)";
+  ctx.lineWidth = 0.4;
+  [-1, 1].forEach((side) => {
+    ctx.beginPath();
+    ctx.ellipse(-1.2, side * 2.6, 4.4, 1.2 + 1.2 * flap, side * -0.45, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+// ตบโดน: เส้นสั้น ๆ กระจายออกรอบจุดที่ตบ
+function sunflowerDrawPop(ctx, pop) {
+  const k = pop.t / 0.35;
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, 1 - k);
+  ctx.strokeStyle = "#FFF3C9";
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 6; i++) {
+    const a = i * Math.PI / 3 + 0.3, near = 5 + k * 6, far = 8 + k * 10;
+    ctx.beginPath();
+    ctx.moveTo(pop.x + Math.cos(a) * near, pop.y + Math.sin(a) * near);
+    ctx.lineTo(pop.x + Math.cos(a) * far, pop.y + Math.sin(a) * far);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* ฝูงแมลงวันบน canvas ที่คลุมรอบต้น
+   canvas ไม่รับเมาส์ (กดทะลุไปที่สวิตช์ ถุงปุ๋ย บัว และเมนูได้ตามปกติ) การตบจึงดักที่ pointerdown ของทั้งหน้าแล้ววัดระยะถึงแมลงเอง
+   active() บอกว่าต้นให้แมลงกัดได้ไหม (on) และมองเห็นต้นอยู่ไหม (seen) onBite(ms) รับความแห้งที่เพิ่ม
+   แมลงบินมาจากขอบซ้ายหรือขวา เลือกส่วนของต้นที่จะตอม (ดอกมากสุด) แล้วบินวนอยู่ตรงนั้น ตัวที่วนอยู่เท่านั้นที่กัด
+   ต้นตายหรือปิดเกม แมลงบินหนีออกไปเอง มองไม่เห็นต้น (แท็บซ่อน เมนูมือถือปิด เลื่อนพ้นจอ) ทุกอย่างหยุดรอ
+   ไม่มีแมลงก็ไม่วาดอะไรเลย ไม่เปลือง requestAnimationFrame */
+function sunflowerBugs(canvas, svg, { active, onBite, reducedMotion }) {
+  const ctx = canvas.getContext("2d");
+  const area = canvas.closest(".sidebar") || canvas.parentElement;
+  const spots = [
+    [".sunflower-bloom", 3], [".sunflower-bud", 2], [".sunflower-sprout", 2],
+    ['.sunflower-leaf-at[data-leaf="right"]', 1], ['.sunflower-leaf-at[data-leaf="left"]', 1], [".sunflower-soil", 1],
+  ];
+  let flies = [], pops = [], frame = 0, last = 0, swallowClickUntil = 0;
+  let gap = 0, wait = SUNFLOWER_BUG_GAPS[0] * 1000;
+
+  // ส่วนของต้นในพิกัดของ canvas ส่วนที่จางหรือยังไม่งอกนับว่าไม่มี
+  const spotRect = (selector, origin) => {
+    const el = svg.querySelector(selector);
+    const opacity = el && el.getAttribute("opacity");
+    if (!el || (opacity !== null && Number(opacity) < 0.3)) return null;
+    const r = el.getBoundingClientRect();
+    return r.width > 3 && r.height > 3 ? { x: r.left - origin.left, y: r.top - origin.top, w: r.width, h: r.height } : null;
+  };
+  const pick = (origin) => {
+    const options = spots.filter(([selector]) => spotRect(selector, origin));
+    let roll = Math.random() * options.reduce((sum, [, weight]) => sum + weight, 0);
+    const spot = options.find(([, weight]) => (roll -= weight) < 0) || options[0];
+    return spot ? spot[0] : null;
+  };
+  // จุดที่แมลงตอม ตามส่วนของต้นที่กำลังไหวหรือโตอยู่ ส่วนนั้นหายไป (ดอกตูมกลายเป็นดอกบาน) ก็เลือกส่วนใหม่
+  const anchorOf = (fly, origin) => {
+    if (fly.at) return fly.at;
+    let rect = fly.spot && spotRect(fly.spot, origin);
+    if (!rect) {
+      fly.spot = pick(origin);
+      rect = fly.spot && spotRect(fly.spot, origin);
+    }
+    return rect ? { x: rect.x + rect.w * fly.fx, y: rect.y + rect.h * fly.fy } : null;
+  };
+  const buzzing = (fly) => fly.state === "arrive" || fly.state === "buzz";
+
+  const step = (time) => {
+    // ระหว่างเฟรมนี้ onBite วาดต้นใหม่ซึ่งเรียก wake() ต้องไม่เริ่มวงวาดซ้อนอีกวง
+    frame = -1;
+    const { on, seen } = active();
+    if (!seen) { frame = 0; last = 0; return; }
+    const dt = last ? Math.min(0.1, (time - last) / 1000) : 0;
+    last = time;
+    const origin = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.round(origin.width * dpr), height = Math.round(origin.height * dpr);
+    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, origin.width, origin.height);
+
+    let biting = 0;
+    flies.forEach((fly) => {
+      fly.t += dt;
+      const x0 = fly.x, y0 = fly.y;
+      if (buzzing(fly) && !on) fly.state = "leave";
+      if (fly.state !== "swatted") fly.alpha = Math.min(1, fly.alpha + dt * 2.5);
+      const anchor = buzzing(fly) ? anchorOf(fly, origin) : null;
+      if (buzzing(fly) && !anchor) fly.state = "leave";
+      if (fly.state === "arrive") {
+        const dx = anchor.x - fly.x, dy = anchor.y - fly.y, distance = Math.hypot(dx, dy);
+        if (distance < 6) fly.state = "buzz";
+        else {
+          // บินซิกแซกเข้าหาต้น
+          const ux = dx / distance, uy = dy / distance, wobble = Math.sin(fly.t * 9 + fly.phase) * 40;
+          fly.x += (ux * 80 - uy * wobble) * dt;
+          fly.y += (uy * 80 + ux * wobble) * dt;
+        }
+      }
+      if (fly.state === "buzz") {
+        if (fly.still) { fly.x = anchor.x; fly.y = anchor.y; }
+        else {
+          // วนเป็นวงรีบิด ๆ รอบจุดที่ตอม รัศมีหดขยายตลอด
+          fly.angle += dt * (5 + 2 * Math.sin(fly.t * 1.3 + fly.phase));
+          const r = 9 + 4 * Math.sin(fly.t * 2.1 + fly.phase), follow = Math.min(1, dt * 12);
+          fly.x += (anchor.x + Math.cos(fly.angle) * r * 1.4 - fly.x) * follow;
+          fly.y += (anchor.y + Math.sin(fly.angle * 1.7) * r * 0.8 - fly.y) * follow;
+        }
+        if (on && fly.alpha > 0.5) biting++;
+      }
+      if (fly.state === "leave") {
+        const dx = fly.home - fly.x, dy = -40 - fly.y, distance = Math.hypot(dx, dy) || 1;
+        fly.x += dx / distance * 130 * dt;
+        fly.y += dy / distance * 130 * dt;
+        if (distance < 10) fly.gone = true;
+      }
+      if (fly.state === "swatted") {
+        fly.vy += 500 * dt;
+        fly.y += fly.vy * dt;
+        fly.spin += dt * 12;
+        fly.alpha -= dt * 1.8;
+        if (fly.alpha <= 0) fly.gone = true;
+      }
+      const mx = fly.x - x0, my = fly.y - y0;
+      if (fly.state !== "swatted" && Math.hypot(mx, my) > 0.05) fly.heading = Math.atan2(my, mx);
+    });
+    flies = flies.filter((fly) => !fly.gone);
+    pops.forEach((pop) => { pop.t += dt; });
+    pops = pops.filter((pop) => pop.t < 0.35);
+    if (biting) onBite(dt * 1000 * SUNFLOWER_BUG_BITE * biting);
+    flies.forEach((fly) => sunflowerDrawFly(ctx, fly));
+    pops.forEach((pop) => sunflowerDrawPop(ctx, pop));
+    if (flies.length || pops.length) frame = requestAnimationFrame(step);
+    else { frame = 0; last = 0; }
+  };
+  const wake = () => {
+    if (!frame && (flies.length || pops.length) && active().seen) frame = requestAnimationFrame(step);
+  };
+
+  // at (พิกัดบนจอ) ให้แมลงเกาะนิ่งที่จุดนั้นทันที ใช้ในชุดทดสอบ ส่วนคนที่ขอลดการเคลื่อนไหว แมลงค่อย ๆ โผล่ที่ต้นแล้วเกาะนิ่ง
+  const spawn = (at) => {
+    const origin = canvas.getBoundingClientRect();
+    const fromLeft = Math.random() < 0.5;
+    const fly = {
+      state: "arrive", t: 0, phase: Math.random() * Math.PI * 2, angle: 0, spin: 0, vy: 0, alpha: 1,
+      x: fromLeft ? -12 : origin.width + 12, y: origin.height * (0.35 + Math.random() * 0.3), heading: fromLeft ? 0 : Math.PI,
+      home: fromLeft ? -30 : origin.width + 30, fx: 0.2 + Math.random() * 0.6, fy: 0.2 + Math.random() * 0.6, spot: null, at: null, still: false,
+    };
+    if (at) fly.at = { x: at.x - origin.left, y: at.y - origin.top };
+    if (at || reducedMotion.matches) {
+      const anchor = anchorOf(fly, origin);
+      if (!anchor) return;
+      Object.assign(fly, { state: "buzz", x: anchor.x, y: anchor.y, alpha: 0, still: true });
+    }
+    flies.push(fly);
+    wake();
+  };
+  // เรียกทุกวินาที: นับเวลาเฉพาะตอนที่แมลงมาได้ ครบแล้วปล่อยตัวใหม่
+  const tick = (ms) => {
+    const { on, seen } = active();
+    if (on && seen && flies.filter(buzzing).length < SUNFLOWER_BUG_MAX) {
+      wait -= ms;
+      if (wait <= 0) {
+        gap = (gap + 1) % SUNFLOWER_BUG_GAPS.length;
+        wait = SUNFLOWER_BUG_GAPS[gap] * 1000;
+        spawn();
+      }
+    }
+    wake();
+  };
+
+  document.addEventListener("pointerdown", (event) => {
+    if (!flies.length) return;
+    // มีหน้าต่างหรือฉากมืดบังแถบเมนูอยู่ แมลงข้างใต้ตบไม่ได้
+    const top = document.elementFromPoint(event.clientX, event.clientY);
+    if (!top || !area.contains(top)) return;
+    const origin = canvas.getBoundingClientRect();
+    const x = event.clientX - origin.left, y = event.clientY - origin.top;
+    let target = null, best = event.pointerType === "touch" ? 22 : 14; // นิ้วใหญ่กว่าเมาส์ ให้ระยะเผื่อมากกว่า
+    flies.forEach((fly) => {
+      const distance = Math.hypot(fly.x - x, fly.y - y);
+      if (buzzing(fly) && fly.alpha > 0.3 && distance < best) { target = fly; best = distance; }
+    });
+    if (!target) return;
+    // กดนี้เป็นของแมลง ไม่ให้ทะลุไปโดนปุ่มหรือเมนูที่อยู่ข้างใต้ (click ตามมาทีหลังเสมอ ต้องกลืนทิ้งด้วย)
+    event.preventDefault();
+    event.stopPropagation();
+    swallowClickUntil = performance.now() + 800;
+    Object.assign(target, { state: "swatted", vy: -60 });
+    pops.push({ x: target.x, y: target.y, t: 0 });
+    wake();
+  }, true);
+  document.addEventListener("click", (event) => {
+    if (performance.now() > swallowClickUntil) return;
+    swallowClickUntil = 0;
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
+
+  return {
+    tick, wake, spawn,
+    count: () => flies.filter(buzzing).length,
+    // ตำแหน่งบนจอของแมลงแต่ละตัว สำหรับชุดทดสอบ
+    flies: () => {
+      const origin = canvas.getBoundingClientRect();
+      return flies.map((fly) => ({ state: fly.state, x: origin.left + fly.x, y: origin.top + fly.y }));
+    },
+  };
+}
+
 const sunflowerBanner = document.querySelector(".officer-banner");
 if (sunflowerBanner) {
   const svg = sunflowerBanner.querySelector(".officer-sunflower");
   const toggle = document.getElementById("sunflowerSwitch");
   const can = document.getElementById("sunflowerCan");
   const replant = document.getElementById("sunflowerReplant");
+  const fertilizer = document.getElementById("sunflowerFertilizer");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   let state = sunflowerLoad(Date.now());
   sunflowerSave(state); // เครื่องที่เพิ่งเริ่มเล่นต้องจำเวลาไว้ ไม่งั้นโหลดหน้าใหม่ทีไรก็ได้ต้นสดใหม่ทุกครั้ง
   // ตอนรดน้ำ ต้นค่อย ๆ ฟื้นจากท่าเดิม (นาทีที่แห้งอยู่) กลับมาสดระหว่างที่หยดน้ำตก
   let recovery = null;
+  // แมลงกัดทีละนิดทุกเฟรม เก็บลงเครื่องแค่วินาทีละครั้งพอ แต่วาดต้นใหม่ถี่กว่านั้น ให้เห็นต้นทรุดลงต่อหน้า
+  let bitSavedAt = 0, bitDrawnAt = 0;
+  const bugCanvas = sunflowerBanner.querySelector(".sunflower-bugs");
+  const bugs = sunflowerBugs(bugCanvas, svg, {
+    reducedMotion,
+    active: () => {
+      const r = sunflowerBanner.getBoundingClientRect();
+      const seen = !document.hidden && r.width > 0 && r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight;
+      return { on: state.on && sunflowerAges(state, Date.now()).dry < SUNFLOWER_DEAD_AT, seen };
+    },
+    onBite: (ms) => {
+      state = { ...state, bitten: (state.bitten || 0) + ms };
+      if (performance.now() - bitSavedAt > 1000) {
+        bitSavedAt = performance.now();
+        sunflowerSave(state);
+      }
+      if (!recovery && performance.now() - bitDrawnAt > 200) {
+        bitDrawnAt = performance.now();
+        render();
+      }
+    },
+  });
+  bugCanvas.sunflowerBugs = bugs; // ให้ชุดทดสอบเรียกแมลงมาได้ทันที ไม่ต้องรอสุ่ม
 
   const render = () => {
     const ages = state.on ? sunflowerAges(state, Date.now()) : { dry: 0, grown: Infinity };
@@ -246,9 +563,17 @@ if (sunflowerBanner) {
     sunflowerBanner.classList.toggle("is-game-on", state.on);
     can.hidden = !state.on || pose.dead;
     replant.hidden = !state.on || !pose.dead;
-    const status = state.on ? sunflowerStatus(ages) : "";
+    const pests = bugs.count();
+    const status = state.on
+      ? [sunflowerStatus(ages, state.fertilizedAt != null, (state.bitten || 0) / SUNFLOWER_MINUTE), pests ? `แมลงตอม ${pests} ตัว` : ""].filter(Boolean).join(" · ")
+      : "";
     can.title = `รดน้ำ · ${status}`;
     replant.title = status;
+    // ถุงปุ๋ยโผล่ทุกครั้งที่เปิดเกม แต่จางและกดไม่ได้เมื่อใส่ไม่ได้ ผู้เล่นจึงรู้ว่ามีปุ๋ยแม้ต้นบานเต็มที่อยู่
+    fertilizer.hidden = !state.on;
+    fertilizer.setAttribute("aria-disabled", String(!sunflowerCanFertilize(state, ages)));
+    fertilizer.title = state.on ? sunflowerFertilizerHint(state, ages) : "";
+    bugs.wake(); // ปิดเกมหรือต้นตาย แมลงต้องได้บินหนี
     if (recovery) requestAnimationFrame(render);
   };
   const update = (next) => {
@@ -258,27 +583,38 @@ if (sunflowerBanner) {
   };
 
   toggle.addEventListener("click", () => {
-    // ปิดเกมระหว่างรดน้ำ บัวถูกซ่อนกลางคันจนไม่มี animationend ต้องเอาคลาสออกเอง ไม่งั้นรดน้ำครั้งต่อไปไม่ได้
-    sunflowerBanner.classList.remove("is-watering");
+    // ปิดเกมระหว่างรดน้ำหรือใส่ปุ๋ย บัวหรือถุงถูกซ่อนกลางคันจนไม่มี animationend ต้องเอาคลาสออกเอง ไม่งั้นครั้งต่อไปทำไม่ได้
+    sunflowerBanner.classList.remove("is-watering", "is-fertilizing");
     recovery = null;
     update(sunflowerSwitched(state, !state.on, Date.now()));
   });
+  // บัวกับถุงปุ๋ยลอยไปที่ต้นเหมือนกัน เล่นพร้อมกันไม่ได้
+  const toolBusy = () => sunflowerBanner.classList.contains("is-watering") || sunflowerBanner.classList.contains("is-fertilizing");
   can.addEventListener("click", () => {
     const now = Date.now();
     const { dry } = sunflowerAges(state, now);
-    if (!state.on || dry >= SUNFLOWER_DEAD_AT || sunflowerBanner.classList.contains("is-watering")) return;
+    if (!state.on || dry >= SUNFLOWER_DEAD_AT || toolBusy()) return;
     if (!reducedMotion.matches) {
       recovery = { from: dry, start: performance.now() };
       sunflowerBanner.classList.add("is-watering");
     }
-    update({ ...state, wateredAt: now });
+    update({ ...state, wateredAt: now, bitten: 0 });
   });
   can.addEventListener("animationend", (event) => {
     if (event.target === can) sunflowerBanner.classList.remove("is-watering");
   });
+  fertilizer.addEventListener("click", () => {
+    const now = Date.now();
+    if (!sunflowerCanFertilize(state, sunflowerAges(state, now)) || toolBusy()) return;
+    if (!reducedMotion.matches) sunflowerBanner.classList.add("is-fertilizing");
+    update({ ...state, fertilizedAt: now });
+  });
+  fertilizer.addEventListener("animationend", (event) => {
+    if (event.target === fertilizer) sunflowerBanner.classList.remove("is-fertilizing");
+  });
   replant.addEventListener("click", () => {
     const now = Date.now();
-    update({ ...state, plantedAt: now, wateredAt: now });
+    update({ ...state, plantedAt: now, wateredAt: now, fertilizedAt: null, bitten: 0 });
     // ปุ่มปลูกใหม่หายไปแล้ว ส่งโฟกัสต่อให้บัวรดน้ำที่มาแทนที่
     can.focus();
     sunflowerBanner.classList.remove("is-planting");
@@ -292,6 +628,14 @@ if (sunflowerBanner) {
     render();
   });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) render(); });
-  setInterval(() => { if (state.on && !document.hidden && !recovery) render(); }, 1000);
+  setInterval(() => {
+    bugs.tick(1000);
+    if (state.on && !document.hidden && !recovery) render();
+  }, 1000);
+  // ต้นที่ใส่ปุ๋ยโตวินาทีละ 13 วินาที วาดแค่วินาทีละครั้งจะเห็นต้นกระตุกเป็นขั้น จึงวาดถี่ขึ้นจนกว่าจะบาน
+  setInterval(() => {
+    if (!state.on || state.fertilizedAt == null || document.hidden || recovery) return;
+    if (sunflowerAges(state, Date.now()).grown < SUNFLOWER_BLOOMED_AT + 0.5) render();
+  }, 150);
   render();
 }

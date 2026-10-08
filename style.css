@@ -522,7 +522,7 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 @keyframes sunflowerBloom { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
 @keyframes sunflowerTwirl { 0%, 100% { transform: rotate(-2.5deg); } 50% { transform: rotate(2.5deg); } }
 
-/* เกมปลูกทานตะวัน (sunflower.js) วาดท่าเหี่ยวและการโตเอง ตรงนี้มีแค่จังหวะไหว ปุ่ม และแอนิเมชันรดน้ำ
+/* เกมปลูกทานตะวัน (sunflower.js) วาดท่าเหี่ยวและการโตเอง ตรงนี้มีแค่จังหวะไหว ปุ่ม และแอนิเมชันรดน้ำกับใส่ปุ๋ย
    ต้นที่เหี่ยวมากไหวช้าลง ต้นที่ตายแล้วนิ่ง */
 .officer-sunflower[data-wilt="3"] .sunflower-plant, .officer-sunflower[data-wilt="4"] .sunflower-plant { animation-duration: 15s; }
 .officer-sunflower[data-wilt="3"] .sunflower-head, .officer-sunflower[data-wilt="4"] .sunflower-head { animation-duration: 15s; }
@@ -531,13 +531,15 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 .officer-banner.is-planting .sunflower-soil { animation: sunflowerPlant .6s var(--ease); }
 @keyframes sunflowerPlant { 0% { transform: scale(.2, .1); } 60% { transform: scale(1.12, 1.2); } 100% { transform: none; } }
 
-/* สวิตช์อยู่ซ้ายต้น บัวรดน้ำหรือปุ่มปลูกใหม่อยู่ขวา ตั้งอยู่บนขอบบนของป้ายเหมือนต้น
-   คอดอกตกไปทางขวา บัวจึงอยู่ชิดขอบขวา ไม่ชนดอกที่ห้อยลงมา */
+/* ถุงปุ๋ยอยู่ซ้ายต้น สวิตช์เปิดปิดอยู่เหนือถุง (ตอนปิดเกมไม่มีถุง สวิตช์ลงมาอยู่ติดป้าย) บัวรดน้ำหรือปุ่มปลูกใหม่อยู่ขวา
+   ทุกอย่างตั้งอยู่บนขอบบนของป้ายเหมือนต้น คอดอกตกไปทางขวา บัวจึงอยู่ชิดขอบขวา ไม่ชนดอกที่ห้อยลงมา */
 .sunflower-switch {
   position: absolute; left: 4px; bottom: calc(100% + 4px);
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px; border: 0; border-radius: 999px;
   background: none; color: var(--on-primary-muted); font-size: 11.5px; font-weight: 600; cursor: pointer;
+  transition: bottom .2s var(--ease);
 }
+.officer-banner.is-game-on .sunflower-switch { bottom: calc(100% + 38px); }
 .sunflower-switch-track {
   position: relative; width: 30px; height: 17px; border-radius: 999px;
   background: rgba(20, 8, 33, .32); box-shadow: inset 0 0 0 1px rgba(255, 222, 145, .45);
@@ -550,7 +552,7 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
 }
 .sunflower-switch[aria-checked="true"] .sunflower-switch-track { background: linear-gradient(135deg, #E2A43A, #A0693A); }
 .sunflower-switch[aria-checked="true"] .sunflower-switch-track span { transform: translateX(13px); }
-.sunflower-switch:focus-visible, .sunflower-can:focus-visible, .sunflower-replant:focus-visible { outline: 2px solid var(--on-primary); outline-offset: 2px; }
+.sunflower-switch:focus-visible, .sunflower-can:focus-visible, .sunflower-fertilizer:focus-visible, .sunflower-replant:focus-visible { outline: 2px solid var(--on-primary); outline-offset: 2px; }
 
 .sunflower-can {
   position: absolute; right: 8px; bottom: calc(100% - 3px); z-index: 1;
@@ -585,6 +587,50 @@ html.is-page-loading, .is-page-loading body { overflow: hidden; }
   0% { opacity: 0; transform: translateY(0); }
   20% { opacity: .95; }
   100% { opacity: 0; transform: translateY(88px); }
+}
+
+/* ถุงปุ๋ยฝั่งซ้าย กดแล้วถุงลอยไปเหนือโคนต้น เอียงเท เม็ดปุ๋ยตกลงโคน แล้วถุงกลับที่เดิม (เหมือนบัวรดน้ำ ระหว่างลอยยังรับการกดไว้เอง)
+   ใส่ไม่ได้ (ต้นบานเต็มที่แล้ว ใส่แล้ว หรือตายแล้ว) ถุงจางลงและไม่ขยับตามเมาส์ ส่วนคำอธิบายอยู่ที่ title */
+.sunflower-fertilizer {
+  position: absolute; left: 8px; bottom: calc(100% - 3px); z-index: 1;
+  width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: none; cursor: pointer;
+  filter: drop-shadow(0 4px 4px rgba(30, 20, 5, .3));
+  transition: transform .2s var(--ease), opacity .2s var(--ease);
+}
+.sunflower-fertilizer svg { display: block; width: 100%; height: 100%; stroke: none; }
+.sunflower-fertilizer:hover { transform: translateY(-2px) rotate(8deg); }
+.officer-banner:not(.is-fertilizing) .sunflower-fertilizer[aria-disabled="true"] { opacity: .45; cursor: default; }
+.sunflower-fertilizer[aria-disabled="true"]:hover { transform: none; }
+.officer-banner.is-fertilizing .sunflower-fertilizer { animation: sunflowerSow 1.9s var(--ease); }
+@keyframes sunflowerSow {
+  0% { transform: none; }
+  22%, 72% { transform: translate(68px, -16px) rotate(100deg); }
+  100% { transform: none; }
+}
+.sunflower-granules { position: absolute; left: calc(50% - 36px); bottom: calc(100% - 2px); width: 40px; height: 34px; pointer-events: none; }
+.sunflower-granules i {
+  position: absolute; top: 0; width: 4px; height: 4px; border-radius: 50%;
+  background: #F6E7A8; box-shadow: 0 0 3px rgba(255, 226, 140, .85); opacity: 0;
+}
+.sunflower-granules i:nth-child(1) { left: 20px; }
+.sunflower-granules i:nth-child(2) { left: 25px; }
+.sunflower-granules i:nth-child(3) { left: 30px; }
+.sunflower-granules i:nth-child(4) { left: 22px; }
+.sunflower-granules i:nth-child(5) { left: 27px; }
+.sunflower-granules i:nth-child(6) { left: 32px; }
+.officer-banner.is-fertilizing .sunflower-granules i { animation: sunflowerGranule .45s ease-in .45s 2; }
+.officer-banner.is-fertilizing .sunflower-granules i:nth-child(n+4) { animation-delay: .6s; }
+@keyframes sunflowerGranule {
+  0% { opacity: 0; transform: translate(0, 0); }
+  15%, 80% { opacity: 1; }
+  100% { opacity: 0; transform: translate(10px, 32px); }
+}
+
+/* ผืนวาดแมลงวัน คลุมรอบต้นและเกือบเต็มความกว้างของแถบเมนู (ขาดขอบละ 2px ไม่ให้แถบเลื่อนข้างได้)
+   อยู่หน้าต้น บัว และถุงปุ๋ย แต่ไม่รับเมาส์ sunflower.js ดักการตบแมลงเอง */
+.sunflower-bugs {
+  position: absolute; left: -14px; bottom: calc(100% - 12px); z-index: 2;
+  width: calc(100% + 28px); height: 170px; pointer-events: none;
 }
 
 .sunflower-replant {

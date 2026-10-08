@@ -948,6 +948,192 @@ async function main() {
       assert.equal((await shown()).status, 'รดน้ำ · เริ่มเฉา · รดน้ำล่าสุด 7 นาทีที่แล้ว');
       await setGame(0, 99);
     });
+    await check('The fertilizer bag speeds a seedling up once, dims when it cannot be used, and the switch sits above it only while the game is on', async () => {
+      const MINUTE = 60000;
+      const saved = () => evaluate(`JSON.parse(localStorage.getItem('govdocs-sunflower'))`);
+      const setGame = async (dry, grown, { on = true, fertilizedAfter = null } = {}) => {
+        await evaluate(`(() => {
+          const planted = Date.now() - ${grown * MINUTE};
+          localStorage.setItem('govdocs-sunflower', JSON.stringify({ on: ${on}, plantedAt: planted, wateredAt: Date.now() - ${dry * MINUTE},
+            fertilizedAt: ${fertilizedAfter === null ? 'null' : `planted + ${fertilizedAfter * MINUTE}`}, pausedAt: ${on ? 'null' : 'Date.now()'} }));
+          return true;
+        })()`);
+        await reloadApp();
+      };
+      const bag = async () => {
+        await settle(); // the switch glides and the bag fades; measure them at rest
+        return bagNow();
+      };
+      const bagNow = () => evaluate(`(() => {
+        const f = document.getElementById('sunflowerFertilizer'), can = document.getElementById('sunflowerCan');
+        const box = (el) => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
+        return {
+          shown: f.getClientRects().length > 0, disabled: f.getAttribute('aria-disabled'), title: f.title, canTitle: can.title,
+          bag: box(f), can: box(can), sw: box(document.getElementById('sunflowerSwitch')), banner: box(document.querySelector('.officer-banner')),
+          opacity: Number(getComputedStyle(f).opacity),
+        };
+      })()`);
+
+      // a seed is fertilizable: the bag is lit, and sits left of the can with the game switch above it
+      await setGame(0, 0);
+      const seed = await bag();
+      assert.deepEqual([seed.shown, seed.disabled, seed.title, seed.opacity], [true, 'false', 'ใส่ปุ๋ย · ต้นจะโตเร็วขึ้น 13 เท่า', 1]);
+      assert.ok(seed.sw.bottom <= seed.bag.top, 'the switch is above the bag, not on it');
+      assert.ok(seed.bag.right < seed.can.left && seed.bag.left >= seed.banner.left, 'the bag sits inside the left edge of the card, clear of the can');
+
+      await click('#sunflowerFertilizer');
+      await pause(700);
+      // mid-pour the bag leans over the seedling without making the sidebar scroll sideways, takes presses itself, and the can waits
+      assert.deepEqual(await evaluate(`(() => {
+        const s = document.querySelector('.sidebar'), f = document.getElementById('sunflowerFertilizer'), r = f.getBoundingClientRect();
+        return [document.querySelector('.officer-banner').classList.contains('is-fertilizing'), s.scrollWidth <= s.clientWidth, f.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2))];
+      })()`), [true, true, true]);
+      const { fertilizedAt, wateredAt } = await saved();
+      assert.ok(Date.now() - fertilizedAt < 5000);
+      await evaluate(`document.getElementById('sunflowerFertilizer').click(); document.getElementById('sunflowerCan').click(); true`);
+      const pouring = await saved();
+      assert.deepEqual([pouring.fertilizedAt, pouring.wateredAt], [fertilizedAt, wateredAt], 'a press during the pour neither fertilizes again nor waters');
+      await waitFor(`!document.querySelector('.officer-banner').classList.contains('is-fertilizing')`);
+      await pause(300);
+      const after = await bag();
+      assert.deepEqual([after.disabled, after.title, after.opacity < 1, after.canTitle], ['true', 'ใส่ปุ๋ยแล้ว ต้นกำลังโตเร็วขึ้น', true, 'รดน้ำ · เมล็ด · ใส่ปุ๋ยแล้ว · สดชื่น · เพิ่งรดน้ำ']);
+      await evaluate(`document.getElementById('sunflowerFertilizer').click(); true`);
+      assert.equal((await saved()).fertilizedAt, fertilizedAt, 'once per planting');
+
+      // the same 30 seconds after planting: fertilized is already growing tall, unfertilized is still a seed; at a minute it has bloomed
+      await setGame(0, 0.5, { fertilizedAfter: 0 });
+      assert.equal((await bag()).canTitle, 'รดน้ำ · กำลังโต · ใส่ปุ๋ยแล้ว · สดชื่น · เพิ่งรดน้ำ');
+      await setGame(0, 0.5);
+      assert.equal((await bag()).canTitle, 'รดน้ำ · เมล็ด · สดชื่น · เพิ่งรดน้ำ');
+      await setGame(0, 1.1, { fertilizedAfter: 0 });
+      const bloomed = await bag();
+      assert.deepEqual([bloomed.canTitle, bloomed.disabled, bloomed.title], ['รดน้ำ · สดชื่น · เพิ่งรดน้ำ', 'true', 'ทานตะวันบานเต็มที่แล้ว ไม่ต้องใส่ปุ๋ย']);
+      // fertilizing later speeds up only what is left
+      await setGame(0, 3, { fertilizedAfter: 3 });
+      assert.match((await bag()).canTitle, /^รดน้ำ · ต้นอ่อน · ใส่ปุ๋ยแล้ว /);
+
+      // a bloomed plant has nothing to fertilize: the bag stays, dimmed, and a press changes nothing
+      await setGame(0, 99);
+      const full = await bag();
+      assert.deepEqual([full.shown, full.disabled, full.title, full.opacity < 1], [true, 'true', 'ทานตะวันบานเต็มที่แล้ว ไม่ต้องใส่ปุ๋ย', true]);
+      await evaluate(`document.getElementById('sunflowerFertilizer').click(); true`);
+      assert.deepEqual([(await saved()).fertilizedAt, await evaluate(`document.querySelector('.officer-banner').classList.contains('is-fertilizing')`)], [null, false]);
+
+      // dead: dimmed, with the reason; replanting gives a new seed that can be fertilized again
+      await setGame(26, 8, { fertilizedAfter: 0 });
+      assert.deepEqual(await bag().then(({ shown, disabled, title }) => [shown, disabled, title]), [true, 'true', 'ทานตะวันตายแล้ว ใส่ปุ๋ยไม่ได้']);
+      await click('#sunflowerReplant');
+      assert.equal((await saved()).fertilizedAt, null, 'replanting takes the fertilizer off');
+      assert.equal((await bag()).disabled, 'false');
+
+      // switched off: no bag, and the switch comes down onto the card; switched on again, it goes back above the bag
+      await click('#sunflowerSwitch');
+      const off = await bag();
+      assert.deepEqual([off.shown, off.sw.bottom <= off.banner.top, off.banner.top - off.sw.bottom < 12], [false, true, true]);
+      await click('#sunflowerSwitch');
+      await pause(400);
+      const back = await bag();
+      assert.deepEqual([back.shown, back.sw.bottom <= back.bag.top], [true, true]);
+      await setGame(0, 99);
+    });
+    await check('Flies drawn on a canvas buzz the sunflower and dry it faster; a click or tap swats one without pressing what is under it', async () => {
+      const saved = () => evaluate(`JSON.parse(localStorage.getItem('govdocs-sunflower'))`);
+      // the page keeps its fly swarm on the canvas, so the test can call one in instead of waiting for a random one
+      const bugs = (code) => evaluate(`(() => { const b = document.querySelector('.sunflower-bugs').sunflowerBugs; return ${code}; })()`);
+      const press = async ({ x, y }) => {
+        await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+        await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+      };
+      const fresh = async () => {
+        await evaluate(`localStorage.setItem('govdocs-sunflower', JSON.stringify({ on: true, plantedAt: Date.now() - 99 * 60000, wateredAt: Date.now(), fertilizedAt: null, bitten: 0, pausedAt: null })); true`);
+        await reloadApp();
+      };
+      await fresh();
+
+      // the first fly comes 20 seconds after the page opens, the second 25 after that, the third 30 after that
+      // (the page also ticks once a second on its own, hence 3 seconds to spare before each)
+      for (const [gap, count] of [[20, 1], [25, 2], [30, 3]]) {
+        assert.equal(await bugs(`(b.tick(${(gap - 3) * 1000}), b.count())`), count - 1, `not yet ${count}`);
+        assert.equal(await bugs('(b.tick(3000), b.count())'), count, `fly ${count} after ${gap} seconds`);
+      }
+      assert.equal(await bugs('(b.tick(60000), b.count())'), 3, 'no more than three at once');
+      await fresh();
+
+      // a fly comes in from the side, finds the plant, and is actually drawn
+      await bugs('(b.spawn(), true)');
+      await waitFor(`document.querySelector('.sunflower-bugs').sunflowerBugs.flies().some((f) => f.state === 'buzz')`);
+      assert.ok(await evaluate(`(() => {
+        const c = document.querySelector('.sunflower-bugs'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let painted = 0;
+        for (let i = 3; i < d.length; i += 4) if (d[i]) painted++;
+        return painted > 30;
+      })()`), 'the fly is painted on the canvas');
+      assert.ok(await evaluate(`(() => { const s = document.querySelector('.sidebar'); return s.scrollWidth <= s.clientWidth; })()`), 'the canvas does not make the sidebar scroll sideways');
+
+      // while it buzzes, the plant dries 9 seconds extra per second; the watering time shown stays true
+      const before = (await saved()).bitten;
+      await pause(2300);
+      assert.ok((await saved()).bitten - before >= 9000, 'the bites are saved');
+      assert.equal(await evaluate(`document.getElementById('sunflowerCan').title`), 'รดน้ำ · สดชื่น · เพิ่งรดน้ำ · แมลงตอม 1 ตัว');
+
+      // a mouse click on it swats it: it tumbles down and is gone
+      await press((await bugs('b.flies()'))[0]);
+      assert.equal((await bugs('b.flies()'))[0].state, 'swatted');
+      await waitFor(`document.querySelector('.sunflower-bugs').sunflowerBugs.flies().length === 0`);
+
+      // a fly over the watering can: tapping it swats the fly and does not water
+      const canCentre = await evaluate(`(() => { const r = document.getElementById('sunflowerCan').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      await bugs(`(b.spawn(${JSON.stringify(canCentre)}), true)`);
+      await pause(500);
+      const { wateredAt, bitten } = await saved();
+      await cdp('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [canCentre] });
+      await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await pause(200);
+      assert.deepEqual([(await bugs('b.flies()'))[0]?.state, (await saved()).wateredAt, await evaluate(`document.querySelector('.officer-banner').classList.contains('is-watering')`)],
+        ['swatted', wateredAt, false]);
+
+      // watering takes away the dryness the flies caused
+      assert.ok(bitten > 0);
+      await pause(900);
+      await click('#sunflowerCan');
+      assert.equal((await saved()).bitten, 0);
+      await waitFor(`!document.querySelector('.officer-banner').classList.contains('is-watering')`);
+
+      // switched off, the flies fly away
+      await bugs('(b.spawn(), b.spawn(), true)');
+      await pause(300);
+      await click('#sunflowerSwitch');
+      await waitFor(`document.querySelector('.sunflower-bugs').sunflowerBugs.flies().length === 0`);
+      await click('#sunflowerSwitch');
+
+      // on a phone with the menu closed nobody can see the plant: a fly there does not bite
+      await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+      await pause(400);
+      await bugs('(b.spawn(), true)');
+      const hidden = (await saved()).bitten;
+      await pause(1500);
+      assert.equal((await saved()).bitten, hidden);
+      await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+
+      // one fly is enough to wilt it ten times as fast, and the plant is redrawn as it happens, not once a second:
+      // 4.6 minutes dry needs 24 more seconds to start drooping, which one fly does in under 3
+      await evaluate(`localStorage.setItem('govdocs-sunflower', JSON.stringify({ on: true, plantedAt: Date.now() - 99 * 60000, wateredAt: Date.now() - 4.6 * 60000, fertilizedAt: null, bitten: 0, pausedAt: null })); true`);
+      await reloadApp();
+      const head = await evaluate(`(() => { const r = document.querySelector('.sunflower-bloom').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      await bugs(`(b.spawn(${JSON.stringify(head)}), true)`);
+      const start = Date.now();
+      await waitFor(`document.querySelector('.officer-sunflower').dataset.wilt === '1'`);
+      assert.ok(Date.now() - start < 4500, `drooped after ${Date.now() - start} ms`);
+      const bites = await evaluate(`(async () => {
+        const read = () => JSON.parse(localStorage.getItem('govdocs-sunflower')).bitten;
+        const first = read();
+        await new Promise((resolve) => setTimeout(resolve, 2100));
+        return read() - first;
+      })()`);
+      assert.ok(bites > 12000 && bites < 26000, `one fly bites 9 seconds a second, not twice that (${bites} ms in about 2 s)`);
+      await evaluate(`localStorage.setItem('govdocs-sunflower', JSON.stringify({ on: true, plantedAt: Date.now() - 99 * 60000, wateredAt: Date.now(), fertilizedAt: null, bitten: 0, pausedAt: null })); true`);
+      await reloadApp();
+    });
     await check('Theme changes and persists across reload', async () => {
       const previous = await evaluate('activeMode()');
       await click('#themeToggle');

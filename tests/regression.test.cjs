@@ -1646,14 +1646,18 @@ test('custom properties only use color-mix() inside @supports, so older browsers
 });
 
 // sunflower.js on its own: the timing rules of the game, without a page (the browser suite drives the page).
-test('the sunflower changes every 5 minutes without water, dies at 25, stops growing when dead, and pausing freezes it', () => {
+function sunflowerSandbox() {
   const storage = new Map();
   const context = vm.createContext({
     document: { querySelector: () => null },
     localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)) },
   });
   vm.runInContext(fs.readFileSync(path.join(root, 'sunflower.js'), 'utf8'), context);
-  const run = (code) => JSON.parse(vm.runInContext(`JSON.stringify(${code})`, context));
+  return { storage, run: (code) => JSON.parse(vm.runInContext(`JSON.stringify(${code})`, context)) };
+}
+
+test('the sunflower changes every 5 minutes without water, dies at 25, stops growing when dead, and pausing freezes it', () => {
+  const { storage, run } = sunflowerSandbox();
   const MINUTE = 60000;
 
   assert.deepEqual(run('[0, 4.9, 5, 9.9, 10, 15, 20, 24.9, 25, 300].map((m) => SUNFLOWER_WILT_LABELS[sunflowerWiltStage(m)])'),
@@ -1682,15 +1686,79 @@ test('the sunflower changes every 5 minutes without water, dies at 25, stops gro
   assert.deepEqual(off, { on: false, plantedAt: 0, wateredAt: 3 * MINUTE, pausedAt: 10 * MINUTE });
   assert.deepEqual(ages(off, 500 * MINUTE), { dry: 7, grown: 10 });
   const on = run(`sunflowerSwitched(${JSON.stringify(off)}, true, ${60 * MINUTE})`);
-  assert.deepEqual([on, ages(on, 60 * MINUTE)], [{ on: true, plantedAt: 50 * MINUTE, wateredAt: 53 * MINUTE, pausedAt: null }, { dry: 7, grown: 10 }]);
+  assert.deepEqual([on, ages(on, 60 * MINUTE)], [{ on: true, plantedAt: 50 * MINUTE, wateredAt: 53 * MINUTE, fertilizedAt: null, bitten: 0, pausedAt: null }, { dry: 7, grown: 10 }]);
 
   // a new device, or storage with something unreadable, starts with a bloomed plant watered now
-  const fresh = { on: true, plantedAt: 1000 * MINUTE - 13 * MINUTE, wateredAt: 1000 * MINUTE, pausedAt: null };
+  const fresh = { on: true, plantedAt: 1000 * MINUTE - 13 * MINUTE, wateredAt: 1000 * MINUTE, fertilizedAt: null, bitten: 0, pausedAt: null };
   assert.deepEqual(run(`sunflowerLoad(${1000 * MINUTE})`), fresh);
   storage.set('govdocs-sunflower', '{"on":true,"plantedAt":"soon"}');
   assert.deepEqual(run(`sunflowerLoad(${1000 * MINUTE})`), fresh);
   storage.set('govdocs-sunflower', JSON.stringify({ on: false, plantedAt: 5, wateredAt: 6 }));
-  assert.deepEqual(run(`sunflowerLoad(${1000 * MINUTE})`), { on: false, plantedAt: 5, wateredAt: 6, pausedAt: 1000 * MINUTE }, 'paused without a pause time: paused from now');
+  assert.deepEqual(run(`sunflowerLoad(${1000 * MINUTE})`), { on: false, plantedAt: 5, wateredAt: 6, fertilizedAt: null, bitten: 0, pausedAt: 1000 * MINUTE }, 'paused without a pause time: paused from now');
+});
+
+test('fertilizer makes the sunflower grow 13 minutes of growth in 1, once per planting, and only while it is still growing', () => {
+  const { storage, run } = sunflowerSandbox();
+  const MINUTE = 60000;
+  const ages = (state, now) => run(`sunflowerAges(${JSON.stringify(state)}, ${now})`);
+  const planted = { on: true, plantedAt: 0, wateredAt: 0, fertilizedAt: null, pausedAt: null };
+
+  // fertilized at planting: fully grown after 1 minute instead of 13, and the water clock is untouched
+  assert.deepEqual(ages(planted, 1 * MINUTE), { dry: 1, grown: 1 });
+  assert.deepEqual(ages({ ...planted, fertilizedAt: 0 }, 1 * MINUTE), { dry: 1, grown: 13 });
+  assert.deepEqual(ages({ ...planted, fertilizedAt: 0 }, 0.5 * MINUTE), { dry: 0.5, grown: 6.5 });
+  // fertilized after 3 minutes of normal growth: the 3 minutes before count once, the half minute after counts 13 times
+  assert.deepEqual(ages({ ...planted, fertilizedAt: 3 * MINUTE }, 3.5 * MINUTE), { dry: 3.5, grown: 9.5 });
+  assert.deepEqual(ages({ ...planted, fertilizedAt: 3 * MINUTE }, 2 * MINUTE), { dry: 2, grown: 2 }, 'a clock before the fertilizer was put on adds nothing');
+  // dying stops the growth, fertilized or not
+  const dead = { ...planted, fertilizedAt: 0 };
+  assert.deepEqual(ages(dead, 40 * MINUTE).grown, ages(dead, 25 * MINUTE).grown);
+
+  // the game clock stops while the game is off, and putting the fertilizer on is shifted out with everything else
+  const off = run(`sunflowerSwitched(${JSON.stringify({ ...planted, fertilizedAt: 2 * MINUTE })}, false, ${4 * MINUTE})`);
+  assert.deepEqual(ages(off, 500 * MINUTE), ages(off, 4 * MINUTE));
+  const on = run(`sunflowerSwitched(${JSON.stringify(off)}, true, ${60 * MINUTE})`);
+  assert.deepEqual([on.plantedAt, on.fertilizedAt, ages(on, 60 * MINUTE)], [56 * MINUTE, 58 * MINUTE, ages(off, 4 * MINUTE)]);
+  assert.equal(run(`sunflowerSwitched(${JSON.stringify({ ...off, fertilizedAt: null })}, true, ${60 * MINUTE})`).fertilizedAt, null);
+
+  // saved with the plant; a value that is not a time means not fertilized
+  storage.set('govdocs-sunflower', JSON.stringify({ on: true, plantedAt: 5, wateredAt: 6, fertilizedAt: 7 }));
+  assert.equal(run(`sunflowerLoad(${1000 * MINUTE})`).fertilizedAt, 7);
+  storage.set('govdocs-sunflower', JSON.stringify({ on: true, plantedAt: 5, wateredAt: 6, fertilizedAt: 'later' }));
+  assert.equal(run(`sunflowerLoad(${1000 * MINUTE})`).fertilizedAt, null);
+
+  // allowed only for a living plant that has not bloomed and has not been fertilized yet, with the reason otherwise
+  const can = (state, dry, grown) => run(`[sunflowerCanFertilize(${JSON.stringify(state)}, { dry: ${dry}, grown: ${grown} }), sunflowerFertilizerHint(${JSON.stringify(state)}, { dry: ${dry}, grown: ${grown} })]`);
+  assert.deepEqual(can(planted, 0, 0), [true, 'ใส่ปุ๋ย · ต้นจะโตเร็วขึ้น 13 เท่า']);
+  assert.deepEqual(can(planted, 12, 12.9), [true, 'ใส่ปุ๋ย · ต้นจะโตเร็วขึ้น 13 เท่า']);
+  assert.deepEqual(can(planted, 0, 13), [false, 'ทานตะวันบานเต็มที่แล้ว ไม่ต้องใส่ปุ๋ย']);
+  assert.deepEqual(can({ ...planted, fertilizedAt: 0 }, 1, 2), [false, 'ใส่ปุ๋ยแล้ว ต้นกำลังโตเร็วขึ้น']);
+  assert.deepEqual(can(planted, 25, 4), [false, 'ทานตะวันตายแล้ว ใส่ปุ๋ยไม่ได้']);
+  assert.equal(can({ ...planted, on: false }, 0, 0)[0], false, 'switched off');
+  assert.deepEqual(run('[[1, 3], [1, 99], [12.7, 6]].map(([dry, grown]) => sunflowerStatus({ dry, grown }, true))'),
+    ['ต้นอ่อน · ใส่ปุ๋ยแล้ว · สดชื่น · รดน้ำล่าสุด 1 นาทีที่แล้ว', 'สดชื่น · รดน้ำล่าสุด 1 นาทีที่แล้ว', 'กำลังโต · ใส่ปุ๋ยแล้ว · คอตก · รดน้ำล่าสุด 12 นาทีที่แล้ว']);
+});
+
+test('flies add dryness on top of the time since watering, which brings death closer but not the watering time shown', () => {
+  const { storage, run } = sunflowerSandbox();
+  const MINUTE = 60000;
+  const ages = (state, now) => run(`sunflowerAges(${JSON.stringify(state)}, ${now})`);
+  const bitten = { on: true, plantedAt: 0, wateredAt: 0, fertilizedAt: null, bitten: 5 * MINUTE, pausedAt: null };
+
+  assert.deepEqual(ages(bitten, 3 * MINUTE), { dry: 8, grown: 3 });
+  // dead 5 minutes early, and it stopped growing then
+  assert.deepEqual([ages(bitten, 19.9 * MINUTE).dry < 25, ages(bitten, 20 * MINUTE).dry, ages(bitten, 40 * MINUTE).grown], [true, 25, 20]);
+  // the wilt follows the bites, the minutes since watering do not
+  assert.equal(run('sunflowerStatus({ dry: 8, grown: 99 }, false, 5)'), 'เริ่มเฉา · รดน้ำล่าสุด 3 นาทีที่แล้ว');
+  // kept when the game is switched off and on, and saved with the plant; anything else is no bites
+  const on = run(`sunflowerSwitched(sunflowerSwitched(${JSON.stringify(bitten)}, false, ${2 * MINUTE}), true, ${60 * MINUTE})`);
+  assert.deepEqual([on.bitten, ages(on, 60 * MINUTE)], [5 * MINUTE, ages(bitten, 2 * MINUTE)]);
+  storage.set('govdocs-sunflower', JSON.stringify({ on: true, plantedAt: 5, wateredAt: 6, bitten: 700 }));
+  assert.equal(run(`sunflowerLoad(${1000 * MINUTE})`).bitten, 700);
+  for (const value of ['"lots"', '-3', 'null']) {
+    storage.set('govdocs-sunflower', `{"on":true,"plantedAt":5,"wateredAt":6,"bitten":${value}}`);
+    assert.equal(run(`sunflowerLoad(${1000 * MINUTE})`).bitten, 0, value);
+  }
 });
 
 test('index.html loads sunflower.js after script.js, and the browser suite serves it', () => {
