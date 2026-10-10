@@ -4,8 +4,8 @@
    20 นาทีเหี่ยวมาก ครบ 25 นาทีตาย ต้องกดปลูกใหม่ เมล็ดค่อย ๆ งอกจนบานเต็มที่ใน 13 นาที ระหว่างนั้นก็ต้องรดน้ำ
    สถานะเก็บใน localStorage ของเครื่องนั้นเท่านั้น ไม่แตะ Firestore
    ใส่ปุ๋ยได้ครั้งเดียวตอนที่ต้นยังโตไม่เต็มที่ ต้นจะโตเร็วขึ้น 13 เท่า บานเต็มที่ใน 1 นาทีแทน 13 นาที (ถ้าใส่ตอนปลูก) ไม่ใส่ก็ไม่เป็นอะไร
-   แมลงวันบินมาตอมเป็นระยะ (วาดบน canvas) ตัวที่ตอมอยู่ทำให้ต้นแห้งเร็วขึ้นมาก (ตัวเดียว 10 เท่า สามตัว 28 เท่า) กดหรือแตะที่ตัวเพื่อตบทิ้ง
-   แมลงมาเฉพาะตอนที่เปิดเกม ต้นยังไม่ตาย และมองเห็นต้นอยู่บนจอ รดน้ำแล้วความแห้งที่แมลงทำไว้ก็หายไปด้วย
+   ผีเสื้อบินมาตอมเป็นระยะ (วาดด้วย three.js) ตัวที่ตอมอยู่ทำให้ต้นแห้งเร็วขึ้นมาก (ตัวเดียว 10 เท่า สามตัว 28 เท่า) กดหรือแตะที่ตัวเพื่อไล่ให้บินหนีไป
+   ผีเสื้อมาเฉพาะตอนที่เปิดเกม ต้นยังไม่ตาย และมองเห็นต้นอยู่บนจอ รดน้ำแล้วความแห้งที่ผีเสื้อทำไว้ก็หายไปด้วย
    ปิดเกมแล้วนาฬิกาของเกมหยุด ต้นกลับเป็นของประดับที่บานสดเหมือนเดิม เปิดอีกครั้งก็เล่นต่อจากจุดเดิม
    ========================================================= */
 const SUNFLOWER_KEY = "govdocs-sunflower";
@@ -13,7 +13,7 @@ const SUNFLOWER_MINUTE = 60 * 1000;
 const SUNFLOWER_DEAD_AT = 25;    // นาทีหลังรดน้ำครั้งล่าสุด
 const SUNFLOWER_BLOOMED_AT = 13; // นาทีหลังปลูก
 const SUNFLOWER_FERTILIZED_BLOOM = 1; // ใส่ปุ๋ยแล้ว การโตที่เคยใช้ 13 นาทีใช้แค่ 1 นาที
-const SUNFLOWER_BUG_MAX = 3;            // แมลงตอมพร้อมกันได้มากสุด
+const SUNFLOWER_BUG_MAX = 3;            // ผีเสื้อตอมพร้อมกันได้มากสุด
 const SUNFLOWER_BUG_GAPS = [20, 25, 30]; // วินาทีก่อนตัวที่ 1, 2, 3 มา (นับต่อจากตัวก่อน) แล้ววนใหม่
 const SUNFLOWER_BUG_BITE = 9;           // ตอมหนึ่งนาที ต้นแห้งเพิ่มกี่นาที ต่อตัว (ตัวเดียวก็เหี่ยวเร็วขึ้น 10 เท่า)
 const SUNFLOWER_WILT_LABELS = ["สดชื่น", "เริ่มเฉา", "คอตก", "สีเริ่มเปลี่ยน", "เหี่ยวมาก", "ตายแล้ว"];
@@ -98,7 +98,7 @@ function sunflowerGrowthLabel(grown) {
 
 /* นาทีที่ไม่ได้รดน้ำ และนาทีที่โตมา ตามนาฬิกาของเกม ซึ่งหยุดเดินตอนปิดเกม ต้นที่ตายแล้วไม่โตต่อ
    fertilizedAt คือเวลาที่ใส่ปุ๋ย (null ถ้ายังไม่ได้ใส่) นับจากนั้นต้นโตเร็วขึ้น 13 เท่า
-   bitten คือมิลลิวินาทีที่แห้งเพิ่มเพราะแมลงตอมตั้งแต่รดน้ำครั้งล่าสุด */
+   bitten คือมิลลิวินาทีที่แห้งเพิ่มเพราะผีเสื้อตอมตั้งแต่รดน้ำครั้งล่าสุด */
 function sunflowerAges(state, now) {
   const clock = state.on ? now : state.pausedAt;
   const dryFrom = state.wateredAt - (state.bitten || 0);
@@ -112,7 +112,7 @@ function sunflowerAges(state, now) {
     grown: Math.max(0, (growthEnd - state.plantedAt + boost) / SUNFLOWER_MINUTE),
   };
 }
-// bitten เป็นนาที: ความแห้งที่มาจากแมลงไม่นับเป็นเวลาตั้งแต่รดน้ำ
+// bitten เป็นนาที: ความแห้งที่มาจากผีเสื้อไม่นับเป็นเวลาตั้งแต่รดน้ำ
 function sunflowerStatus({ dry, grown }, fertilized = false, bitten = 0) {
   if (dry >= SUNFLOWER_DEAD_AT) return "ทานตะวันตายแล้ว กดปลูกใหม่ได้เลย";
   const minutes = Math.floor(Math.max(0, dry - bitten));
@@ -252,95 +252,208 @@ function sunflowerDraw(svg, pose) {
   });
 }
 
-/* แมลงวันหนึ่งตัว หันหน้าไปทาง +x: ท้องเขียวเหลือบ อก หัวตาแดง ปีกใสกระพือ เส้นขอบจาง ๆ ให้เห็นบนพื้นม่วงเข้ม */
-function sunflowerDrawFly(ctx, fly) {
-  const flap = fly.state === "swatted" || fly.still ? 0.5 : Math.abs(Math.sin(fly.t * 70 + fly.phase));
+/* ผีเสื้อวาดด้วย three.js ซึ่งโหลดจาก CDN ตอนที่เปิดเกมและมองเห็นต้นครั้งแรก (โหลดแบบเดียวกับ PDF.js ใน script.js)
+   โหลดไม่ได้หรือเครื่องไม่มี WebGL ก็แค่ไม่มีผีเสื้อมา ส่วนอื่นของเกมเล่นได้ตามปกติ */
+const SUNFLOWER_THREE = "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.min.js";
+const SUNFLOWER_VIEW_TILT = 0.75; // มองผีเสื้อจากด้านข้างค่อนลงมาจากข้างบน (เรเดียน) จึงเห็นทั้งหลังปีกตอนกาง และปีกที่หุบตั้งขึ้นตอนเกาะ
+// ลายปีกสามแบบ สุ่มให้แต่ละตัว: wing คือสีโคนปีกไล่ไปปลายปีก edge คือขอบปีกสีเข้ม dots คือจุดบนขอบ tip คือแต้มสีที่ปลายปีกหน้า
+const SUNFLOWER_BUTTERFLY_KINDS = [
+  // ส้มลายดำ แบบผีเสื้อจักรพรรดิ
+  { wing: ["#E8590C", "#FFB238"], vein: "#1A1210", veinWidth: 0.4, edge: "#1A1210", edgeWidth: 1.4, dots: "#FFF4DC", body: "#2B1D17" },
+  // เหลืองปลายปีกดำ
+  { wing: ["#F0B000", "#FFE760"], vein: "rgba(120, 78, 0, .4)", veinWidth: 0.3, edge: "#22180E", edgeWidth: 0.9, tip: "#22180E", spots: "#FFE760", body: "#3A2D18" },
+  // ฟ้าเหลือบ
+  { wing: ["#0C2A86", "#3FC4FF"], vein: "rgba(6, 16, 56, .55)", veinWidth: 0.3, edge: "#0A0E22", edgeWidth: 1.4, dots: "#EAF7FF", body: "#141A30" },
+];
+// ขอบปีกข้างหนึ่ง หัวไปทาง +x ปีกกางออกทาง +y หน่วยละหนึ่งพิกเซลที่ขนาดปกติ: จุดเริ่มที่โคนปีก ตามด้วยเส้นโค้งเบซิเยร์ [c1x, c1y, c2x, c2y, x, y]
+const SUNFLOWER_WINGS = {
+  fore: [[1.2, 0.4], [3.2, 3.5, 6.4, 8.5, 6.6, 12.6], [5.2, 14, 1.5, 13.6, -1, 11.6], [-2.6, 10.2, -3.2, 6, -2.6, 3.4], [-2, 1.8, -0.8, 0.6, 1.2, 0.4]],
+  hind: [[0.2, 0.5], [-0.6, 3.6, -1.6, 7.6, -4.4, 9], [-7.4, 10.2, -10.2, 7.8, -10, 4.6], [-9.8, 2.2, -6, 0.6, 0.2, 0.5]],
+};
+
+/* ระบายลายปีกลง canvas ที่จะเป็น texture ของปีก: ด้านกว้างของ texture คือกรอบของปีกตามแกน x ด้านสูงตามแกน y แบบเดียวกับ uv ของรูปทรงปีก
+   points คือจุดเรียงตามขอบปีก ใช้วางเส้นปีกกับจุดบนขอบ */
+function sunflowerPaintWing(outline, points, box, kind, fore) {
+  const size = 128, canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const w = box.max.x - box.min.x, h = box.max.y - box.min.y;
+  ctx.setTransform(size / w, 0, 0, -size / h, -box.min.x * size / w, box.max.y * size / h);
+  const path = new Path2D();
+  path.moveTo(...outline[0]);
+  outline.slice(1).forEach((curve) => path.bezierCurveTo(...curve));
+  path.closePath();
+  const far = (p) => Math.hypot(p.x, p.y), reach = Math.max(...points.map(far));
+  // นอกปีกทาสีขอบไว้ด้วย ริมปีกที่ texture เกลี่ยสีจะได้ไม่ติดสีอื่นมา
+  ctx.fillStyle = kind.edge;
+  ctx.fillRect(box.min.x, box.min.y, w, h);
   ctx.save();
-  ctx.globalAlpha = Math.max(0, Math.min(1, fly.alpha));
-  ctx.translate(fly.x, fly.y);
-  ctx.rotate(fly.heading + fly.spin);
-  ctx.scale(1.5, 1.5);
-  // แสงจาง ๆ รอบตัว แยกตัวแมลงออกจากเกสรดอกสีเข้มและพื้นม่วงเข้ม
-  ctx.shadowColor = "rgba(255, 244, 214, .7)";
-  ctx.shadowBlur = 3;
-  const belly = ctx.createLinearGradient(-6, -3, 2, 3);
-  belly.addColorStop(0, "#47A07A");
-  belly.addColorStop(1, "#123828");
-  ctx.fillStyle = belly;
-  ctx.strokeStyle = "rgba(255, 255, 255, .4)";
-  ctx.lineWidth = 0.5;
-  ctx.beginPath();
-  ctx.ellipse(-2, 0, 4, 2.8, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.strokeStyle = "rgba(0, 0, 0, .35)";
-  ctx.lineWidth = 0.6;
-  [-3.6, -1.9].forEach((x) => {
+  ctx.clip(path);
+  const colour = ctx.createRadialGradient(0, 0, 0, 0, 0, reach);
+  colour.addColorStop(0, kind.wing[0]);
+  colour.addColorStop(1, kind.wing[1]);
+  ctx.fillStyle = colour;
+  ctx.fillRect(box.min.x, box.min.y, w, h);
+  const root = ctx.createRadialGradient(0, 0, 0, 0, 0, reach * 0.35);
+  root.addColorStop(0, "rgba(0, 0, 0, .4)");
+  root.addColorStop(1, "rgba(0, 0, 0, 0)");
+  ctx.fillStyle = root;
+  ctx.fillRect(box.min.x, box.min.y, w, h);
+  // เส้นปีกแผ่จากโคนปีกไปที่ขอบนอก
+  ctx.strokeStyle = kind.vein;
+  ctx.lineWidth = kind.veinWidth;
+  points.filter((p, i) => i % 4 === 0 && far(p) > reach * 0.55).forEach((p) => {
     ctx.beginPath();
-    ctx.moveTo(x, -2.3);
-    ctx.quadraticCurveTo(x + 0.7, 0, x, 2.3);
+    ctx.moveTo(p.x * 0.08, p.y * 0.08);
+    ctx.lineTo(p.x, p.y);
     ctx.stroke();
   });
-  ctx.fillStyle = "#1E2A24";
-  ctx.beginPath();
-  ctx.arc(2, 0, 2.1, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#2A1A14";
-  ctx.beginPath();
-  ctx.arc(4.3, 0, 1.6, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#D2402F";
-  [-1, 1].forEach((side) => {
+  if (kind.tip && fore) {
+    // ปลายปีกหน้าสีเข้ม มีจุดสีปีกสองจุด
+    const apex = points.reduce((a, p) => (far(p) > far(a) ? p : a)), ux = apex.x / far(apex), uy = apex.y / far(apex);
+    ctx.fillStyle = kind.tip;
     ctx.beginPath();
-    ctx.arc(4.8, side * 1.05, 1.05, 0, Math.PI * 2);
+    ctx.arc(apex.x, apex.y, 4.6, 0, Math.PI * 2);
     ctx.fill();
-  });
-  // ปีกชี้ไปข้างหลังเฉียงออกข้างลำตัว
-  ctx.shadowColor = "transparent";
-  ctx.fillStyle = "rgba(225, 240, 255, .32)";
-  ctx.strokeStyle = "rgba(255, 255, 255, .6)";
-  ctx.lineWidth = 0.4;
-  [-1, 1].forEach((side) => {
-    ctx.beginPath();
-    ctx.ellipse(-1.2, side * 2.6, 4.4, 1.2 + 1.2 * flap, side * -0.45, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  });
-  ctx.restore();
-}
-// ตบโดน: เส้นสั้น ๆ กระจายออกรอบจุดที่ตบ
-function sunflowerDrawPop(ctx, pop) {
-  const k = pop.t / 0.35;
-  ctx.save();
-  ctx.globalAlpha = Math.max(0, 1 - k);
-  ctx.strokeStyle = "#FFF3C9";
-  ctx.lineWidth = 1.5;
-  ctx.lineCap = "round";
-  for (let i = 0; i < 6; i++) {
-    const a = i * Math.PI / 3 + 0.3, near = 5 + k * 6, far = 8 + k * 10;
-    ctx.beginPath();
-    ctx.moveTo(pop.x + Math.cos(a) * near, pop.y + Math.sin(a) * near);
-    ctx.lineTo(pop.x + Math.cos(a) * far, pop.y + Math.sin(a) * far);
-    ctx.stroke();
+    ctx.fillStyle = kind.spots;
+    [[2.4, 1.2], [2.2, -1.4]].forEach(([back, side]) => {
+      ctx.beginPath();
+      ctx.arc(apex.x - ux * back - uy * side, apex.y - uy * back + ux * side, 0.75, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+  ctx.strokeStyle = kind.edge;
+  ctx.lineWidth = kind.edgeWidth * 2; // ครึ่งหนึ่งของเส้นอยู่นอกปีกซึ่งถูกตัดทิ้ง
+  ctx.stroke(path);
+  if (kind.dots) {
+    ctx.fillStyle = kind.dots;
+    points.filter((p, i) => i % 2 === 0 && far(p) > reach * 0.5).forEach((p) => {
+      const inset = 1 - kind.edgeWidth * 0.5 / far(p);
+      ctx.beginPath();
+      ctx.arc(p.x * inset, p.y * inset, 0.32, 0, Math.PI * 2);
+      ctx.fill();
+    });
   }
   ctx.restore();
+  return canvas;
 }
 
-/* ฝูงแมลงวันบน canvas ที่คลุมรอบต้น
-   canvas ไม่รับเมาส์ (กดทะลุไปที่สวิตช์ ถุงปุ๋ย บัว และเมนูได้ตามปกติ) การตบจึงดักที่ pointerdown ของทั้งหน้าแล้ววัดระยะถึงแมลงเอง
-   active() บอกว่าต้นให้แมลงกัดได้ไหม (on) และมองเห็นต้นอยู่ไหม (seen) onBite(ms) รับความแห้งที่เพิ่ม
-   แมลงบินมาจากขอบซ้ายหรือขวา เลือกส่วนของต้นที่จะตอม (ดอกมากสุด) แล้วบินวนอยู่ตรงนั้น ตัวที่วนอยู่เท่านั้นที่กัด
-   ต้นตายหรือปิดเกม แมลงบินหนีออกไปเอง มองไม่เห็นต้น (แท็บซ่อน เมนูมือถือปิด เลื่อนพ้นจอ) ทุกอย่างหยุดรอ
-   ไม่มีแมลงก็ไม่วาดอะไรเลย ไม่เปลือง requestAnimationFrame */
+/* ฉาก three.js บน canvas ของผีเสื้อ: กล้องมุมฉาก (orthographic) หน่วยละหนึ่งพิกเซล CSS แกน y ชี้ขึ้น ผีเสื้อที่ (x, y) บน canvas จึงอยู่ที่ (x, -y)
+   ผีเสื้อแต่ละตัวมีท้อง อก หัว หนวด และปีกสี่ชิ้นที่กระพือรอบแนวลำตัว ในตัวผีเสื้อหัวไปทาง +x หลังอยู่ทาง +y ปีกกางออกทาง ±z
+   สร้าง WebGL ไม่ได้ (เครื่องเก่า ปิดการ์ดจอไว้) ก็โยนข้อผิดพลาดออกไป ผู้เรียกจะไม่ปล่อยผีเสื้อมา */
+function sunflowerButterflyStage(THREE, canvas) {
+  // เก็บภาพล่าสุดไว้ ชุดทดสอบจึงอ่านพิกเซลได้
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+  renderer.setClearColor(0x000000, 0);
+  const scene = new THREE.Scene();
+  const camera = new THREE.OrthographicCamera(0, 1, 0, -1, 1, 600);
+  camera.position.z = 300;
+  scene.add(new THREE.AmbientLight(0xffffff, 2));
+  const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+  sun.position.set(0.3, 1, 0.8);
+  scene.add(sun);
+
+  // ชิ้นส่วนที่ผีเสื้อทุกตัวใช้ร่วมกัน: รูปทรงปีกซ้ายขวา ลายปีกของแต่ละแบบ ทรงกลมสำหรับตัว และเส้นหนวด
+  const shapes = {}, textures = {};
+  Object.entries(SUNFLOWER_WINGS).forEach(([part, outline]) => {
+    const shape = new THREE.Shape();
+    shape.moveTo(...outline[0]);
+    outline.slice(1).forEach((curve) => shape.bezierCurveTo(...curve));
+    const flat = new THREE.ShapeGeometry(shape, 12);
+    flat.computeBoundingBox();
+    const box = flat.boundingBox, position = flat.attributes.position, uv = flat.attributes.uv;
+    for (let i = 0; i < uv.count; i++) {
+      uv.setXY(i, (position.getX(i) - box.min.x) / (box.max.x - box.min.x), (position.getY(i) - box.min.y) / (box.max.y - box.min.y));
+    }
+    // ปีกข้างหนึ่งกางไปทาง +z อีกข้างไปทาง -z ปีกหลังต่ำกว่าปีกหน้านิดเดียว ตรงที่ซ้อนกันปีกหน้าจึงอยู่บน
+    const drop = part === "hind" ? -0.06 : 0;
+    shapes[part] = { 1: flat.clone().rotateX(Math.PI / 2).translate(0, drop, 0), [-1]: flat.clone().rotateX(-Math.PI / 2).translate(0, drop, 0) };
+    const points = shape.getSpacedPoints(64);
+    textures[part] = SUNFLOWER_BUTTERFLY_KINDS.map((kind) => {
+      const texture = new THREE.CanvasTexture(sunflowerPaintWing(outline, points, box, kind, part === "fore"));
+      texture.colorSpace = THREE.SRGBColorSpace;
+      return texture;
+    });
+  });
+  const ball = new THREE.SphereGeometry(1, 12, 8);
+  // หนวดโค้งไปข้างหน้าแล้วชี้ขึ้น ปลายหนวดเป็นตุ่ม
+  const feelers = [1, -1].map((side) => new THREE.QuadraticBezierCurve3(
+    new THREE.Vector3(2.7, 0.8, side * 0.4), new THREE.Vector3(4.6, 1.4, side * 1), new THREE.Vector3(6.6, 4, side * 2)));
+  const feelerLines = feelers.map((curve) => new THREE.BufferGeometry().setFromPoints(curve.getPoints(8)));
+
+  let size = "";
+  return {
+    make(index) {
+      const kind = SUNFLOWER_BUTTERFLY_KINDS[index];
+      // วัสดุแยกของแต่ละตัว จางเข้าจางออกได้ไม่กระทบตัวอื่น (ลาย texture ยังใช้ร่วมกัน)
+      const wing = (part) => new THREE.MeshLambertMaterial({ map: textures[part][index], side: THREE.DoubleSide, transparent: true });
+      const fore = wing("fore"), hind = wing("hind");
+      const body = new THREE.MeshLambertMaterial({ color: kind.body, transparent: true });
+      const line = new THREE.LineBasicMaterial({ color: kind.body, transparent: true });
+      const group = new THREE.Group();
+      // ท้องยาว อก หัว แล้วตุ่มปลายหนวด
+      [[[4.2, 0.95, 0.95], [-4, 0, 0]], [[1.9, 1.3, 1.3], [-0.1, 0.1, 0]], [[1, 1, 1], [2.1, 0.25, 0]],
+        ...feelers.map((curve) => [[0.45, 0.45, 0.45], curve.v2.toArray()])].forEach(([scale, at]) => {
+        const part = new THREE.Mesh(ball, body);
+        part.scale.set(...scale);
+        part.position.set(...at);
+        group.add(part);
+      });
+      feelerLines.forEach((geometry) => group.add(new THREE.Line(geometry, line)));
+      const wings = [];
+      [1, -1].forEach((side) => [["fore", fore], ["hind", hind]].forEach(([part, material]) => {
+        const mesh = new THREE.Mesh(shapes[part][side], material);
+        group.add(mesh);
+        wings.push({ mesh, side, hind: part === "hind" });
+      }));
+      scene.add(group);
+      return { group, wings, materials: [fore, hind, body, line] };
+    },
+    remove({ group, materials }) {
+      scene.remove(group);
+      materials.forEach((material) => material.dispose());
+    },
+    // วางผีเสื้อตามตำแหน่ง ทิศที่หัน และมุมยกปีก (0 คือกางแบน ราว 1.5 คือหุบตั้งขึ้น)
+    pose(butterfly) {
+      const { group, wings, materials } = butterfly.model;
+      group.position.set(butterfly.x, -(butterfly.y + butterfly.bob), butterfly.layer);
+      group.rotation.set(SUNFLOWER_VIEW_TILT, butterfly.yaw, butterfly.pitch);
+      group.scale.setScalar(butterfly.size);
+      wings.forEach(({ mesh, side, hind }) => { mesh.rotation.x = -side * (hind ? butterfly.liftHind : butterfly.lift); });
+      materials.forEach((material) => { material.opacity = Math.max(0, Math.min(1, butterfly.alpha)); });
+    },
+    render(width, height) {
+      const dpr = window.devicePixelRatio || 1, next = `${width}x${height}@${dpr}`;
+      if (next !== size) {
+        size = next;
+        renderer.setPixelRatio(dpr);
+        renderer.setSize(width, height, false);
+        camera.right = width;
+        camera.bottom = -height;
+        camera.updateProjectionMatrix();
+      }
+      renderer.render(scene, camera);
+    },
+  };
+}
+
+/* ฝูงผีเสื้อบน canvas ที่คลุมรอบต้น
+   canvas ไม่รับเมาส์ (กดทะลุไปที่สวิตช์ ถุงปุ๋ย บัว และเมนูได้ตามปกติ) การไล่จึงดักที่ pointerdown ของทั้งหน้าแล้ววัดระยะถึงผีเสื้อเอง
+   active() บอกว่าต้นให้ผีเสื้อตอมได้ไหม (on) และมองเห็นต้นอยู่ไหม (seen) onBite(ms) รับความแห้งที่เพิ่ม
+   ผีเสื้อบินพลิ้วมาจากขอบซ้ายหรือขวา เลือกส่วนของต้นที่จะตอม (ดอกมากสุด) บินวนอยู่ตรงนั้นสลับกับลงเกาะหุบกางปีกช้า ๆ
+   ตัวที่วนหรือเกาะอยู่ที่ต้นเท่านั้นที่ทำให้ต้นแห้ง กดหรือแตะโดนตัวไหน ตัวนั้นตกใจบินหนีไป
+   ต้นตายหรือปิดเกม ผีเสื้อบินจากไปเอง มองไม่เห็นต้น (แท็บซ่อน เมนูมือถือปิด เลื่อนพ้นจอ) ทุกอย่างหยุดรอ
+   ไม่มีผีเสื้อก็ไม่วาดอะไรเลย ไม่เปลือง requestAnimationFrame */
 function sunflowerBugs(canvas, svg, { active, onBite, reducedMotion }) {
-  const ctx = canvas.getContext("2d");
   const area = canvas.closest(".sidebar") || canvas.parentElement;
   const spots = [
     [".sunflower-bloom", 3], [".sunflower-bud", 2], [".sunflower-sprout", 2],
     ['.sunflower-leaf-at[data-leaf="right"]', 1], ['.sunflower-leaf-at[data-leaf="left"]', 1], [".sunflower-soil", 1],
   ];
-  let flies = [], pops = [], frame = 0, last = 0, swallowClickUntil = 0;
+  let butterflies = [], frame = 0, last = 0, swallowClickUntil = 0, spawned = 0;
   let gap = 0, wait = SUNFLOWER_BUG_GAPS[0] * 1000;
+  let stage = null, loading = null, lost = false;
+  const ready = () => Boolean(stage) && !lost;
 
   // ส่วนของต้นในพิกัดของ canvas ส่วนที่จางหรือยังไม่งอกนับว่าไม่มี
   const spotRect = (selector, origin) => {
@@ -356,112 +469,175 @@ function sunflowerBugs(canvas, svg, { active, onBite, reducedMotion }) {
     const spot = options.find(([, weight]) => (roll -= weight) < 0) || options[0];
     return spot ? spot[0] : null;
   };
-  // จุดที่แมลงตอม ตามส่วนของต้นที่กำลังไหวหรือโตอยู่ ส่วนนั้นหายไป (ดอกตูมกลายเป็นดอกบาน) ก็เลือกส่วนใหม่
-  const anchorOf = (fly, origin) => {
-    if (fly.at) return fly.at;
-    let rect = fly.spot && spotRect(fly.spot, origin);
+  // จุดที่ผีเสื้อตอม ตามส่วนของต้นที่กำลังไหวหรือโตอยู่ ส่วนนั้นหายไป (ดอกตูมกลายเป็นดอกบาน) ก็เลือกส่วนใหม่
+  const anchorOf = (butterfly, origin) => {
+    if (butterfly.at) return butterfly.at;
+    let rect = butterfly.spot && spotRect(butterfly.spot, origin);
     if (!rect) {
-      fly.spot = pick(origin);
-      rect = fly.spot && spotRect(fly.spot, origin);
+      butterfly.spot = pick(origin);
+      rect = butterfly.spot && spotRect(butterfly.spot, origin);
     }
-    return rect ? { x: rect.x + rect.w * fly.fx, y: rect.y + rect.h * fly.fy } : null;
+    return rect ? { x: rect.x + rect.w * butterfly.fx, y: rect.y + rect.h * butterfly.fy } : null;
   };
-  const buzzing = (fly) => fly.state === "arrive" || fly.state === "buzz";
+  const pestering = (butterfly) => butterfly.state === "arrive" || butterfly.state === "flutter" || butterfly.state === "perch";
+
+  // ขยับผีเสื้อหนึ่งตัวไปหนึ่งเฟรม คืนค่าว่ากำลังตอมต้นอยู่ไหม (บินวนหรือเกาะอยู่ที่ต้น)
+  const move = (butterfly, dt, on, origin) => {
+    const calm = reducedMotion.matches;
+    butterfly.t += dt;
+    const x0 = butterfly.x, y0 = butterfly.y;
+    if (pestering(butterfly) && !on) butterfly.state = "leave";
+    const anchor = pestering(butterfly) ? anchorOf(butterfly, origin) : null;
+    if (pestering(butterfly) && !anchor) butterfly.state = "leave";
+    if (pestering(butterfly)) butterfly.alpha = Math.min(1, butterfly.alpha + dt * 2.5);
+    let landed = false;
+    if (butterfly.state === "arrive") {
+      const dx = anchor.x - butterfly.x, dy = anchor.y - butterfly.y, distance = Math.hypot(dx, dy);
+      if (distance < 8) butterfly.state = "flutter";
+      else {
+        // บินเข้าหาต้นเป็นลูกคลื่น ส่ายไปมากว้าง ๆ
+        const ux = dx / distance, uy = dy / distance, sway = Math.sin(butterfly.t * 2.6 + butterfly.phase) * 34;
+        butterfly.x += (ux * 75 - uy * sway) * dt;
+        butterfly.y += (uy * 75 + ux * sway) * dt;
+      }
+    }
+    if (butterfly.state === "flutter") {
+      // วนเป็นวงรีหลวม ๆ เหนือจุดที่ตอม ครบเวลาแล้วลงเกาะ
+      butterfly.angle += dt * (1.9 + 0.8 * Math.sin(butterfly.t * 0.7 + butterfly.phase));
+      const r = 13 + 5 * Math.sin(butterfly.t * 1.1 + butterfly.phase), follow = Math.min(1, dt * 3.5);
+      butterfly.x += (anchor.x + Math.cos(butterfly.angle) * r * 1.3 - butterfly.x) * follow;
+      butterfly.y += (anchor.y - 6 + Math.sin(butterfly.angle * 1.6) * r * 0.6 - butterfly.y) * follow;
+      if ((butterfly.timer -= dt) <= 0) Object.assign(butterfly, { state: "perch", timer: 2 + Math.random() * 2.5 });
+    } else if (butterfly.state === "perch") {
+      // ร่อนลงที่จุดที่ตอม ถึงแล้วเกาะติดไปกับต้นที่ไหวอยู่ ครบเวลาแล้วบินวนต่อ บางทีก็ย้ายไปตอมส่วนอื่นของต้น
+      const dx = anchor.x - butterfly.x, dy = anchor.y - butterfly.y;
+      landed = butterfly.pinned || Math.hypot(dx, dy) < 3;
+      if (landed) { butterfly.x = anchor.x; butterfly.y = anchor.y; }
+      else {
+        const follow = Math.min(1, dt * 4);
+        butterfly.x += dx * follow;
+        butterfly.y += dy * follow;
+      }
+      if (!butterfly.pinned && (butterfly.timer -= dt) <= 0) {
+        Object.assign(butterfly, { state: "flutter", timer: 3 + Math.random() * 3 });
+        if (Math.random() < 0.4) Object.assign(butterfly, { spot: null, fx: 0.2 + Math.random() * 0.6, fy: 0.2 + Math.random() * 0.6 });
+      }
+    }
+    if (butterfly.state === "leave" || butterfly.state === "scared") {
+      if (calm) {
+        // คนที่ขอลดการเคลื่อนไหว: ค่อย ๆ จางหายไปตรงที่อยู่ ไม่บินข้ามจอ
+        butterfly.alpha -= dt * 2;
+        if (butterfly.alpha <= 0) butterfly.gone = true;
+      } else {
+        let ux, uy, speed;
+        if (butterfly.state === "leave") {
+          const dx = butterfly.home - butterfly.x, dy = -50 - butterfly.y, distance = Math.hypot(dx, dy) || 1;
+          [ux, uy, speed] = [dx / distance, dy / distance, 110];
+        } else {
+          // ตกใจ: เร่งความเร็วหนีออกจากจุดที่โดนกด
+          butterfly.speed = Math.min(300, butterfly.speed + 700 * dt);
+          [ux, uy, speed] = [...butterfly.away, butterfly.speed];
+        }
+        const sway = Math.sin(butterfly.t * (butterfly.state === "scared" ? 9 : 2.6) + butterfly.phase) * 0.3;
+        butterfly.x += (ux - uy * sway) * speed * dt;
+        butterfly.y += (uy + ux * sway) * speed * dt;
+        if (butterfly.x < -40 || butterfly.x > origin.width + 40 || butterfly.y < -40 || butterfly.y > origin.height + 40) butterfly.gone = true;
+      }
+    }
+
+    // หันหัวไปทางที่บิน ตอนกลับทิศก็ค่อย ๆ หมุนตัวผ่านด้านหลัง เชิดหัวตอนบินขึ้น ก้มหัวตอนบินลง
+    const vx = dt ? (butterfly.x - x0) / dt : 0, vy = dt ? (butterfly.y - y0) / dt : 0;
+    if (!landed && Math.abs(vx) > 6) butterfly.facing = Math.sign(vx);
+    const pitch = landed ? 0.3 : Math.max(-0.5, Math.min(0.6, Math.atan2(-vy, Math.abs(vx) + 25)));
+    const turn = Math.min(1, dt * 4);
+    butterfly.yaw += ((butterfly.facing > 0 ? butterfly.turn : Math.PI - butterfly.turn) - butterfly.yaw) * turn;
+    butterfly.pitch += (pitch - butterfly.pitch) * turn;
+    // ปีก: บินอยู่กระพือเร็วสลับกับร่อน เกาะอยู่หุบกางช้า ๆ ตกใจกระพือถี่ ปีกหลังตามปีกหน้าช้านิดหนึ่ง ตัวโยนขึ้นลงตามจังหวะปีก
+    butterfly.rest += ((landed ? 1 : 0) - butterfly.rest) * Math.min(1, dt * 5);
+    const scared = butterfly.state === "scared", rate = scared ? 70 : 38 + 6 * Math.sin(butterfly.t * 0.9 + butterfly.phase);
+    butterfly.beat += dt * (rate * (1 - butterfly.rest) + 2.4 * butterfly.rest);
+    const glide = scared ? 1 : 0.4 + 0.6 * Math.min(1, Math.max(0, 0.5 + 1.5 * Math.sin(butterfly.t * 1.5 + butterfly.phase)));
+    const lift = (lag) => (0.5 + 0.85 * glide * Math.sin(butterfly.beat - lag)) * (1 - butterfly.rest)
+      + (0.85 + 0.6 * Math.sin(butterfly.beat - lag)) * butterfly.rest;
+    butterfly.lift = calm ? 0.6 : lift(0);
+    butterfly.liftHind = calm ? 0.55 : lift(0.35) * 0.95;
+    butterfly.bob = calm ? 0 : -Math.sin(butterfly.beat + 1.2) * 1.4 * (1 - butterfly.rest);
+    return butterfly.state === "flutter" || butterfly.state === "perch";
+  };
 
   const step = (time) => {
     // ระหว่างเฟรมนี้ onBite วาดต้นใหม่ซึ่งเรียก wake() ต้องไม่เริ่มวงวาดซ้อนอีกวง
     frame = -1;
     const { on, seen } = active();
-    if (!seen) { frame = 0; last = 0; return; }
+    if (!seen || !ready()) { frame = 0; last = 0; return; }
     const dt = last ? Math.min(0.1, (time - last) / 1000) : 0;
     last = time;
     const origin = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    const width = Math.round(origin.width * dpr), height = Math.round(origin.height * dpr);
-    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, origin.width, origin.height);
-
     let biting = 0;
-    flies.forEach((fly) => {
-      fly.t += dt;
-      const x0 = fly.x, y0 = fly.y;
-      if (buzzing(fly) && !on) fly.state = "leave";
-      if (fly.state !== "swatted") fly.alpha = Math.min(1, fly.alpha + dt * 2.5);
-      const anchor = buzzing(fly) ? anchorOf(fly, origin) : null;
-      if (buzzing(fly) && !anchor) fly.state = "leave";
-      if (fly.state === "arrive") {
-        const dx = anchor.x - fly.x, dy = anchor.y - fly.y, distance = Math.hypot(dx, dy);
-        if (distance < 6) fly.state = "buzz";
-        else {
-          // บินซิกแซกเข้าหาต้น
-          const ux = dx / distance, uy = dy / distance, wobble = Math.sin(fly.t * 9 + fly.phase) * 40;
-          fly.x += (ux * 80 - uy * wobble) * dt;
-          fly.y += (uy * 80 + ux * wobble) * dt;
-        }
-      }
-      if (fly.state === "buzz") {
-        if (fly.still) { fly.x = anchor.x; fly.y = anchor.y; }
-        else {
-          // วนเป็นวงรีบิด ๆ รอบจุดที่ตอม รัศมีหดขยายตลอด
-          fly.angle += dt * (5 + 2 * Math.sin(fly.t * 1.3 + fly.phase));
-          const r = 9 + 4 * Math.sin(fly.t * 2.1 + fly.phase), follow = Math.min(1, dt * 12);
-          fly.x += (anchor.x + Math.cos(fly.angle) * r * 1.4 - fly.x) * follow;
-          fly.y += (anchor.y + Math.sin(fly.angle * 1.7) * r * 0.8 - fly.y) * follow;
-        }
-        if (on && fly.alpha > 0.5) biting++;
-      }
-      if (fly.state === "leave") {
-        const dx = fly.home - fly.x, dy = -40 - fly.y, distance = Math.hypot(dx, dy) || 1;
-        fly.x += dx / distance * 130 * dt;
-        fly.y += dy / distance * 130 * dt;
-        if (distance < 10) fly.gone = true;
-      }
-      if (fly.state === "swatted") {
-        fly.vy += 500 * dt;
-        fly.y += fly.vy * dt;
-        fly.spin += dt * 12;
-        fly.alpha -= dt * 1.8;
-        if (fly.alpha <= 0) fly.gone = true;
-      }
-      const mx = fly.x - x0, my = fly.y - y0;
-      if (fly.state !== "swatted" && Math.hypot(mx, my) > 0.05) fly.heading = Math.atan2(my, mx);
+    butterflies.forEach((butterfly) => {
+      if (move(butterfly, dt, on, origin) && on && butterfly.alpha > 0.5) biting++;
     });
-    flies = flies.filter((fly) => !fly.gone);
-    pops.forEach((pop) => { pop.t += dt; });
-    pops = pops.filter((pop) => pop.t < 0.35);
+    butterflies = butterflies.filter((butterfly) => {
+      if (butterfly.gone) stage.remove(butterfly.model);
+      return !butterfly.gone;
+    });
     if (biting) onBite(dt * 1000 * SUNFLOWER_BUG_BITE * biting);
-    flies.forEach((fly) => sunflowerDrawFly(ctx, fly));
-    pops.forEach((pop) => sunflowerDrawPop(ctx, pop));
-    if (flies.length || pops.length) frame = requestAnimationFrame(step);
+    butterflies.forEach((butterfly) => stage.pose(butterfly));
+    stage.render(origin.width, origin.height); // ตัวสุดท้ายไปแล้วก็วาดอีกครั้งเพื่อล้างภาพ
+    if (butterflies.length) frame = requestAnimationFrame(step);
     else { frame = 0; last = 0; }
   };
   const wake = () => {
-    if (!frame && (flies.length || pops.length) && active().seen) frame = requestAnimationFrame(step);
+    if (!frame && butterflies.length && ready() && active().seen) frame = requestAnimationFrame(step);
   };
 
-  // at (พิกัดบนจอ) ให้แมลงเกาะนิ่งที่จุดนั้นทันที ใช้ในชุดทดสอบ ส่วนคนที่ขอลดการเคลื่อนไหว แมลงค่อย ๆ โผล่ที่ต้นแล้วเกาะนิ่ง
+  // โหลด three.js ครั้งเดียวต่อการเปิดหน้า และรอให้หน้าเว็บโหลดเสร็จก่อน ไม่แย่งเน็ตกับตอนเปิดหน้า
+  const prepare = () => {
+    if (loading) return;
+    const pageLoaded = document.readyState === "complete" ? Promise.resolve()
+      : new Promise((resolve) => window.addEventListener("load", resolve, { once: true }));
+    loading = pageLoaded.then(() => import(SUNFLOWER_THREE)).then((THREE) => {
+      stage = sunflowerButterflyStage(THREE, canvas);
+      wake();
+    }).catch(() => { /* เน็ตหลุด CDN ถูกบล็อก หรือไม่มี WebGL — ไม่มีผีเสื้อมาตอม */ });
+  };
+  // การ์ดจอรีเซ็ตแล้วภาพผีเสื้อหายหมด ผีเสื้อก็ต้องหายไปด้วย จะได้ไม่มีตัวที่มองไม่เห็นแต่ยังตอมอยู่ (three.js กู้ฉากคืนเองเมื่อได้ WebGL คืน)
+  canvas.addEventListener("webglcontextlost", () => {
+    lost = true;
+    butterflies.forEach((butterfly) => stage.remove(butterfly.model));
+    butterflies = [];
+  });
+  canvas.addEventListener("webglcontextrestored", () => { lost = false; });
+
+  // at (พิกัดบนจอ) ให้ผีเสื้อเกาะนิ่งที่จุดนั้นทันที ใช้ในชุดทดสอบ ส่วนคนที่ขอลดการเคลื่อนไหว ผีเสื้อค่อย ๆ โผล่ที่ต้นแล้วเกาะนิ่ง
   const spawn = (at) => {
+    if (!ready()) return;
     const origin = canvas.getBoundingClientRect();
-    const fromLeft = Math.random() < 0.5;
-    const fly = {
-      state: "arrive", t: 0, phase: Math.random() * Math.PI * 2, angle: 0, spin: 0, vy: 0, alpha: 1,
-      x: fromLeft ? -12 : origin.width + 12, y: origin.height * (0.35 + Math.random() * 0.3), heading: fromLeft ? 0 : Math.PI,
-      home: fromLeft ? -30 : origin.width + 30, fx: 0.2 + Math.random() * 0.6, fy: 0.2 + Math.random() * 0.6, spot: null, at: null, still: false,
+    const fromLeft = Math.random() < 0.5, turn = (Math.random() - 0.5) * 0.9;
+    const butterfly = {
+      state: "arrive", t: 0, phase: Math.random() * Math.PI * 2, beat: Math.random() * Math.PI * 2, angle: Math.random() * Math.PI * 2,
+      x: fromLeft ? -16 : origin.width + 16, y: origin.height * (0.3 + Math.random() * 0.3), home: fromLeft ? -50 : origin.width + 50,
+      fx: 0.2 + Math.random() * 0.6, fy: 0.2 + Math.random() * 0.6, spot: null, at: null, pinned: false, timer: 2.5 + Math.random() * 2.5,
+      alpha: 1, rest: 0, lift: 0.5, liftHind: 0.5, bob: 0, speed: 0, away: [0, -1],
+      // turn เอียงตัวเข้าหาหรือออกจากจอเล็กน้อย ให้เห็นเป็นสามมิติ layer แยกความลึกของแต่ละตัวไม่ให้ปีกทะลุกัน
+      facing: fromLeft ? 1 : -1, turn, yaw: fromLeft ? turn : Math.PI - turn, pitch: 0, size: 1.05 + Math.random() * 0.25,
+      layer: [0, -36, 36, -72, 72][spawned++ % 5], kind: Math.floor(Math.random() * SUNFLOWER_BUTTERFLY_KINDS.length),
     };
-    if (at) fly.at = { x: at.x - origin.left, y: at.y - origin.top };
+    if (at) butterfly.at = { x: at.x - origin.left, y: at.y - origin.top };
     if (at || reducedMotion.matches) {
-      const anchor = anchorOf(fly, origin);
+      const anchor = anchorOf(butterfly, origin);
       if (!anchor) return;
-      Object.assign(fly, { state: "buzz", x: anchor.x, y: anchor.y, alpha: 0, still: true });
+      Object.assign(butterfly, { state: "perch", x: anchor.x, y: anchor.y, alpha: 0, pinned: true, rest: 1 });
     }
-    flies.push(fly);
+    butterfly.model = stage.make(butterfly.kind);
+    butterflies.push(butterfly);
     wake();
   };
-  // เรียกทุกวินาที: นับเวลาเฉพาะตอนที่แมลงมาได้ ครบแล้วปล่อยตัวใหม่
+  // เรียกทุกวินาที: เปิดเกมและเห็นต้นครั้งแรกก็เริ่มโหลด three.js นับเวลาเฉพาะตอนที่ผีเสื้อมาได้ ครบแล้วปล่อยตัวใหม่
   const tick = (ms) => {
     const { on, seen } = active();
-    if (on && seen && flies.filter(buzzing).length < SUNFLOWER_BUG_MAX) {
+    if (on && seen) prepare();
+    if (ready() && on && seen && butterflies.filter(pestering).length < SUNFLOWER_BUG_MAX) {
       wait -= ms;
       if (wait <= 0) {
         gap = (gap + 1) % SUNFLOWER_BUG_GAPS.length;
@@ -473,24 +649,25 @@ function sunflowerBugs(canvas, svg, { active, onBite, reducedMotion }) {
   };
 
   document.addEventListener("pointerdown", (event) => {
-    if (!flies.length) return;
-    // มีหน้าต่างหรือฉากมืดบังแถบเมนูอยู่ แมลงข้างใต้ตบไม่ได้
+    if (!butterflies.length) return;
+    // มีหน้าต่างหรือฉากมืดบังแถบเมนูอยู่ ผีเสื้อข้างใต้ไล่ไม่ได้
     const top = document.elementFromPoint(event.clientX, event.clientY);
     if (!top || !area.contains(top)) return;
     const origin = canvas.getBoundingClientRect();
     const x = event.clientX - origin.left, y = event.clientY - origin.top;
-    let target = null, best = event.pointerType === "touch" ? 22 : 14; // นิ้วใหญ่กว่าเมาส์ ให้ระยะเผื่อมากกว่า
-    flies.forEach((fly) => {
-      const distance = Math.hypot(fly.x - x, fly.y - y);
-      if (buzzing(fly) && fly.alpha > 0.3 && distance < best) { target = fly; best = distance; }
+    let target = null, best = event.pointerType === "touch" ? 24 : 16; // นิ้วใหญ่กว่าเมาส์ ให้ระยะเผื่อมากกว่า
+    butterflies.forEach((butterfly) => {
+      const distance = Math.hypot(butterfly.x - x, butterfly.y - y);
+      if (pestering(butterfly) && butterfly.alpha > 0.3 && distance < best) { target = butterfly; best = distance; }
     });
     if (!target) return;
-    // กดนี้เป็นของแมลง ไม่ให้ทะลุไปโดนปุ่มหรือเมนูที่อยู่ข้างใต้ (click ตามมาทีหลังเสมอ ต้องกลืนทิ้งด้วย)
+    // กดนี้เป็นของผีเสื้อ ไม่ให้ทะลุไปโดนปุ่มหรือเมนูที่อยู่ข้างใต้ (click ตามมาทีหลังเสมอ ต้องกลืนทิ้งด้วย)
     event.preventDefault();
     event.stopPropagation();
     swallowClickUntil = performance.now() + 800;
-    Object.assign(target, { state: "swatted", vy: -60 });
-    pops.push({ x: target.x, y: target.y, t: 0 });
+    // หนีออกจากจุดที่กด แต่ขึ้นข้างบนเสมอ (ทำมุมอย่างน้อย 45 องศา) กดเหนือตัวแล้วจะไม่บินลงไปถูกขอบล่างของ canvas ตัดทิ้งกลางป้ายชื่อ
+    const dx = target.x - x, dy = Math.min(target.y - y - 12, -Math.abs(target.x - x) - 4), length = Math.hypot(dx, dy);
+    Object.assign(target, { state: "scared", speed: 120, away: [dx / length, dy / length] });
     wake();
   }, true);
   document.addEventListener("click", (event) => {
@@ -501,12 +678,12 @@ function sunflowerBugs(canvas, svg, { active, onBite, reducedMotion }) {
   }, true);
 
   return {
-    tick, wake, spawn,
-    count: () => flies.filter(buzzing).length,
-    // ตำแหน่งบนจอของแมลงแต่ละตัว สำหรับชุดทดสอบ
-    flies: () => {
+    tick, wake, spawn, prepare, ready,
+    count: () => butterflies.filter(pestering).length,
+    // ตำแหน่งบนจอของผีเสื้อแต่ละตัว สำหรับชุดทดสอบ
+    butterflies: () => {
       const origin = canvas.getBoundingClientRect();
-      return flies.map((fly) => ({ state: fly.state, x: origin.left + fly.x, y: origin.top + fly.y }));
+      return butterflies.map((butterfly) => ({ state: butterfly.state, x: origin.left + butterfly.x, y: origin.top + butterfly.y }));
     },
   };
 }
@@ -523,7 +700,7 @@ if (sunflowerBanner) {
   sunflowerSave(state); // เครื่องที่เพิ่งเริ่มเล่นต้องจำเวลาไว้ ไม่งั้นโหลดหน้าใหม่ทีไรก็ได้ต้นสดใหม่ทุกครั้ง
   // ตอนรดน้ำ ต้นค่อย ๆ ฟื้นจากท่าเดิม (นาทีที่แห้งอยู่) กลับมาสดระหว่างที่หยดน้ำตก
   let recovery = null;
-  // แมลงกัดทีละนิดทุกเฟรม เก็บลงเครื่องแค่วินาทีละครั้งพอ แต่วาดต้นใหม่ถี่กว่านั้น ให้เห็นต้นทรุดลงต่อหน้า
+  // ผีเสื้อตอมทีละนิดทุกเฟรม เก็บลงเครื่องแค่วินาทีละครั้งพอ แต่วาดต้นใหม่ถี่กว่านั้น ให้เห็นต้นทรุดลงต่อหน้า
   let bitSavedAt = 0, bitDrawnAt = 0;
   const bugCanvas = sunflowerBanner.querySelector(".sunflower-bugs");
   const bugs = sunflowerBugs(bugCanvas, svg, {
@@ -545,7 +722,7 @@ if (sunflowerBanner) {
       }
     },
   });
-  bugCanvas.sunflowerBugs = bugs; // ให้ชุดทดสอบเรียกแมลงมาได้ทันที ไม่ต้องรอสุ่ม
+  bugCanvas.sunflowerBugs = bugs; // ให้ชุดทดสอบเรียกผีเสื้อมาได้ทันที ไม่ต้องรอสุ่ม
 
   const render = () => {
     const ages = state.on ? sunflowerAges(state, Date.now()) : { dry: 0, grown: Infinity };
@@ -565,7 +742,7 @@ if (sunflowerBanner) {
     replant.hidden = !state.on || !pose.dead;
     const pests = bugs.count();
     const status = state.on
-      ? [sunflowerStatus(ages, state.fertilizedAt != null, (state.bitten || 0) / SUNFLOWER_MINUTE), pests ? `แมลงตอม ${pests} ตัว` : ""].filter(Boolean).join(" · ")
+      ? [sunflowerStatus(ages, state.fertilizedAt != null, (state.bitten || 0) / SUNFLOWER_MINUTE), pests ? `ผีเสื้อตอม ${pests} ตัว` : ""].filter(Boolean).join(" · ")
       : "";
     can.title = `รดน้ำ · ${status}`;
     replant.title = status;
@@ -573,7 +750,7 @@ if (sunflowerBanner) {
     fertilizer.hidden = !state.on;
     fertilizer.setAttribute("aria-disabled", String(!sunflowerCanFertilize(state, ages)));
     fertilizer.title = state.on ? sunflowerFertilizerHint(state, ages) : "";
-    bugs.wake(); // ปิดเกมหรือต้นตาย แมลงต้องได้บินหนี
+    bugs.wake(); // ปิดเกมหรือต้นตาย ผีเสื้อต้องได้บินจากไป
     if (recovery) requestAnimationFrame(render);
   };
   const update = (next) => {

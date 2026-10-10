@@ -76,6 +76,9 @@ function setup({
     getClientRects() { return [1]; }
   }
   for (const match of html.matchAll(/\bid="([^"]+)"/g)) elements.set(match[1], new Element(match[1]));
+  // the งานที่รับผิดชอบ choices have no ids, so they are kept here in the order of the form
+  const sectionRadios = [...html.matchAll(/<input type="radio" name="docSection" value="([^"]*)">/g)]
+    .map((m) => Object.assign(new Element(), { name: 'docSection', value: m[1], checked: false }));
   const created = [];
   document = {
     getElementById(id) { assert.ok(elements.has(id), `Unknown DOM id: ${id}`); return elements.get(id); },
@@ -83,6 +86,7 @@ function setup({
     querySelectorAll(selector) {
       if (selector === '.modal-overlay') return [...elements.values()].filter((el) => el.id.endsWith('Overlay'));
       if (selector === '.view') return [...elements.values()].filter((el) => el.id.startsWith('view-'));
+      if (selector === '#docSectionPicks input[name="docSection"]') return sectionRadios;
       return [];
     },
     documentElement: new Element(), body: new Element(), activeElement: new Element('trigger'),
@@ -180,7 +184,13 @@ function setup({
   if (legacyBrowser) run('delete Object.hasOwn; delete Array.prototype.at;');
   run(source);
   return {
-    run, elements, context, subscriptions, writes, deletes, storage, warnings, authAttempts, uploads, apiCalls, created,
+    run, elements, context, subscriptions, writes, deletes, storage, warnings, authAttempts, uploads, apiCalls, created, sectionRadios,
+    // a click on a choice, as the browser does it: the choice becomes the checked one, then the click reaches the group
+    pickSection: (value) => {
+      const radio = sectionRadios.find((r) => r.value === value);
+      sectionRadios.forEach((r) => { r.checked = r === radio; });
+      return elements.get('docSectionPicks').fire('click', { target: radio });
+    },
     authenticate: (index = authAttempts.length - 1) => authAttempts[index].resolve(),
     rejectAuthentication: (error, index = authAttempts.length - 1) => authAttempts[index].reject(error),
     complete: (index = pendingWrites.length - 1) => pendingWrites[index].resolve(),
@@ -546,85 +556,85 @@ test('the urgency choice is saved, restored when editing, shown before the title
   assert.deepEqual(docBoxes(elements).flatMap((box) => box.rows.map((row) => row['ชื่อเอกสาร'])), ['ด่วนที่สุดขอเชิญประชุม']);
 });
 
-test('the document and order forms, the labels, the filter, the stamps and firestore.rules agree on the statuses', () => {
-  const { run } = setup();
-  const options = (id) => [...html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))[1]
-    .matchAll(/<option value="([^"]*)">([^<]*)<\/option>/g)].map((m) => [m[1], m[2]]);
-  const label = JSON.parse(run('JSON.stringify(STATUS_LABEL)'));
-  // documents: the form starts like this, and none has to be chosen
-  const documentStatuses = [['', 'ไม่ระบุสถานะ'], ['pending', 'รอดำเนินการ'], ['approved', 'อนุมัติแล้ว'], ['rejected', 'ไม่อนุมัติ']];
-  assert.deepEqual(options('docStatus'), documentStatuses);
-  assert.deepEqual(JSON.parse(run('JSON.stringify(DOC_STATUSES)')), documentStatuses.map(([value]) => value));
-  documentStatuses.slice(1).forEach(([value, text]) => assert.equal(label[value], text));
-  // orders: none has to be chosen either, then four steps; รอดำเนินการ is shared with documents
-  const orderStatuses = JSON.parse(run('JSON.stringify(ORDER_STATUSES)'));
-  assert.equal(orderStatuses[0], '');
-  assert.deepEqual(orderStatuses.slice(1).map((s) => [s, label[s]]),
-    [['pending', 'รอดำเนินการ'], ['in-progress', 'กำลังดำเนินการ'], ['completed', 'เสร็จสิ้น'], ['cancelled', 'ยกเลิก']]);
-  const statuses = Object.keys(label);
-  assert.deepEqual([...statuses].sort(), JSON.parse(run('JSON.stringify([...new Set([...DOC_STATUSES, ...ORDER_STATUSES])].filter(Boolean).sort())')));
-  // the filter offers every status once, then the records with none
-  assert.deepEqual(options('filterStatus'), [['', 'สถานะทั้งหมด'], ...Object.entries(label), ['none', 'ไม่ระบุสถานะ']]);
-  const css = fs.readFileSync(path.join(root, 'style.css'), 'utf8');
-  statuses.forEach((status) => assert.match(css, new RegExp(`\\.stamp-${status} \\{`), `a stamp colour for ${status}`));
-  // a value the rules don't list would be refused with permission-denied on save
-  const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
-  const allowed = [...rules.match(/data\.status in \[([^\]]*)\]/)[1].matchAll(/'([^']*)'/g)].map((m) => m[1]);
-  assert.deepEqual(allowed.sort(), ['', ...statuses].sort());
+// ชื่อสถานะที่ระบบเคยมี (เสร็จสิ้นกับยกเลิกของคำสั่งไม่อยู่ในนี้ เพราะเป็นชื่อปุ่มในหน้าต่างต่าง ๆ ด้วย)
+const DOCUMENT_STATUS_WORDS = /รอดำเนินการ|อนุมัติแล้ว|ไม่อนุมัติ|กำลังดำเนินการ|ไม่ระบุสถานะ|สถานะทั้งหมด/;
+const STATUS_WORDS = new RegExp(`${DOCUMENT_STATUS_WORDS.source}|เสร็จสิ้น|ยกเลิก`);
+
+test('statuses are gone: no status field, filter, column or stamp, and records that still carry one show none of it', async () => {
+  const { run, elements } = setup();
+  assert.doesNotMatch(html, /id="docStatus"|id="filterStatus"|>\s*สถานะ\s*</);
+  assert.doesNotMatch(html.replace(/<!--[\s\S]*?-->/g, ''), DOCUMENT_STATUS_WORDS);
+  assert.equal(run('[typeof STATUS_LABEL, typeof DOC_STATUSES, typeof ORDER_STATUSES, typeof statusStamp, typeof renderStatusOptions].join()'),
+    'undefined,undefined,undefined,undefined,undefined');
+  assert.doesNotMatch(fs.readFileSync(path.join(root, 'style.css'), 'utf8'), /\.stamp\b/);
+
+  // records saved while statuses existed keep them in Firestore, but no page shows them any more
+  run(`allCategories = [{ id: "in", name: "หนังสือรับ" }, { id: "order", name: "คำสั่ง" }]; renderCategoryOptions();
+    allDocuments = [
+      { id: "a", category: "in", title: "ขอเชิญประชุม", status: "approved", createdAtMs: 3 },
+      { id: "b", category: "order", title: "แต่งตั้งคณะกรรมการ", docNumber: "12/2569", agency: "นายก อบต.", status: "in-progress", createdAtMs: 2 },
+      { id: "c", category: "in", title: "แจ้งโอนงบประมาณ", status: "pending", createdAtMs: 1 },
+    ]; renderAll()`);
+  const boxes = docBoxes(elements);
+  assert.deepEqual(boxes.map((box) => [box.title, box.heads]), [
+    ['หนังสือรับ', ['เลขที่รับ', 'เลขที่หนังสือ', 'ชื่อเอกสาร', 'จาก', 'วันที่ออกเอกสาร', 'ขนาดไฟล์', 'งานที่รับผิดชอบ']],
+    ['คำสั่ง', ['เลขที่คำสั่ง', 'ชื่อคำสั่ง', 'ผู้สั่ง', 'วันที่ออกคำสั่ง', 'ขนาดไฟล์']],
+  ]);
+  for (const id of ['docGroups', 'recentList']) assert.doesNotMatch(elements.get(id).innerHTML, new RegExp(`stamp|${STATUS_WORDS.source}`), id);
+  // the order search lists who gave the order, and no status after it
+  run('openDocModal(null, { order: true })');
+  elements.get('orderSearch').value = 'แต่งตั้ง';
+  await elements.get('orderSearch').fire('input');
+  assert.match(elements.get('orderSearchResults').innerHTML, /<span class="order-hit-sub">นายก อบต\.<\/span>/);
+  assert.doesNotMatch(elements.get('orderSearchResults').innerHTML, STATUS_WORDS);
 });
 
-test('a chosen status is restored when editing; a blank one opens and shows as not specified', () => {
-  const { run, elements } = setup();
-  run('openDocModal({ id: "a", status: "rejected" })');
-  assert.equal(elements.get('docStatus').value, 'rejected');
-  for (const status of ['""', 'undefined', '"toString"']) {
-    run(`openDocModal({ id: "b", status: ${status} })`);
-    assert.equal(elements.get('docStatus').value, '', status);
-  }
-  assert.equal(run('statusStamp("approved")'), '<span class="stamp stamp-approved">อนุมัติแล้ว</span>');
-  for (const [status, text] of [['in-progress', 'กำลังดำเนินการ'], ['completed', 'เสร็จสิ้น'], ['cancelled', 'ยกเลิก']]) {
-    assert.equal(run(`statusStamp("${status}")`), `<span class="stamp stamp-${status}">${text}</span>`);
-  }
-  for (const status of ['""', 'undefined', '"toString"', '"<b>x</b>"']) assert.equal(run(`statusStamp(${status})`), '-', status);
+test('saving writes the blank status firestore.rules still requires only where it is missing, and leaves an old status as it was', async () => {
+  const save = async (existing) => {
+    const app = setup({ authMode: 'ready' });
+    app.context.existing = existing;
+    app.run(`allCategories = [{ id: "in", name: "หนังสือรับ" }, { id: "order", name: "คำสั่ง" }]; renderCategoryOptions();
+      allDocuments = existing ? [existing] : []; openDocModal(existing)`);
+    const saving = app.elements.get('docForm').fire('submit');
+    await flush();
+    app.complete();
+    await saving;
+    return app.writes[0];
+  };
+  assert.equal((await save(null)).status, '', 'a new record');
+  assert.equal('status' in await save({ id: 'a', title: 'ขอเชิญประชุม', category: 'in', status: 'approved' }), false, 'an old status stays untouched');
+  assert.equal('status' in await save({ id: 'o', title: 'แต่งตั้งคณะกรรมการ', category: 'order', status: 'in-progress' }), false);
+  assert.equal((await save({ id: 'b', title: 'บันทึกก่อนมีช่องสถานะ', category: 'in' })).status, '', 'a record without the field gets one, or the rules refuse the edit');
+  // the rules check status on every write, so '' and every status a record may still carry must stay allowed
+  const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
+  const allowed = [...rules.match(/data\.status in \[([^\]]*)\]/)[1].matchAll(/'([^']*)'/g)].map((m) => m[1]);
+  assert.deepEqual(allowed.sort(), ['', 'approved', 'cancelled', 'completed', 'in-progress', 'pending', 'rejected']);
 });
 
 const DOCUMENT_LABELS = ['ชื่อเอกสาร', 'เลขที่หนังสือ', 'วันที่ออกเอกสาร', 'หน่วยงาน'];
 const ORDER_LABELS = ['ชื่อคำสั่ง', 'เลขที่คำสั่ง', 'วันที่ออกคำสั่ง', 'ผู้สั่ง'];
-// the order form leaves its "no status" choice blank instead of writing ไม่ระบุสถานะ
-const ORDER_STATUS_TEXT = ['', 'รอดำเนินการ', 'กำลังดำเนินการ', 'เสร็จสิ้น', 'ยกเลิก'];
 const formText = (elements, ...ids) => ids.map((id) => elements.get(id).textContent);
 const formLabels = (elements) => formText(elements, 'docTitleLabel', 'docNumberLabel', 'docDateLabel', 'docAgencyLabel');
-const statusOptions = (elements) => [...elements.get('docStatus').innerHTML.matchAll(/<option value="([^"]*)">([^<]*)</g)].map((m) => m[2]);
 
 test('choosing the คำสั่ง category turns the document form into the order form, and the คำสั่ง box uses the same names', async () => {
   const { run, elements } = setup();
   run(`allCategories = [{ id: "order", name: " คำสั่ง " }, { id: "memo", name: "บันทึกข้อความ" }, { id: "old", name: "หนังสือคำสั่ง" }]; renderCategoryOptions()`);
   const placeholders = () => ['docTitle', 'docNumber', 'docAgency'].map((id) => elements.get(id).placeholder);
-  const status = elements.get('docStatus');
   const choose = (id) => { elements.get('docCategory').value = id; return elements.get('docCategory').fire('change'); };
   run('openDocModal()');
   assert.deepEqual(formLabels(elements), DOCUMENT_LABELS);
   assert.deepEqual(placeholders(), ['เช่น ขอเชิญประชุมคณะกรรมการ', 'เช่น ศธ 0001/2569', 'เช่น กรมการปกครอง']);
   assert.equal(elements.get('docUrgencyField').hidden, false);
-  assert.deepEqual(statusOptions(elements), ['ไม่ระบุสถานะ', 'รอดำเนินการ', 'อนุมัติแล้ว', 'ไม่อนุมัติ']);
   await choose('order');
   assert.deepEqual(formLabels(elements), ORDER_LABELS);
   assert.deepEqual(placeholders(), ['เช่น แต่งตั้งคณะกรรมการตรวจรับพัสดุ', 'เช่น 123/2569', 'เช่น นายก อบต.']);
   assert.deepEqual(formText(elements, 'docModalTitle', 'docSaveBtn'), ['เพิ่มคำสั่งใหม่', 'บันทึกคำสั่ง']);
   assert.equal(elements.get('docUrgencyField').hidden, true, 'orders have no urgency');
-  assert.deepEqual(statusOptions(elements), ORDER_STATUS_TEXT);
-  assert.equal(status.value, '', 'still no status chosen');
   assert.equal('locked' in elements.get('docCategory').dataset, false, 'a category chosen here can still be changed');
-  status.value = 'completed';
   await choose('memo');
   assert.deepEqual(formLabels(elements), DOCUMENT_LABELS);
   assert.deepEqual(formText(elements, 'docModalTitle', 'docSaveBtn'), ['เพิ่มเอกสารใหม่', 'บันทึกเอกสาร']);
   assert.equal(elements.get('docUrgencyField').hidden, false);
-  assert.equal(status.value, '', 'an order-only status falls back to not specified');
-  status.value = 'pending';
-  await choose('order');
-  await choose('memo');
-  assert.equal(status.value, 'pending', 'รอดำเนินการ belongs to both forms, so it is kept');
 
   // the built-in rename หนังสือคำสั่ง → คำสั่ง can arrive while the form is open
   await choose('old');
@@ -675,7 +685,8 @@ test('the หนังสือส่ง, หนังสือรับ and ค
 
   // on the documents page each of their boxes names its agency column the same way
   run(`allDocuments = ["out", "in", "petition", "memo", "order"].map((category) => ({ id: category, category })); renderDocsTable()`);
-  const agencyColumns = () => Object.fromEntries(docBoxes(elements).map((box) => [box.title.trim(), box.heads.at(-4)]));
+  // the agency column sits just before the date column
+  const agencyColumns = () => Object.fromEntries(docBoxes(elements).map((box) => [box.title.trim(), box.heads[box.heads.findIndex((h) => h.startsWith('วันที่')) - 1]]));
   assert.deepEqual(agencyColumns(), { 'หนังสือรับ': 'จาก', 'หนังสือส่ง': 'ถึง', 'คำสั่ง': 'ผู้สั่ง', 'บันทึกข้อความ': 'หน่วยงาน', 'คำร้อง': 'ผู้ยื่นคำร้อง' });
   elements.get('filterCategory').value = 'out';
   await elements.get('filterCategory').fire('change');
@@ -775,13 +786,179 @@ test('the หนังสือรับ box starts with a เลขที่ร
   assert.deepEqual(numbers(), ['&lt;b&gt;1&lt;/b&gt;']);
 });
 
+/* =========================================================
+   งานที่รับผิดชอบ
+   ========================================================= */
+const SECTIONS = [
+  ['palat', 'สำนักปลัด'], ['finance', 'กองคลัง'], ['engineering', 'กองช่าง'], ['education', 'กองการศึกษาฯ'], ['health', 'กองสาธารณสุขฯ'],
+  ['clerk', 'จพง.ธุรการฯ'], ['disaster', 'จพง.ป้องกันฯ'], ['general-affairs', 'นักจัดการงานทั่วไปฯ'],
+  ['human-resources', 'นักทรัพยากรบุคคลฯ'], ['policy-planning', 'นักวิเคราะห์นโยบายและแผนฯ'],
+];
+
+test('the งานที่รับผิดชอบ choices in the form and the filter, SECTION_LABEL and firestore.rules list the same ten, in the same order', () => {
+  const { run } = setup();
+  assert.deepEqual(Object.entries(JSON.parse(run('JSON.stringify(SECTION_LABEL)'))), SECTIONS);
+  const picks = [...html.matchAll(/<label class="section-pick"><input type="radio" name="docSection" value="([^"]*)"><span>([^<]*)<\/span><\/label>/g)]
+    .map((m) => [m[1], m[2]]);
+  assert.deepEqual(picks, SECTIONS);
+  const filter = [...html.match(/<select id="filterSection">([\s\S]*?)<\/select>/)[1].matchAll(/<option value="([^"]*)">([^<]*)<\/option>/g)]
+    .map((m) => [m[1], m[2]]);
+  assert.deepEqual(filter, [['', 'งานทั้งหมด'], ...SECTIONS, ['none', 'ยังไม่ระบุงาน']]);
+  // a field or a value the rules don't list would be refused with permission-denied on save
+  const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
+  assert.match(rules.match(/hasOnly\(\[([^\]]*)\]/)[1], /'section'/);
+  const allowed = [...rules.match(/data\.section in \[([^\]]*)\]/)[1].matchAll(/'([^']*)'/g)].map((m) => m[1]);
+  assert.deepEqual(allowed, ['', ...SECTIONS.map(([key]) => key)]);
+  // in the form it comes right after ชั้นความเร็ว, with the hint under the choices
+  const afterUrgency = html.split('<label id="docUrgencyField">')[1].split('</label>').slice(1).join('</label>');
+  assert.match(afterUrgency, /^\s*(<!--[\s\S]*?-->\s*)?<fieldset class="span-2 section-field" id="docSectionField" aria-describedby="docSectionHint">\s*<legend>งานที่รับผิดชอบ<\/legend>/);
+  assert.match(html, /<p class="field-hint" id="docSectionHint">ไม่บังคับเลือก — กดตัวเลือกเดิมซ้ำเพื่อยกเลิกการเลือก<\/p>/);
+});
+
+test('งานที่รับผิดชอบ takes one choice, pressing it again clears it, editing shows the saved one, and the order form has none', async () => {
+  const { run, elements, sectionRadios, pickSection } = setup();
+  run(`allCategories = [{ id: "in", name: "หนังสือรับ" }, { id: "order", name: "คำสั่ง" }]; renderCategoryOptions()`);
+  const state = () => [run('chosenSection()'), sectionRadios.filter((r) => r.checked).map((r) => r.value)];
+  run('openDocModal()');
+  assert.deepEqual([...state(), elements.get('docSectionField').hidden], ['', [], false], 'a new document starts with none');
+  await pickSection('finance');
+  assert.deepEqual(state(), ['finance', ['finance']]);
+  await pickSection('finance');
+  assert.deepEqual(state(), ['', []], 'pressing the chosen one again clears it');
+  await pickSection('palat');
+  await pickSection('clerk');
+  assert.deepEqual(state(), ['clerk', ['clerk']]);
+  // the text of a choice passes its click on to the choice; that first click does nothing by itself
+  await elements.get('docSectionPicks').fire('click', { target: {} });
+  assert.deepEqual(state(), ['clerk', ['clerk']]);
+  // a choice made with the arrow keys arrives as a change, so pressing it afterwards still clears it
+  sectionRadios.forEach((r) => { r.checked = r.value === 'health'; });
+  await elements.get('docSectionPicks').fire('change', { target: sectionRadios.find((r) => r.value === 'health') });
+  await pickSection('health');
+  assert.deepEqual(state(), ['', []]);
+  // Space on the chosen one clears it (Chrome sends that choice no click), and its key-up is held back
+  // so a browser that clicks on key-up does not choose it again
+  await pickSection('clerk');
+  const clerk = sectionRadios.find((r) => r.value === 'clerk');
+  let prevented = 0;
+  const press = (type, target) => elements.get('docSectionPicks').fire(type, { key: ' ', target, preventDefault() { prevented++; } });
+  await press('keydown', clerk);
+  assert.deepEqual(state(), ['', []]);
+  await press('keyup', clerk);
+  assert.equal(prevented, 2);
+  await press('keydown', clerk);
+  assert.equal(prevented, 2, 'Space on a choice that is not chosen is left to the browser, which chooses it');
+
+  run('openDocModal({ id: "a", category: "in", section: "health" })');
+  assert.deepEqual(state(), ['health', ['health']], 'editing shows the saved choice');
+  run('openDocModal({ id: "b", category: "in", section: "toString" })');
+  assert.deepEqual(state(), ['', []], 'an unknown value is no choice');
+  run('openDocModal()');
+  assert.deepEqual(state(), ['', []], 'the next new document starts empty again');
+  // the order form has no งานที่รับผิดชอบ, and choosing คำสั่ง in the document form hides it too
+  run('openDocModal(null, { order: true })');
+  assert.equal(elements.get('docSectionField').hidden, true);
+  run('openDocModal()');
+  const choose = (id) => { elements.get('docCategory').value = id; return elements.get('docCategory').fire('change'); };
+  await choose('order');
+  assert.equal(elements.get('docSectionField').hidden, true);
+  await choose('in');
+  assert.equal(elements.get('docSectionField').hidden, false);
+});
+
+test('งานที่รับผิดชอบ is written only when chosen, or as "" to clear one; orders never keep one', async () => {
+  const save = async (existing, change = () => {}) => {
+    const app = setup({ authMode: 'ready' });
+    app.context.existing = existing;
+    app.run(`allCategories = [{ id: "in", name: "หนังสือรับ" }, { id: "order", name: "คำสั่ง" }]; renderCategoryOptions();
+      allDocuments = existing ? [existing] : []; openDocModal(existing)`);
+    await change(app);
+    const saving = app.elements.get('docForm').fire('submit');
+    await flush();
+    app.complete();
+    await saving;
+    return app.writes[0];
+  };
+  const choose = (app, id) => { app.elements.get('docCategory').value = id; return app.elements.get('docCategory').fire('change'); };
+  assert.equal('section' in await save(null), false, 'none chosen: not written, so saving still works under rules that predate the field');
+  assert.equal((await save(null, (app) => app.pickSection('finance'))).section, 'finance');
+  const kept = { id: 'd1', title: 'หนังสือเดิม', category: 'in', section: 'health' };
+  assert.equal((await save(kept)).section, 'health', 'kept when something else is edited');
+  assert.equal((await save(kept, (app) => app.pickSection('health'))).section, '', 'pressed again, the stored one is cleared');
+  assert.equal((await save(kept, (app) => app.pickSection('palat'))).section, 'palat');
+  assert.equal((await save(kept, (app) => choose(app, 'order'))).section, '', 'moved to คำสั่ง, its section goes');
+  assert.equal('section' in await save(null, async (app) => { await app.pickSection('finance'); await choose(app, 'order'); }), false,
+    'a new order saves none, even after a choice was made in the document form');
+  assert.equal('section' in await save({ id: 'o1', title: 'คำสั่งเดิม', category: 'order' }), false, 'orders are written as before');
+});
+
+test('the documents page has a งานที่รับผิดชอบ column (not in the คำสั่ง box) and filter, and finds and sorts by it', async () => {
+  const { run, elements } = setup();
+  run(`allCategories = [{ id: "in", name: "หนังสือรับ" }, { id: "out", name: "หนังสือส่ง" }, { id: "order", name: "คำสั่ง" }]; renderCategoryOptions();
+    allDocuments = [
+      { id: "a", category: "in", docNumber: "ที่ 1", section: "policy-planning", createdAtMs: 6 },
+      { id: "b", category: "in", docNumber: "ที่ 2", section: "palat", createdAtMs: 5 },
+      { id: "c", category: "in", docNumber: "ที่ 3", createdAtMs: 4 },
+      { id: "d", category: "out", docNumber: "ที่ 4", section: "finance", createdAtMs: 3 },
+      { id: "e", category: "order", docNumber: "12/2569", section: "finance", createdAtMs: 2 },
+      { id: "f", category: "", docNumber: "ที่ 6", section: "toString", createdAtMs: 1 },
+    ]; renderDocsTable()`);
+  const column = () => docBoxes(elements).map((box) => [box.title, box.heads.at(-1), box.rows.map((row) => row['งานที่รับผิดชอบ'] ?? null)]);
+  assert.deepEqual(column(), [
+    ['หนังสือรับ', 'งานที่รับผิดชอบ', ['นักวิเคราะห์นโยบายและแผนฯ', 'สำนักปลัด', '-']],
+    ['หนังสือส่ง', 'งานที่รับผิดชอบ', ['กองคลัง']],
+    // orders have no such column, even one still carrying a value
+    ['คำสั่ง', 'ขนาดไฟล์', [null]],
+    ['ไม่ระบุหมวดหมู่', 'งานที่รับผิดชอบ', ['-']],
+  ]);
+  run('sortGroup("in", "section")');
+  assert.deepEqual(column()[0][2], ['-', 'สำนักปลัด', 'นักวิเคราะห์นโยบายและแผนฯ'], 'in the order of the form, none first');
+
+  const numbers = () => docBoxes(elements).map((box) => [box.title, box.rows.map((row) => row['เลขที่หนังสือ'] ?? row['เลขที่คำสั่ง'])]);
+  const filter = async (value) => { elements.get('filterSection').value = value; await elements.get('filterSection').fire('change'); return numbers(); };
+  assert.deepEqual(await filter('finance'), [['หนังสือส่ง', ['ที่ 4']]], 'only the boxes with a match, and no order');
+  assert.deepEqual(await filter('none'), [['หนังสือรับ', ['ที่ 3']], ['ไม่ระบุหมวดหมู่', ['ที่ 6']]], 'ยังไม่ระบุงาน leaves orders out');
+  assert.equal(elements.get('resultCount').textContent, 'พบ 2 จาก 6 รายการ');
+  await elements.get('clearFilters').fire('click');
+  assert.equal(elements.get('filterSection').value, '');
+  assert.equal(numbers().length, 4);
+  elements.get('globalSearch').value = 'นักวิเคราะห์';
+  await elements.get('globalSearch').fire('input');
+  assert.deepEqual(numbers(), [['หนังสือรับ', ['ที่ 1']]], 'the search finds the section by name');
+});
+
+test('แยกตามงานที่รับผิดชอบ lists the ten in form order, then ยังไม่ระบุงาน, leaves orders out, and a row opens its documents', async () => {
+  const { run, elements } = setupDashboard();
+  run(`allCategories = [{ id: "in", name: "หนังสือรับ" }, { id: "order", name: "คำสั่ง" }]; renderCategoryOptions();
+    allDocuments = [
+      { id: "a", category: "in", section: "finance" }, { id: "b", category: "in", section: "finance" },
+      { id: "c", category: "in", section: "policy-planning" }, { id: "d", category: "in" },
+      { id: "e", category: "order", section: "finance" }, { id: "f", category: "order" },
+    ]; renderSectionBreakdown()`);
+  const markup = elements.get('sectionBreakdown').innerHTML;
+  const rows = [...markup.matchAll(/<li>([\s\S]*?)<\/li>/g)].map(([, row]) => [
+    row.match(/<span class="bd-name"><span>([^<]*)<\/span>/)[1],
+    row.match(/<b class="mono">(\d+)<\/b><small class="mono">(\d+)%<\/small>/).slice(1).join(' '),
+    row.match(/data-show-section="([^"]*)"/)[1],
+  ]);
+  // four documents count (the two orders don't): กองคลัง 2, นักวิเคราะห์นโยบายและแผนฯ 1, ยังไม่ระบุงาน 1
+  const counts = { finance: '2 50', 'policy-planning': '1 25' };
+  assert.deepEqual(rows, [...SECTIONS.map(([key, label]) => [label, counts[key] ?? '0 0', key]), ['ยังไม่ระบุงาน', '1 25', 'none']]);
+  assert.match(markup, /<button type="button" class="bd-row is-none" data-show-section="none" aria-label="ยังไม่ระบุงาน 1 ฉบับ \(25%\) กดเพื่อดูเอกสาร">/);
+  assert.doesNotMatch(markup, /bd-dot/, 'sections have no colour dots');
+
+  await elements.get('sectionBreakdown').fire('click', { target: { closest: (selector) => (selector === '[data-show-section]' ? { dataset: { showSection: 'none' } } : null) } });
+  assert.deepEqual([elements.get('pageTitle').textContent, elements.get('filterSection').value, elements.get('filterCategory').value], ['เอกสารทั้งหมด', 'none', '']);
+  assert.deepEqual(docBoxes(elements).map((box) => [box.title, box.tag]), [['หนังสือรับ', '1 รายการ']], 'the same count as the row');
+});
+
 test('the documents page has one box per category, in paper-workflow order, and empty ones show unless a filter narrows the list', async () => {
   const { run, elements } = setup();
   // Firestore lists categories by name; the ones staff made follow the six known ones, still by name
   run(`allCategories = ["คำร้อง", "คำสั่ง", "งานพัสดุ", "บันทึกข้อความ", "ประกาศ", "หนังสือรับ", "หนังสือส่ง", "หนังสือเวียน"].map((name) => ({ id: name, name }));
     renderCategoryOptions();
     allDocuments = [
-      { id: "a", category: "หนังสือรับ", title: "หนังสือเชิญประชุม", status: "pending", createdAtMs: 4 },
+      { id: "a", category: "หนังสือรับ", title: "หนังสือเชิญประชุม", date: "2026-09-10", createdAtMs: 4 },
       { id: "b", category: "คำสั่ง", title: "แต่งตั้งคณะกรรมการ", createdAtMs: 3 },
       { id: "c", category: "", title: "ยังไม่ได้เลือกหมวด", createdAtMs: 2 },
       { id: "d", category: "หมวดที่ถูกลบแล้ว", title: "หมวดเดิมถูกลบ", createdAtMs: 1 },
@@ -800,13 +977,13 @@ test('the documents page has one box per category, in paper-workflow order, and 
   assert.equal(docBoxes(elements).find((box) => box.title === 'หนังสือส่ง').heads.length, 0, 'an empty box has no table');
   assert.doesNotMatch(elements.get('docGroups').innerHTML, /data-sort="category"|<th[^>]*>หมวดหมู่</, 'the box title already names the category');
 
-  // a search or a status or date filter leaves only the boxes with a match
+  // a search or a date filter leaves only the boxes with a match
   await filter('globalSearch', 'แต่งตั้ง');
   assert.deepEqual(boxes(), [['คำสั่ง', '1 รายการ', 'เพิ่มคำสั่ง']]);
   await filter('globalSearch', '');
-  await filter('filterStatus', 'pending');
+  await filter('filterDate', '2026-09-10');
   assert.deepEqual(boxes(), [['หนังสือรับ', '1 รายการ', 'เพิ่มหนังสือรับ']]);
-  await filter('filterStatus', 'rejected');
+  await filter('filterDate', '2020-01-01');
   assert.deepEqual(boxes(), []);
   assert.deepEqual([elements.get('docsEmpty').hidden, elements.get('docsEmptyMessage').textContent, elements.get('docsEmptyAddBtn').hidden],
     [false, 'ไม่พบเอกสารที่ตรงกับตัวกรอง', true]);
@@ -842,8 +1019,8 @@ test('each box sorts and pages on its own, and a new filter takes every box back
   assert.deepEqual(numbers('หนังสือส่ง'), ['ที่ 10', 'ที่ 11', 'ที่ 12', 'ที่ 13', 'ที่ 14', 'ที่ 15', 'ที่ 16', 'ที่ 17']);
   assert.deepEqual(numbers('หนังสือรับ'), ['ที่ 1', 'ที่ 0'], 'sorting one box leaves the other alone');
 
-  elements.get('filterStatus').value = 'none';
-  await elements.get('filterStatus').fire('change');
+  elements.get('filterCategory').value = '';
+  await elements.get('filterCategory').fire('change');
   assert.deepEqual([pager('in'), numbers('หนังสือรับ')[0], numbers('หนังสือส่ง')[0]], [['หน้าของหนังสือรับ', '1'], 'ที่ 9', 'ที่ 10'], 'first pages again, sort kept');
   // a page that no longer exists after records leave falls back to the last one
   run('showGroupPage("in", 2); allDocuments = allDocuments.slice(5); renderDocsTable()');
@@ -881,18 +1058,15 @@ test('the คำสั่ง box\'s เพิ่มคำสั่ง button ope
   assert.equal(category.value, 'order');
   assert.equal('locked' in category.dataset, true);
   assert.equal(elements.get('docUrgencyField').hidden, true);
-  assert.deepEqual(statusOptions(elements), ORDER_STATUS_TEXT);
-  assert.equal(elements.get('docStatus').value, '', 'a new order starts with no status');
 
   elements.get('docTitle').value = 'แต่งตั้งคณะกรรมการตรวจรับพัสดุ';
   elements.get('docNumber').value = '123/2569';
   elements.get('docAgency').value = 'นายก อบต.';
-  elements.get('docStatus').value = 'in-progress';
   const saving = elements.get('docForm').fire('submit');
   await flush();
   const [write] = app.writes;
   assert.deepEqual([write.title, write.docNumber, write.agency, write.category, write.status],
-    ['แต่งตั้งคณะกรรมการตรวจรับพัสดุ', '123/2569', 'นายก อบต.', 'order', 'in-progress']);
+    ['แต่งตั้งคณะกรรมการตรวจรับพัสดุ', '123/2569', 'นายก อบต.', 'order', '']);
   assert.equal('urgency' in write, false, 'orders have no urgency');
   app.complete();
   await saving;
@@ -905,7 +1079,6 @@ test('the คำสั่ง box\'s เพิ่มคำสั่ง button ope
   assert.equal(category.value, '');
   assert.deepEqual(formText(elements, 'docModalTitle', 'docTitleLabel', 'docSaveBtn'), ['เพิ่มเอกสารใหม่', 'ชื่อเอกสาร', 'บันทึกเอกสาร']);
   assert.equal(elements.get('docUrgencyField').hidden, false);
-  assert.equal(elements.get('docStatus').value, '');
 });
 
 test('the order form has a พ.ศ. year beside its date, so past orders can be entered', async () => {
@@ -981,12 +1154,12 @@ test('the order form searches saved orders, optionally in one พ.ศ. year, and
   await type('แต่งตั้ง');
   assert.deepEqual([hits(), note()], [['45/2565', '12/2565'], 'พบ 2 คำสั่ง'], 'orders only, the latest order date first');
   assert.match(results.innerHTML, /แต่งตั้งคณะทำงาน &lt;b&gt;ป้องกันภัย&lt;\/b&gt;/);
-  assert.match(results.innerHTML, /นายก อบต\. · เสร็จสิ้น/);
+  assert.match(results.innerHTML, /<span class="order-hit-sub">นายก อบต\.<\/span>/, 'who gave the order, and no status after it');
   await pick('2569');
   assert.deepEqual([hits(), note(), results.hidden], [[], 'ไม่พบคำสั่งที่ตรงกันในปี พ.ศ. 2569', true]);
   await type('');
   assert.deepEqual([hits(), note()], [['3/2569'], 'พบ 1 คำสั่งในปี พ.ศ. 2569'], 'a year alone lists that year');
-  assert.doesNotMatch(results.innerHTML, /function|native code/, 'an unknown status adds nothing');
+  assert.doesNotMatch(results.innerHTML, /function|native code|toString/, 'a status left on the record adds nothing');
   await pick('2565');
   await type('ปลัด');
   assert.deepEqual(hits(), ['45/2565'], 'ผู้สั่ง is searched too');
@@ -1015,18 +1188,14 @@ test('the order form searches saved orders, optionally in one พ.ศ. year, and
   assert.deepEqual([search.value, year.value, hits()], ['', '', []]);
 });
 
-test('editing an order opens the order form and keeps an older status the order form does not offer', async () => {
-  const edit = async (existing, change = () => {}) => {
+test('editing an order opens the order form locked to คำสั่ง, and a status the order still carries is left as it was', async () => {
+  const edit = async (existing) => {
     const app = setup({ authMode: 'ready' });
     const toasts = recordToasts(app);
     app.context.existing = existing;
     app.run(`allCategories = [{ id: "order", name: "คำสั่ง" }, { id: "memo", name: "บันทึกข้อความ" }]; allDocuments = [existing]; openDocModal(existing)`);
     const { elements } = app;
-    const form = {
-      title: elements.get('docModalTitle').textContent, locked: 'locked' in elements.get('docCategory').dataset,
-      statuses: statusOptions(elements), status: elements.get('docStatus').value,
-    };
-    change(elements);
+    const form = { title: elements.get('docModalTitle').textContent, locked: 'locked' in elements.get('docCategory').dataset };
     const saving = elements.get('docForm').fire('submit');
     await flush();
     app.complete();
@@ -1035,24 +1204,17 @@ test('editing an order opens the order form and keeps an older status the order 
   };
   const order = { id: 'o1', title: 'คำสั่งเดิม', category: 'order', status: 'completed' };
   const saved = await edit(order);
-  assert.deepEqual(saved.form, { title: 'แก้ไขคำสั่ง', locked: true, statuses: ORDER_STATUS_TEXT, status: 'completed' });
-  assert.deepEqual([saved.write.category, saved.write.status], ['order', 'completed']);
+  assert.deepEqual(saved.form, { title: 'แก้ไขคำสั่ง', locked: true });
+  assert.deepEqual([saved.write.category, 'status' in saved.write], ['order', false]);
   assert.deepEqual(saved.toasts, [{ message: 'แก้ไขคำสั่งสำเร็จ', type: 'success' }]);
 
-  // orders saved through the document form before keep their status until someone picks a new one
-  const approved = await edit({ ...order, status: 'approved', urgency: 'most-urgent' });
-  assert.deepEqual(approved.form.statuses, ['อนุมัติแล้ว', ...ORDER_STATUS_TEXT]);
-  assert.equal(approved.write.status, 'approved');
-  assert.equal(approved.write.urgency, '', 'orders have no urgency, so an earlier level is cleared');
-  // no status is one of the order form's own choices, so nothing extra is added for it
-  const unset = await edit({ ...order, status: undefined });
-  assert.deepEqual([unset.form.statuses, unset.form.status, unset.write.status], [ORDER_STATUS_TEXT, '', '']);
-  const changed = await edit({ ...order, status: 'approved' }, (elements) => { elements.get('docStatus').value = 'cancelled'; });
-  assert.equal(changed.write.status, 'cancelled');
+  const urgent = await edit({ ...order, status: 'approved', urgency: 'most-urgent' });
+  assert.equal(urgent.write.urgency, '', 'orders have no urgency, so an earlier level is cleared');
+  assert.equal('status' in urgent.write, false);
 
   // records in other categories still open the document form
   const memo = await edit({ id: 'm1', title: 'บันทึก', category: 'memo', status: 'approved' });
-  assert.deepEqual(memo.form, { title: 'แก้ไขเอกสาร', locked: false, statuses: ['ไม่ระบุสถานะ', 'รอดำเนินการ', 'อนุมัติแล้ว', 'ไม่อนุมัติ'], status: 'approved' });
+  assert.deepEqual(memo.form, { title: 'แก้ไขเอกสาร', locked: false });
 });
 
 test('an order is not saved before the คำสั่ง category has loaded, and picks it up once it arrives', async () => {
@@ -1091,30 +1253,32 @@ test('editing writes urgency only when one is chosen or has to be cleared back t
 
 test('a title with a PDF has a red PDF icon and opens the file; one without a file has a grey icon and is not a button', () => {
   const app = setup();
-  // the dashboard's recent table is reached through a selector the DOM double does not keep, so hold on to it here
-  const recent = { innerHTML: '', querySelectorAll: () => [] };
-  const query = app.context.document.querySelector;
-  app.context.document.querySelector = (selector) => (selector === '#recentTable tbody' ? recent : query(selector));
   app.run(`allCategories = [{ id: "in", name: "หนังสือรับ" }]; renderCategoryOptions();
     allDocuments = [
       { id: "r2", category: "in", title: "คำวินิจฉัย", description: "กองคลัง", fileName: "2373.pdf", storageKey: "${STORAGE_KEY}", createdAtMs: 3 },
       { id: "legacy", category: "in", title: "หนังสือเดิม", fileName: "<b>x</b>.pdf", fileData: "data:application/pdf;base64,JVBERi0=", urgency: "urgent", createdAtMs: 2 },
       { id: "none", category: "in", title: "ยังไม่ได้แนบไฟล์", description: "กองช่าง", fileName: "ค้างจากเดิม.pdf", createdAtMs: 1 },
-    ]; renderDocsTable(); renderRecentTable()`);
-  for (const markup of [app.elements.get('docGroups').innerHTML, recent.innerHTML]) {
-    const cells = [...markup.matchAll(/<td class="doc-title-cell">([\s\S]*?)<\/td>/g)].map((m) => m[1]);
-    assert.equal(cells.length, 3);
-    // with a file: one button holding the red icon, the title and "หมายเหตุ · ชื่อไฟล์"
-    assert.match(cells[0], /^<button class="doc-open" data-view-file="r2"><svg class="doc-ico is-pdf"[^>]*aria-hidden="true">[\s\S]*<text[^>]*>PDF<\/text><\/svg>/);
-    assert.match(cells[0], /<span class="doc-open-title">คำวินิจฉัย<\/span><span class="doc-sub" title="กองคลัง · 2373\.pdf">กองคลัง · 2373\.pdf<\/span><\/span><\/button>$/);
-    assert.match(cells[1], /data-view-file="legacy"/, 'a legacy base64 PDF opens too');
-    assert.match(cells[1], /<span class="doc-open-title"><span class="urgency urgency-urgent">ด่วน<\/span>หนังสือเดิม<\/span>/);
-    assert.match(cells[1], />&lt;b&gt;x&lt;\/b&gt;\.pdf<\/span>/, 'file names are escaped');
-    // without a file: a grey sheet and plain text, and a leftover file name is not shown
-    assert.match(cells[2], /^<div class="doc-open"><svg class="doc-ico is-none"/);
-    assert.doesNotMatch(cells[2], /<button|data-view-file|PDF<\/text>|ค้างจากเดิม/);
-    assert.match(cells[2], /<span class="doc-sub" title="กองช่าง">กองช่าง<\/span>/);
-  }
+    ]; renderDocsTable(); renderRecentList()`);
+  const cells = [...app.elements.get('docGroups').innerHTML.matchAll(/<td class="doc-title-cell">([\s\S]*?)<\/td>/g)].map((m) => m[1]);
+  assert.equal(cells.length, 3);
+  // with a file: one button holding the red icon, the title and "หมายเหตุ · ชื่อไฟล์"
+  assert.match(cells[0], /^<button class="doc-open" data-view-file="r2"><svg class="doc-ico is-pdf"[^>]*aria-hidden="true">[\s\S]*<text[^>]*>PDF<\/text><\/svg>/);
+  assert.match(cells[0], /<span class="doc-open-title">คำวินิจฉัย<\/span><span class="doc-sub" title="กองคลัง · 2373\.pdf">กองคลัง · 2373\.pdf<\/span><\/span><\/button>$/);
+  assert.match(cells[1], /data-view-file="legacy"/, 'a legacy base64 PDF opens too');
+  assert.match(cells[1], /<span class="doc-open-title"><span class="urgency urgency-urgent">ด่วน<\/span>หนังสือเดิม<\/span>/);
+  assert.match(cells[1], />&lt;b&gt;x&lt;\/b&gt;\.pdf<\/span>/, 'file names are escaped');
+  // without a file: a grey sheet and plain text, and a leftover file name is not shown
+  assert.match(cells[2], /^<div class="doc-open"><svg class="doc-ico is-none"/);
+  assert.doesNotMatch(cells[2], /<button|data-view-file|PDF<\/text>|ค้างจากเดิม/);
+  assert.match(cells[2], /<span class="doc-sub" title="กองช่าง">กองช่าง<\/span>/);
+
+  // the dashboard's latest list opens a file the same way: the whole row is the button, and only when there is a file
+  const rows = [...app.elements.get('recentList').innerHTML.matchAll(/<li>\s*(<(?:button|div)[^>]*>)/g)].map((m) => m[1]);
+  assert.deepEqual(rows, [
+    '<button type="button" class="recent-item" data-view-file="r2">',
+    '<button type="button" class="recent-item" data-view-file="legacy">',
+    '<div class="recent-item">',
+  ]);
 });
 
 test('documents without a PDF or a title still read sensibly', () => {
@@ -1187,7 +1351,7 @@ test('realtime updates refresh category counts and report stream errors in Thai'
   subscriptions.find((s) => s.deleted === false).receive(snap([{ id: 'actual-id', data: () => ({ id: 'bad-id', title: 'Test', category: 'cat' }) }]));
   subscriptions.find((s) => s.deleted === true).receive(snap([]));
   assert.equal(run('allDocuments[0].id'), 'actual-id');
-  assert.match(elements.get('categoryGrid').innerHTML, /1 เอกสาร/);
+  assert.match(elements.get('categoryGrid').innerHTML, /<b>1<\/b> เอกสาร/);
   assert.equal(toasts.length, 0);
   subscriptions[0].fail(Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }));
   subscriptions[1].fail(Object.assign(new Error('Quota exceeded.'), { code: 'resource-exhausted' }));
@@ -1197,16 +1361,47 @@ test('realtime updates refresh category counts and report stream errors in Thai'
   ]);
 });
 
-test('trend counts import timestamps instead of document issue dates', () => {
-  const { run, context } = setup();
+test('the monthly chart covers the last 12 months by the day each record was added, not its issue date, and has a table view', async () => {
+  const { run, context, elements } = setup();
   const painted = {};
   context.Chart = { defaults: { font: {} } };
   context.getComputedStyle = () => ({ getPropertyValue: () => '' });
-  context.capture = (id, type, data) => { painted[id] = data; };
-  run('paintChart = capture; allCategories=[{id:"a",name:"__proto__"}]; allDocuments=[{category:"a",date:"2000-01-01",createdAt:Date.now()}]; renderCharts()');
-  assert.equal(painted.chartTrend.datasets[0].data.at(-1), 1);
-  assert.equal(painted.chartCategory.datasets[0].data[0], 1);
+  context.capture = (id, type, data, options) => { painted[id] = { type, data, options }; };
+  // one record this month (issued long ago), two last month, one 11 months back, one 12 months back (outside the chart)
+  run(`paintChart = capture;
+    const at = (monthsBack) => monthStart(-monthsBack).getTime() + 86400000;
+    allDocuments = [
+      { id: "a", date: "2000-01-01", createdAt: Date.now() },
+      { id: "b", createdAtMs: at(1) }, { id: "c", createdAt: { seconds: at(1) / 1000 } },
+      { id: "d", createdAtMs: at(11) }, { id: "e", createdAtMs: at(12) }, { id: "f" },
+    ]; renderCharts()`);
+  const chart = painted.chartTrend;
+  assert.equal(chart.type, 'line');
+  // arrays made inside the app's sandbox are copied out before comparing
+  assert.deepEqual([...chart.data.datasets[0].data], [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1]);
+  const label = (monthsBack) => run(`monthStart(-${monthsBack}).toLocaleDateString("th-TH", { month: "short", year: "2-digit" })`);
+  assert.deepEqual([chart.data.labels[0], chart.data.labels.at(-1)], [label(11), label(0)]);
+  // numbers above the points: the busiest month and this month
+  assert.deepEqual([...chart.options.plugins.chart3d.labels], [10, 11]);
   assert.equal(run('createdAtMillis({createdAt:{seconds:123}})'), 123000);
+
+  // the same twelve months as a table, oldest first, with the total
+  const table = elements.get('trendTable').innerHTML;
+  const cells = [...table.matchAll(/<tr><td>([^<]*)<\/td><td class="mono num">(\d+)<\/td><\/tr>/g)].map((m) => [m[1], m[2]]);
+  const long = (monthsBack) => run(`monthStart(-${monthsBack}).toLocaleDateString("th-TH", { month: "long", year: "numeric" })`);
+  assert.deepEqual([cells.length, cells[0], cells.at(-2), cells.at(-1)], [13, [long(11), '1'], [long(0), '1'], ['รวม 12 เดือน', '4']]);
+  const toggle = elements.get('trendViewToggle');
+  run('showTrendAsTable(false)'); // the page starts on the chart (the DOM double does not read the hidden attribute)
+  assert.deepEqual([elements.get('trendChartBox').hidden, elements.get('trendTable').hidden], [false, true]);
+  await toggle.fire('click');
+  assert.deepEqual([elements.get('trendChartBox').hidden, elements.get('trendTable').hidden, toggle.getAttribute('aria-label')], [true, false, 'ดูแบบกราฟ']);
+  assert.match(toggle.innerHTML, /<span>ดูแบบกราฟ<\/span>$/);
+  await toggle.fire('click');
+  assert.deepEqual([elements.get('trendChartBox').hidden, elements.get('trendTable').hidden, toggle.getAttribute('aria-label')], [false, true, 'ดูแบบตาราง']);
+
+  // nothing in the last 12 months: no numbers above the flat line
+  run('allDocuments = []; renderCharts()');
+  assert.deepEqual([...painted.chartTrend.options.plugins.chart3d.labels], []);
 });
 
 /* =========================================================
@@ -1477,37 +1672,155 @@ test('every folder opens its own documents, with the other filters cleared', () 
   const app = setup();
   app.run(`allCategories = [{ id: "order", name: "คำสั่ง" }, { id: "own", name: "หนังสือเวียน" }];
     allDocuments = [
-      { id: "a", title: "คำสั่งแต่งตั้ง", category: "order", status: "pending" },
+      { id: "a", title: "คำสั่งแต่งตั้ง", category: "order", date: "2026-02-01" },
       { id: "b", title: "คำสั่งย้าย", category: "order" },
-      { id: "c", title: "หนังสือเวียนแจ้ง", category: "own", status: "approved" },
+      { id: "c", title: "หนังสือเวียนแจ้ง", category: "own" },
     ];
     renderCategories()`);
   const markup = app.elements.get('categoryGrid').innerHTML;
   // built-in folders can't be deleted, but they still open
   assert.deepEqual([...markup.matchAll(/data-open-cat="([^"]*)"/g)].map((m) => m[1]), ['order', 'own']);
   assert.match(markup, /<button type="button" class="cat-name" aria-label="ดูเอกสารในหมวดหมู่ คำสั่ง">คำสั่ง<\/button>/);
-  for (const [id, value] of [['globalSearch', 'ย้าย'], ['filterStatus', 'approved'], ['filterDate', '2026-01-01']]) app.elements.get(id).value = value;
+  for (const [id, value] of [['globalSearch', 'ย้าย'], ['filterDate', '2026-01-01']]) app.elements.get(id).value = value;
   app.run('resetDocFilters("order")');
-  assert.deepEqual(['globalSearch', 'filterCategory', 'filterStatus', 'filterDate'].map((id) => app.elements.get(id).value), ['', 'order', '', '']);
+  assert.deepEqual(['globalSearch', 'filterCategory', 'filterDate'].map((id) => app.elements.get(id).value), ['', 'order', '']);
   assert.deepEqual(JSON.parse(app.run('JSON.stringify(getFilteredDocs().map((d) => d.title))')).sort(), ['คำสั่งแต่งตั้ง', 'คำสั่งย้าย'].sort());
 });
+test('category cards fill three columns top to bottom, with the summary and the add card in the middle one', () => {
+  const app = setup();
+  const columns = () => app.elements.get('categoryGrid').innerHTML.split('<div class="cat-col">').slice(1).map((col) =>
+    [...col.matchAll(/class="cat-name"[^>]*>([^<]*)<|class="(cat-summary|cat-add)"/g)].map((m) => m[1] || m[2]));
+  app.run(`allCategories = ["คำร้อง", "คำสั่ง", "บันทึกข้อความ", "หนังสือรับ", "หนังสือส่ง"].map((name, i) => ({ id: "c" + i, name }));
+    allDocuments = [{ id: "a", category: "c3", createdAtMs: Date.UTC(2026, 9, 1, 5) }, { id: "b", category: "c3", createdAtMs: 1, updatedAt: Date.UTC(2026, 9, 9, 5) }];
+    renderCategories()`);
+  assert.deepEqual(columns(), [['คำร้อง', 'คำสั่ง'], ['cat-summary', 'บันทึกข้อความ', 'cat-add'], ['หนังสือรับ', 'หนังสือส่ง']]);
+  const markup = app.elements.get('categoryGrid').innerHTML;
+  assert.match(markup, /<b>5<\/b><small>หมวดหมู่<\/small>[\s\S]*<b>2<\/b><small>เอกสาร<\/small>/);
+  assert.match(markup, /หนังสือราชการที่รับเข้าจากหน่วยงานภายนอก<\/p>\s*<p class="cat-count"><b>2<\/b> เอกสาร/);
+  // the newest edit counts, not only when the record was added
+  assert.match(markup, /<span>อัปเดต 9 ต\.ค\. 2569<\/span>/);
+  assert.equal((markup.match(/<span>ยังไม่มีเอกสาร<\/span>/g) || []).length, 4);
+  // every card can be edited (system names stay locked inside the popup)
+  assert.deepEqual([...markup.matchAll(/data-edit-cat="([^"]*)"/g)].map((m) => m[1]), ['c0', 'c1', 'c2', 'c3', 'c4']);
 
-test('the status filter can find documents saved without a status', () => {
-  const { run, elements } = setup();
-  run(`allDocuments = [
-    { id: "a", title: "ไม่ระบุ", status: "" },
-    { id: "b", title: "เดิมไม่มีช่องสถานะ" },
-    { id: "c", title: "อนุมัติ", status: "approved" },
-    { id: "d", title: "คำสั่งเสร็จสิ้น", status: "completed" },
-  ]`);
-  const titles = () => JSON.parse(run('JSON.stringify(getFilteredDocs().map((d) => d.title))')).sort();
-  elements.get('filterStatus').value = 'none';
-  assert.deepEqual(titles(), ['ไม่ระบุ', 'เดิมไม่มีช่องสถานะ'].sort());
-  elements.get('filterStatus').value = 'approved';
-  assert.deepEqual(titles(), ['อนุมัติ']);
-  elements.get('filterStatus').value = 'completed';
-  assert.deepEqual(titles(), ['คำสั่งเสร็จสิ้น']);
-  assert.match(html.match(/<select id="filterStatus">([\s\S]*?)<\/select>/)[1], /<option value="none">ไม่ระบุสถานะ<\/option>/);
+  for (const [n, sizes] of [[0, [0, 2, 0]], [1, [1, 2, 0]], [4, [2, 2, 2]], [6, [3, 3, 2]], [7, [3, 3, 3]], [9, [4, 4, 3]]]) {
+    app.run(`allCategories = Array.from({ length: ${n} }, (_, i) => ({ id: "x" + i, name: "หมวด " + i })); renderCategories()`);
+    assert.deepEqual(columns().map((col) => col.length), sizes, `${n} categories`);
+  }
+});
+test('the category popup adds a category with a description, colour and icon, starting on the first unused colour and the folder', async () => {
+  const app = setup();
+  const toasts = [];
+  app.context.record = (message, type) => toasts.push({ message, type });
+  app.run(`showToast = record; openModal = (id) => { document.getElementById(id).hidden = false; }; closeModal = (id) => { document.getElementById(id).hidden = true; };
+    allCategories = ["คำร้อง", "คำสั่ง", "บันทึกข้อความ", "หนังสือรับ", "หนังสือส่ง"].map((name, i) => ({ id: "c" + i, name }))`);
+  // the pickers list the same colours and icons as the popup in the mockup, in its order
+  const colors = [...app.elements.get('categoryColorPicks').innerHTML.matchAll(/data-pick-color="([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(colors, ['#2A78D6', '#EB6834', '#1BAF7A', '#E09A00', '#6B5BD2', '#D55181', '#0E9AA7', '#5E6A85']);
+  const icons = [...app.elements.get('categoryIconPicks').innerHTML.matchAll(/data-pick-icon="([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(icons, ['chat', 'inbox', 'clipboard', 'stamp', 'send', 'folder', 'building', 'tag', 'archive', 'copy']);
+
+  app.run('openAddCategory()');
+  assert.equal(app.elements.get('categoryModalTitle').textContent, 'เพิ่มหมวดหมู่');
+  assert.deepEqual([app.elements.get('categoryName').value, app.elements.get('categoryName').readOnly, app.elements.get('categoryNameHint').hidden], ['', false, true]);
+  // blue, orange, green, amber and purple are taken by the five main categories
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(categoryPick)')), { color: '#D55181', icon: 'folder' });
+
+  app.elements.get('categoryName').value = ' หนังสือรับ ';
+  await app.elements.get('categoryForm').fire('submit');
+  assert.equal(app.writes.length, 0);
+  assert.equal(toasts.pop().message, 'มีหมวดหมู่นี้แล้ว กรุณาใช้ชื่ออื่น');
+
+  app.elements.get('categoryName').value = ' ประกาศ ';
+  app.elements.get('categoryDescription').value = ' ประกาศของ อบต. ';
+  app.run('pickCategoryLook({ color: "#0E9AA7" }); pickCategoryLook({ icon: "tag" })');
+  const adding = app.elements.get('categoryForm').fire('submit');
+  const { createdAt, ...written } = app.writes[0];
+  assert.equal(typeof createdAt, 'number');
+  assert.deepEqual({ ...written }, { name: 'ประกาศ', description: 'ประกาศของ อบต.', color: '#0E9AA7', icon: 'tag' });
+  app.complete();
+  await adding;
+  assert.equal(toasts.pop().message, 'เพิ่มหมวดหมู่แล้ว');
+  assert.equal(app.elements.get('categoryModalOverlay').hidden, true);
+
+  // no description: none is written, and the card says it is one you added
+  app.run('openAddCategory()');
+  app.elements.get('categoryName').value = 'งานพัสดุ';
+  const plain = app.elements.get('categoryForm').fire('submit');
+  assert.equal('description' in app.writes[1], false);
+  app.complete();
+  await plain;
+});
+test('the saved colour, icon and description show on the card, the dashboard and the latest list', () => {
+  const app = setup();
+  app.run(`allCategories = [{ id: "own", name: "ประกาศ", color: "#0E9AA7", icon: "tag", description: "ประกาศของ อบต." },
+      { id: "recv", name: "หนังสือรับ", color: "#5E6A85", icon: "archive" }, { id: "odd", name: "งานเก่า", color: "#123456", icon: "rocket", description: "  " }];
+    allDocuments = [{ id: "a", title: "ประกาศรับสมัคร", category: "own", createdAtMs: 2 }]`);
+  const look = (id) => JSON.parse(app.run(`JSON.stringify(categoryLook("${id}"))`));
+  assert.deepEqual(look('own'), { color: '#0E9AA7', iconKey: 'tag', icon: app.run('CATEGORY_ICONS.tag'), desc: 'ประกาศของ อบต.' });
+  // a main category keeps its default description until one is saved
+  assert.deepEqual(look('recv'), { color: '#5E6A85', iconKey: 'archive', icon: app.run('CATEGORY_ICONS.archive'), desc: 'หนังสือราชการที่รับเข้าจากหน่วยงานภายนอก' });
+  // values the popup can't produce fall back to the defaults (the second added category's colour)
+  assert.deepEqual(look('odd'), { color: '#5E6A85', iconKey: 'folder', icon: app.run('CATEGORY_ICONS.folder'), desc: 'หมวดหมู่ที่เพิ่มเอง' });
+  app.run('renderCategories(); renderRecentList(); renderCategoryBreakdown()');
+  assert.match(app.elements.get('categoryGrid').innerHTML, /data-open-cat="own" style="--c:#0E9AA7">[\s\S]*?<p class="cat-desc">ประกาศของ อบต\.<\/p>/);
+  assert.match(app.elements.get('recentList').innerHTML, /<span class="recent-ico" style="--c:#0E9AA7"[^>]*><svg viewBox="0 0 24 24"><path d="M3 4a1 1 0 0 1 1-1h7\.6/);
+  assert.match(app.elements.get('categoryBreakdown').innerHTML, /<i class="bd-dot" style="--c:#5E6A85"><\/i><span>หนังสือรับ<\/span>/);
+});
+test('editing a category writes only what changed; a main category keeps its name but can change the rest', async () => {
+  const app = setup();
+  const toasts = [];
+  app.context.record = (message, type) => toasts.push({ message, type });
+  app.run(`showToast = record; openModal = (id) => { document.getElementById(id).hidden = false; }; closeModal = (id) => { document.getElementById(id).hidden = true; };
+    allCategories = [{ id: "recv", name: "หนังสือรับ" }, { id: "own", name: "งานพัสดุ", color: "#D55181", icon: "folder" }, { id: "other", name: "งานคลัง" }]`);
+  const submit = async () => {
+    const saving = app.elements.get('categoryForm').fire('submit');
+    if (app.writes.length) app.complete();
+    await saving;
+  };
+
+  app.run('openEditCategory("recv")');
+  assert.equal(app.elements.get('categoryModalTitle').textContent, 'แก้ไขหมวดหมู่');
+  assert.deepEqual([app.elements.get('categoryName').value, app.elements.get('categoryName').readOnly, app.elements.get('categoryNameHint').hidden], ['หนังสือรับ', true, false]);
+  assert.equal(app.elements.get('categoryDescription').value, 'หนังสือราชการที่รับเข้าจากหน่วยงานภายนอก');
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(categoryPick)')), { color: '#2A78D6', icon: 'inbox' });
+  // saved untouched: nothing is written, so the defaults keep applying
+  await submit();
+  assert.equal(app.writes.length, 0);
+  assert.equal(app.elements.get('categoryModalOverlay').hidden, true);
+
+  app.run('openEditCategory("recv")');
+  app.run('pickCategoryLook({ icon: "archive" })');
+  await submit();
+  assert.deepEqual(JSON.parse(JSON.stringify(app.writes)), [{ icon: 'archive' }]);
+  assert.equal(toasts.pop().message, 'บันทึกหมวดหมู่แล้ว');
+
+  app.run('openEditCategory("own")');
+  assert.deepEqual([app.elements.get('categoryName').readOnly, app.elements.get('categoryNameHint').hidden], [false, true]);
+  assert.equal(app.elements.get('categoryDescription').value, 'หมวดหมู่ที่เพิ่มเอง');
+  app.elements.get('categoryName').value = ' งานคลัง ';
+  await submit();
+  assert.equal(app.writes.length, 1);
+  assert.equal(toasts.pop().message, 'มีหมวดหมู่นี้แล้ว กรุณาใช้ชื่ออื่น');
+
+  app.elements.get('categoryName').value = ' งานพัสดุและครุภัณฑ์ ';
+  app.elements.get('categoryDescription').value = 'จัดซื้อจัดจ้าง';
+  app.run('pickCategoryLook({ color: "#5E6A85" })');
+  await submit();
+  assert.deepEqual(JSON.parse(JSON.stringify(app.writes[1])), { name: 'งานพัสดุและครุภัณฑ์', description: 'จัดซื้อจัดจ้าง', color: '#5E6A85' });
+});
+test('the category popup, CATEGORY_COLORS/CATEGORY_ICONS and firestore.rules agree on the fields and their values', () => {
+  const { run } = setup();
+  const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8').split('function validCategory')[1];
+  const listed = (field) => [...rules.match(new RegExp(`data\\.${field} in \\[([^\\]]*)\\]`))[1].matchAll(/'([^']*)'/g)].map((m) => m[1]);
+  assert.deepEqual(listed('color'), JSON.parse(run('JSON.stringify(CATEGORY_COLORS)')));
+  assert.deepEqual(listed('icon'), JSON.parse(run('JSON.stringify(Object.keys(CATEGORY_ICONS))')));
+  // every default look is one the popup can choose, so opening a main category shows its colour and icon picked
+  for (const look of JSON.parse(run('JSON.stringify(Object.values(CATEGORY_LOOK))'))) {
+    assert.ok(listed('color').includes(look.color) && listed('icon').includes(look.icon), JSON.stringify(look));
+  }
+  assert.match(rules.match(/hasOnly\(\[([^\]]*)\]/)[1], /'description', 'color', 'icon'/);
+  assert.equal(html.match(/id="categoryDescription" maxlength="(\d+)"/)[1], rules.match(/data\.description\.size\(\) <= (\d+)/)[1]);
 });
 
 test('the status colours\' r, g, b channels come from the theme, so the 3D cards follow them', () => {
@@ -1530,13 +1843,152 @@ test('the status colours\' r, g, b channels come from the theme, so the 3D cards
   assert.match(css, /\[data-tone="green"\] \{[^}]*--tone-rgb: var\(--success-rgb\)/);
 });
 
-test('an empty stat meter is marked, so its glow is switched off', () => {
-  const { run, elements } = setup();
-  run(`allDocuments = [{ id: "a", status: "approved" }, { id: "b", status: "approved" }, { id: "c", status: "pending" }]; renderStats()`);
-  const empty = (id) => elements.get(id).classList.contains('is-empty');
-  assert.deepEqual([empty('meterApproved'), empty('meterPending'), empty('meterRejected')], [false, false, true]);
-  run(`allDocuments = [{ id: "a", status: "rejected" }]; renderStats()`);
-  assert.deepEqual([empty('meterApproved'), empty('meterRejected')], [true, false]);
+/* การ์ดสรุปนับเลขขึ้นทีละเฟรม ในชุดทดสอบให้ทุกเฟรมจบทันที ตัวเลขจึงเป็นค่าสุดท้าย
+   วันนี้ตั้งได้ (ปี, เดือนแบบ JavaScript, วัน, ชั่วโมง) ตามเวลาเครื่อง ให้การนับเดือนนี้กับเดือนก่อนไม่ขึ้นกับวันที่รันชุดทดสอบ */
+function setupDashboard(...today) {
+  const app = setup();
+  app.context.requestAnimationFrame = (step) => { step(1e9); return 1; };
+  if (today.length) {
+    app.context.today = today;
+    app.run(`const RealDate = Date;
+      Date = class extends RealDate {
+        constructor(...args) { if (args.length) super(...args); else super(...today); }
+        static now() { return new RealDate(...today).getTime(); }
+      }`);
+  }
+  return app;
+}
+const cardText = (elements, ...ids) => ids.map((id) => elements.get(id).textContent);
+const at = (...date) => new Date(...date).getTime();
+
+test('the summary cards count every document, those added this month against the same days of last month, the urgent ones and those with a file', () => {
+  const { run, elements, context } = setupDashboard(2026, 9, 9, 15); // 9 ต.ค. 2569
+  context.docs = [
+    { id: 'a', createdAtMs: at(2026, 9, 9, 10), urgency: 'most-urgent', storageKey: STORAGE_KEY },
+    { id: 'b', createdAtMs: at(2026, 9, 1), urgency: 'urgent' },
+    { id: 'h', createdAt: { seconds: at(2026, 9, 5) / 1000 }, urgency: 'most-urgent', fileData: 'data:application/pdf;base64,JVBERi0=' },
+    // last month: 1–9 ก.ย. counts, 10 ก.ย. onwards is past today's date
+    { id: 'c', createdAtMs: at(2026, 8, 9, 23) }, { id: 'e', createdAtMs: at(2026, 8, 1) }, { id: 'd', createdAtMs: at(2026, 8, 10) },
+    { id: 'f', createdAtMs: 1, urgency: 'toString', fileName: 'ชื่อไฟล์อย่างเดียว.pdf' },
+  ];
+  run(`allCategories = [{ id: "in", name: "หนังสือรับ" }, { id: "out", name: "หนังสือส่ง" }, { id: "order", name: "คำสั่ง" }];
+    allDocuments = docs; renderStats()`);
+  assert.deepEqual(cardText(elements, 'statTotal', 'statTotalNote'), ['7', 'ใน 3 หมวดหมู่']);
+  assert.equal(elements.get('statMonth').textContent, '3');
+  assert.equal(elements.get('statMonthNote').innerHTML,
+    '<span class="delta"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7M9 7h8v8"/></svg>+1</span><span>เทียบวันที่ 1–9 ก.ย.</span>');
+  // ด่วน 1, ด่วนมาก 0, ด่วนที่สุด 2 on one bar; an unknown level is not urgent
+  assert.equal(elements.get('statUrgent').textContent, '3');
+  const urgent = elements.get('statUrgentNote').innerHTML;
+  assert.match(urgent, /<span class="urg-bar" role="img" aria-label="ด่วน 1 ฉบับ, ด่วนมาก 0 ฉบับ, ด่วนที่สุด 2 ฉบับ">/);
+  assert.deepEqual([...urgent.matchAll(/<i class="urg-key-([a-z-]+)" style="flex-grow:(\d+)"><\/i>/g)].map((m) => [m[1], m[2]]),
+    [['urgent', '1'], ['most-urgent', '2']], 'only the levels in use take part of the bar');
+  assert.match(urgent, /ด่วนมาก <b class="mono">0<\/b>/, 'the legend still names every level');
+  // a file in R2 or an older base64 file counts; a file name alone does not
+  assert.deepEqual(cardText(elements, 'statFiles', 'statFilesNote'), ['29', '2 จาก 7 ฉบับ']);
+  assert.equal(elements.get('meterFiles').style.width, '29%');
+  assert.equal(elements.get('meterFiles').classList.contains('is-empty'), false);
+});
+
+test('this month is compared with the same days of a shorter last month, and on the 1st with that one day', () => {
+  // 31 มี.ค. 2570: กุมภาพันธ์มี 28 วัน จึงเทียบทั้งเดือน และ 1 มี.ค. นับเป็นเดือนนี้
+  const march = setupDashboard(2027, 2, 31, 12);
+  march.context.docs = [{ id: 'a', createdAtMs: at(2027, 1, 28, 23) }, { id: 'b', createdAtMs: at(2027, 2, 1) }];
+  march.run('allDocuments = docs; renderStats()');
+  assert.deepEqual([march.elements.get('statMonth').textContent, march.elements.get('statMonthNote').innerHTML], ['1', '<span>เท่ากับวันที่ 1–28 ก.พ.</span>']);
+  // 1 ต.ค.: only 1 ก.ย. is compared, and fewer than then points the arrow down
+  const first = setupDashboard(2026, 9, 1, 8);
+  first.context.docs = [{ id: 'a', createdAtMs: at(2026, 8, 1, 10) }, { id: 'b', createdAtMs: at(2026, 8, 1, 16) }, { id: 'c', createdAtMs: at(2026, 8, 2) }];
+  first.run('allDocuments = docs; renderStats()');
+  assert.deepEqual([first.elements.get('statMonth').textContent, first.elements.get('statMonthNote').innerHTML],
+    ['0', '<span class="delta"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 9v8H9"/></svg>−2</span><span>เทียบวันที่ 1 ก.ย.</span>']);
+});
+
+test('the summary cards say so when nothing is urgent, an empty file meter has no glow, and shares are not rounded to 0% or 100%', () => {
+  const { run, elements } = setupDashboard(2026, 9, 9, 15);
+  run('allCategories = []; allDocuments = []; renderStats()');
+  assert.deepEqual(cardText(elements, 'statTotal', 'statTotalNote', 'statMonth', 'statUrgent', 'statFiles', 'statFilesNote'),
+    ['0', 'ใน 0 หมวดหมู่', '0', '0', '0', '0 จาก 0 ฉบับ']);
+  assert.equal(elements.get('statMonthNote').innerHTML, '<span>เท่ากับวันที่ 1–9 ก.ย.</span>');
+  assert.equal(elements.get('statUrgentNote').innerHTML, '<span>ไม่มีเอกสารด่วน</span>');
+  assert.equal(elements.get('meterFiles').classList.contains('is-empty'), true);
+  // a share is never rounded up to 100% while a file is missing, nor down to 0% while one is there
+  assert.deepEqual(JSON.parse(run('JSON.stringify([sharePercent(199, 200), sharePercent(1, 1000), sharePercent(3, 3), sharePercent(0, 5), sharePercent(1, 3), sharePercent(1, 0)])')),
+    [99, 1, 100, 0, 33, 0]);
+  run(`allDocuments = [{ id: "a", storageKey: "${STORAGE_KEY}" }]; renderStats()`);
+  assert.deepEqual([elements.get('statFiles').textContent, elements.get('meterFiles').classList.contains('is-empty')], ['100', false]);
+});
+
+test('the เอกสารทั้งหมด card opens every document, clearing the filters, so the list matches its number', async () => {
+  const { run, elements } = setupDashboard();
+  run(`allCategories = [{ id: "in", name: "หนังสือรับ" }]; renderCategoryOptions(); allDocuments = [{ id: "a", category: "in" }, { id: "b" }]`);
+  for (const [id, value] of [['globalSearch', 'ไม่มีคำนี้'], ['filterCategory', 'in'], ['filterDate', '2026-01-01']]) elements.get(id).value = value;
+  await elements.get('statTotalCard').fire('click');
+  assert.deepEqual(['globalSearch', 'filterCategory', 'filterDate'].map((id) => elements.get(id).value), ['', '', '']);
+  assert.equal(elements.get('pageTitle').textContent, 'เอกสารทั้งหมด');
+  assert.equal(elements.get('resultCount').textContent, 'พบ 2 จาก 2 รายการ');
+});
+
+test('the latest list shows the five records added last, with their category icon, number · agency and date', () => {
+  const { run, elements } = setupDashboard();
+  run(`allCategories = [{ id: "in", name: "หนังสือรับ" }, { id: "own", name: "งานพัสดุ" }, { id: "own2", name: "ประกาศ" }];
+    allDocuments = [
+      { id: "old", category: "in", title: "เก่าสุด", createdAtMs: 1 },
+      { id: "a", category: "in", title: "การกันเงินงบประมาณ", docNumber: "สท0023.15/ว3221", agency: "สำนักงานท้องถิ่นอำเภอ", date: "2026-10-09", createdAtMs: 9 },
+      { id: "b", category: "own", title: "<b>ตัวหนา</b>", docNumber: "", agency: "  ", createdAtMs: 8 },
+      { id: "c", category: "own2", title: "ประกาศรับสมัคร", agency: "อบต.วังใหญ่", createdAtMs: 7 },
+      { id: "d", category: "", title: "", createdAtMs: 6 },
+      { id: "e", category: "gone", title: "หมวดถูกลบ", docNumber: "ที่ 5", createdAtMs: 5 },
+    ]; renderRecentList()`);
+  const markup = elements.get('recentList').innerHTML;
+  const items = [...markup.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) => m[1]);
+  const field = (item, cls) => item.match(new RegExp(`<span class="${cls}"[^>]*>([\\s\\S]*?)</span>\\s*(?:<|$)`))[1];
+  assert.equal(items.length, 5, 'the oldest of six is left out');
+  assert.deepEqual(items.map((item) => field(item, 'recent-title')), ['การกันเงินงบประมาณ', '&lt;b&gt;ตัวหนา&lt;/b&gt;', 'ประกาศรับสมัคร', '-', 'หมวดถูกลบ']);
+  assert.deepEqual(items.map((item) => field(item, 'recent-meta')), ['สท0023.15/ว3221 · สำนักงานท้องถิ่นอำเภอ', '-', 'อบต.วังใหญ่', '-', 'ที่ 5']);
+  assert.deepEqual(items.map((item) => field(item, 'recent-date')), [run('formatDate("2026-10-09")'), '-', '-', '-', '-']);
+  // the icon names the category: หนังสือรับ in its own colour, staff-made folders in the next colours, none in grey
+  const icons = items.map((item) => item.match(/<span class="recent-ico"([^>]*)>/)[1]);
+  assert.deepEqual(icons.map((attrs) => [attrs.match(/--c:([^"]*)"/)?.[1] ?? null, attrs.match(/aria-label="([^"]*)"/)[1]]), [
+    ['#2A78D6', 'หนังสือรับ'], ['#D55181', 'งานพัสดุ'], ['#5E6A85', 'ประกาศ'], [null, 'ไม่ระบุหมวดหมู่'], [null, 'ไม่ระบุหมวดหมู่'],
+  ]);
+  run('allDocuments = []; renderRecentList()');
+  assert.equal(elements.get('recentList').innerHTML, '<li class="dash-empty">ยังไม่มีเอกสาร</li>');
+});
+
+test('แยกตามหมวดหมู่ lists every category in documents-page order with its count and share, and a row opens that category', async () => {
+  const { run, elements } = setupDashboard();
+  run(`allCategories = ["คำร้อง", "คำสั่ง", "งานพัสดุ", "บันทึกข้อความ", "หนังสือรับ", "หนังสือส่ง"].map((name) => ({ id: name, name }));
+    renderCategoryOptions();
+    allDocuments = [
+      ...Array.from({ length: 6 }, (_, i) => ({ id: "r" + i, category: "หนังสือรับ" })),
+      { id: "o1", category: "คำสั่ง" }, { id: "o2", category: "คำสั่ง" }, { id: "o3", category: "คำสั่ง" },
+      { id: "x", category: "" }, { id: "y", category: "หมวดที่ถูกลบแล้ว" }, { id: "p", category: "งานพัสดุ" },
+    ]; renderCategoryBreakdown()`);
+  const markup = elements.get('categoryBreakdown').innerHTML;
+  const rows = [...markup.matchAll(/<li>([\s\S]*?)<\/li>/g)].map(([, row]) => [
+    row.match(/<span class="bd-name"><i class="bd-dot"[^>]*><\/i><span>([^<]*)<\/span>/)[1],
+    row.match(/<b class="mono">(\d+)<\/b><small class="mono">(\d+)%<\/small>/).slice(1).join(' '),
+    row.match(/class="bd-fill" style="width:([\d.]+)%"/)[1],
+    row.match(/data-show-cat="([^"]*)"/)?.[1] ?? null,
+  ]);
+  assert.deepEqual(rows, [
+    ['หนังสือรับ', '6 50', '100', 'หนังสือรับ'], ['หนังสือส่ง', '0 0', '0', 'หนังสือส่ง'], ['คำสั่ง', '3 25', '50', 'คำสั่ง'],
+    ['บันทึกข้อความ', '0 0', '0', 'บันทึกข้อความ'], ['คำร้อง', '0 0', '0', 'คำร้อง'], ['งานพัสดุ', '1 8', '16.666666666666664', 'งานพัสดุ'],
+    // records without a category (or whose category was deleted) close the list in grey, and cannot be filtered on their own
+    ['ไม่ระบุหมวดหมู่', '2 17', '33.33333333333333', null],
+  ]);
+  assert.match(markup, /<div class="bd-row is-none">/);
+  assert.match(markup, /aria-label="หนังสือรับ 6 ฉบับ \(50%\) กดเพื่อดูเอกสาร"/);
+
+  // pressing a row opens the documents page filtered to it, the other filters cleared
+  elements.get('globalSearch').value = 'ค้างไว้';
+  await elements.get('categoryBreakdown').fire('click', { target: { closest: (selector) => (selector === '[data-show-cat]' ? { dataset: { showCat: 'คำสั่ง' } } : null) } });
+  assert.deepEqual([elements.get('filterCategory').value, elements.get('globalSearch').value, elements.get('pageTitle').textContent], ['คำสั่ง', '', 'เอกสารทั้งหมด']);
+  assert.deepEqual(docBoxes(elements).map((box) => [box.title, box.tag]), [['คำสั่ง', '3 รายการ']], 'the same count as the row');
+
+  run('allCategories = []; allDocuments = []; renderCategoryBreakdown()');
+  assert.equal(elements.get('categoryBreakdown').innerHTML, '<li class="dash-empty">ยังไม่มีหมวดหมู่</li>');
 });
 
 test('the note under a title shows its first 60 characters, and the tooltip carries the whole note and the file name', () => {
@@ -1617,11 +2069,14 @@ test('phones on iOS before 15.4 (no Object.hasOwn or Array#at) still render and 
   const { run, elements } = setup({ legacyBrowser: true });
   assert.equal(run('typeof Object.hasOwn'), 'function');
   assert.deepEqual(run('JSON.stringify([[1, 2, 3].at(-1), [1, 2, 3].at(0), [1, 2, 3].at(5)])'), '[3,1,null]');
-  assert.equal(run('statusStamp("approved")'), '<span class="stamp stamp-approved">อนุมัติแล้ว</span>');
-  assert.equal(run('statusStamp("toString")'), '-', 'inherited names are still not statuses');
   assert.match(run('urgencyBadge("urgent")'), /ด่วน/);
-  run('openDocModal({ id: "a", status: "rejected", urgency: "most-urgent" })');
-  assert.deepEqual([elements.get('docStatus').value, elements.get('docUrgency').value], ['rejected', 'most-urgent']);
+  assert.equal(run('urgencyBadge("toString")'), '', 'inherited names are still not urgency levels');
+  run('openDocModal({ id: "a", urgency: "most-urgent" })');
+  assert.equal(elements.get('docUrgency').value, 'most-urgent');
+  // the dashboard draws its cards, list and breakdown with these too
+  run(`allCategories = [{ id: "in", name: "หนังสือรับ" }]; allDocuments = [{ id: "d", category: "in", title: "ทดสอบ", urgency: "urgent", createdAtMs: 1 }]; renderAll()`);
+  assert.match(elements.get('recentList').innerHTML, /<span class="urgency urgency-urgent">ด่วน<\/span>ทดสอบ/);
+  assert.match(elements.get('categoryBreakdown').innerHTML, /data-show-cat="in"/);
   run('switchView("documents")');
   assert.equal(elements.get('pageTitle').textContent, 'เอกสารทั้งหมด');
 });
@@ -1739,7 +2194,7 @@ test('fertilizer makes the sunflower grow 13 minutes of growth in 1, once per pl
     ['ต้นอ่อน · ใส่ปุ๋ยแล้ว · สดชื่น · รดน้ำล่าสุด 1 นาทีที่แล้ว', 'สดชื่น · รดน้ำล่าสุด 1 นาทีที่แล้ว', 'กำลังโต · ใส่ปุ๋ยแล้ว · คอตก · รดน้ำล่าสุด 12 นาทีที่แล้ว']);
 });
 
-test('flies add dryness on top of the time since watering, which brings death closer but not the watering time shown', () => {
+test('butterflies add dryness on top of the time since watering, which brings death closer but not the watering time shown', () => {
   const { storage, run } = sunflowerSandbox();
   const MINUTE = 60000;
   const ages = (state, now) => run(`sunflowerAges(${JSON.stringify(state)}, ${now})`);

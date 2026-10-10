@@ -66,6 +66,14 @@ async function main() {
   const chartResponse = await fetch('https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js', { signal: AbortSignal.timeout(20000) });
   assert.ok(chartResponse.ok, 'Chart.js CDN is available');
   const chart = await chartResponse.text();
+  // sunflower.js imports three.js from the CDN; serve the same pinned files locally (the module imports its core next to it)
+  const threeUrl = /"(https:\/\/cdn\.jsdelivr\.net\/npm\/three@[^"]+\/three\.module\.min\.js)"/.exec(await fs.readFile(path.join(root, 'sunflower.js'), 'utf8'))[1];
+  const three = {};
+  for (const name of ['three.module.min.js', 'three.core.min.js']) {
+    const response = await fetch(threeUrl.replace('three.module.min.js', name), { signal: AbortSignal.timeout(20000) });
+    assert.ok(response.ok, `three.js CDN is available (${name})`);
+    three[`/three/${name}`] = await response.text();
+  }
   const original = await fs.readFile(path.join(root, 'index.html'), 'utf8');
   const html = original.replace(/<script src="https:\/\/www\.gstatic\.com[^\"]+"><\/script>/g, '')
     .replace('https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js', '/chart.js')
@@ -87,9 +95,11 @@ async function main() {
       } else if (url.pathname.startsWith('/api/')) await fakeWorker(req, res, url);
       else if (url.pathname === '/') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(html); }
       else if (url.pathname === '/chart.js') { res.setHeader('Content-Type', 'text/javascript'); res.end(chart); }
+      else if (three[url.pathname]) { res.setHeader('Content-Type', 'text/javascript'); res.end(three[url.pathname]); }
       else if (files[url.pathname]) {
         res.setHeader('Content-Type', url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript');
-        res.end(await fs.readFile(path.join(root, files[url.pathname])));
+        const body = await fs.readFile(path.join(root, files[url.pathname]));
+        res.end(url.pathname === '/sunflower.js' ? body.toString('utf8').replace(threeUrl, '/three/three.module.min.js') : body);
       } else if (assetPath(url.pathname)) {
         // CSS masks only accept SVG served as image/svg+xml, so the type must be right.
         res.setHeader('Content-Type', { '.png': 'image/png', '.svg': 'image/svg+xml' }[path.extname(url.pathname)] || 'application/octet-stream');
@@ -170,11 +180,68 @@ async function main() {
     await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
     await cdp('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
     await waitForApp();
-    await check('Dashboard renders 12 documents and three real charts', async () => {
+    await check('Dashboard is laid out as four cards, the monthly chart beside the latest list, then แยกตามหมวดหมู่ beside แยกตามงานที่รับผิดชอบ', async () => {
       await waitFor(`document.getElementById('statTotal').textContent === '12'`);
-      assert.equal(await evaluate(`Object.keys(charts).length`), 3);
+      // the seed: 12 records added today, in 5 categories (two seeded, three built in), each with a PDF;
+      // urgency cycles none/ปกติ/ด่วน/ด่วนมาก/ด่วนที่สุด, so 2 of each urgent level
+      // (textContent runs the pieces of a card's bottom line together; on screen they sit apart)
+      await waitFor(`document.getElementById('statFiles').textContent === '100' && document.getElementById('statMonth').textContent === '12'`);
+      const cards = await evaluate(`[...document.querySelectorAll('.stat-card')].map((card) => [card.tagName, card.querySelector('.stat-label').textContent,
+        card.querySelector('.stat-value').textContent.trim(), card.querySelector('.stat-foot').textContent.replace(/\\s+/g, ' ').trim()])`);
+      const lastMonth = await evaluate(`monthStart(-1).toLocaleDateString('th-TH', { month: 'short' })`);
+      const days = await evaluate(`(() => { const now = new Date(), d = Math.min(now.getDate(), new Date(now.getFullYear(), now.getMonth(), 0).getDate()); return d === 1 ? '1' : '1–' + d; })()`);
+      assert.deepEqual(cards, [
+        ['BUTTON', 'เอกสารทั้งหมด', '12ฉบับ', 'ใน 5 หมวดหมู่ ดูรายการ'],
+        ['ARTICLE', 'เพิ่มเข้าระบบเดือนนี้', '12ฉบับ', `+12เทียบวันที่ ${days} ${lastMonth}`],
+        ['ARTICLE', 'เอกสารด่วน', '6ฉบับ', 'ด่วน 2ด่วนมาก 2ด่วนที่สุด 2'],
+        ['ARTICLE', 'มีไฟล์แนบ', '100%', '12 จาก 12 ฉบับ'],
+      ]);
+      // one real chart, drawn at its box's size; it fills the height of the latest list beside it
+      assert.equal(await evaluate(`Object.keys(charts).join()`), 'chartTrend');
       assert.ok(await evaluate(`Object.values(charts).every(c=>c.width>0&&c.height>0)`));
+      const layout = await evaluate(`(() => {
+        const box = (el) => el.getBoundingClientRect();
+        const cards = [...document.querySelectorAll('.stat-card')].map(box), [trend, latest] = [...document.querySelectorAll('.dash-grid > .panel')].map(box);
+        const [byCategory, bySection] = [...document.querySelectorAll('.dash-split > .panel')].map(box), canvas = box(document.getElementById('chartTrend'));
+        return {
+          cardsInARow: cards.every((r) => Math.abs(r.top - cards[0].top) < 1),
+          chartLeftOfLatest: trend.right < latest.left && Math.abs(trend.top - latest.top) < 1 && Math.abs(trend.height - latest.height) < 1,
+          chartWider: trend.width > latest.width,
+          // the two breakdowns share the row below, half each, from the chart's left edge to the latest list's right edge
+          breakdownsBelow: byCategory.top > trend.bottom && Math.abs(byCategory.top - bySection.top) < 1 && byCategory.right < bySection.left
+            && Math.abs(byCategory.left - trend.left) < 1 && Math.abs(bySection.right - latest.right) < 1 && Math.abs(byCategory.width - bySection.width) < 1,
+          chartFillsPanel: canvas.bottom > trend.bottom - 30 && canvas.height >= 250,
+          latest: document.querySelectorAll('#recentList .recent-item').length,
+          breakdown: [...document.querySelectorAll('#categoryBreakdown .bd-name')].map((el) => el.textContent),
+          // nothing in the seed has a section yet, so all 12 are ยังไม่ระบุงาน
+          sections: [...document.querySelectorAll('#sectionBreakdown .bd-row')].map((row) => row.querySelector('.bd-name').textContent + ' ' + row.querySelector('.bd-val b').textContent).slice(-2),
+        };
+      })()`);
+      assert.deepEqual(layout, { cardsInARow: true, chartLeftOfLatest: true, chartWider: true, breakdownsBelow: true, chartFillsPanel: true, latest: 5,
+        breakdown: ['หนังสือรับ', 'หนังสือส่ง', 'คำสั่ง', 'บันทึกข้อความ', 'คำร้อง'], sections: ['นักวิเคราะห์นโยบายและแผนฯ 0', 'ยังไม่ระบุงาน 12'] });
+      assert.equal(await evaluate(`[...document.querySelectorAll('#view-dashboard *')].some((el) => /อนุมัติ|รอดำเนินการ/.test(el.textContent))`), false, 'no statuses on the dashboard');
       await screenshot('desktop.png');
+    });
+    await check('The monthly chart switches to a table and back, and the cards and rows open the documents they count', async () => {
+      await click('#trendViewToggle');
+      assert.deepEqual(await evaluate(`[document.getElementById('trendChartBox').hidden, document.getElementById('trendTable').hidden, document.getElementById('trendViewToggle').textContent.trim()]`),
+        [true, false, 'ดูแบบกราฟ']);
+      const rows = await evaluate(`[...document.querySelectorAll('#trendTable tr')].map((tr) => [...tr.cells].map((td) => td.textContent))`);
+      assert.deepEqual([rows.length, rows[0], rows.at(-2)[1], rows.at(-1)], [14, ['เดือน', 'จำนวน (ฉบับ)'], '12', ['รวม 12 เดือน', '12']]);
+      await click('#trendViewToggle');
+      await pause(200);
+      assert.deepEqual(await evaluate(`[document.getElementById('trendChartBox').hidden, charts.chartTrend.width > 0 && charts.chartTrend.height > 0]`), [false, true]);
+      // a category row opens the documents page filtered to that category, with the same count
+      await evaluate(`document.getElementById('globalSearch').value = 'ค้างไว้'`);
+      await click('#categoryBreakdown [data-show-cat="cat-b"]');
+      assert.deepEqual(await evaluate(`[document.getElementById('pageTitle').textContent, document.getElementById('filterCategory').value, document.getElementById('globalSearch').value,
+        [...document.querySelectorAll('#docGroups .doc-group')].map((g) => g.querySelector('.panel-tag').textContent)]`), ['เอกสารทั้งหมด', 'cat-b', '', ['6 รายการ']]);
+      // the เอกสารทั้งหมด card opens all of them
+      await click('[data-view="dashboard"]');
+      await click('#statTotalCard');
+      assert.deepEqual(await evaluate(`[document.getElementById('pageTitle').textContent, document.getElementById('filterCategory').value, document.getElementById('resultCount').textContent]`),
+        ['เอกสารทั้งหมด', '', 'พบ 12 จาก 12 รายการ']);
+      await click('[data-view="dashboard"]');
     });
     await check('Logo loads in the loader, sidebar and banner', async () => {
       await waitFor(`[...document.querySelectorAll('img[src="assets/logo.png"]')].every(img => img.complete)`);
@@ -236,11 +303,13 @@ async function main() {
       await move(5, 990);
     });
     await check('Glow and press details: an empty meter has no glow, a pressed top-bar button sinks, a long note does not widen its table', async () => {
-      // nothing rejected: that meter is empty and must not leave a glowing dot
-      await evaluate(`fixtureStore.documents.forEach((d) => { if (d.status === 'rejected') { d.status = 'pending'; d.wasRejected = true; } }); emitFixture()`);
-      await waitFor(`document.getElementById('meterRejected').style.width === '0%'`);
-      assert.deepEqual(await evaluate(`(() => { const m = document.getElementById('meterRejected'); return [m.classList.contains('is-empty'), getComputedStyle(m).boxShadow]; })()`), [true, 'none']);
-      await evaluate(`fixtureStore.documents.forEach((d) => { if (d.wasRejected) { d.status = 'rejected'; delete d.wasRejected; } }); emitFixture()`);
+      // no file attached anywhere: the มีไฟล์แนบ meter is empty and must not leave a glowing dot
+      await evaluate(`fixtureStore.documents.forEach((d) => { d.keptFile = d.fileData; delete d.fileData; }); emitFixture()`);
+      await waitFor(`document.getElementById('meterFiles').style.width === '0%'`);
+      assert.deepEqual(await evaluate(`(() => { const m = document.getElementById('meterFiles'); return [m.classList.contains('is-empty'), getComputedStyle(m).boxShadow]; })()`), [true, 'none']);
+      await evaluate(`fixtureStore.documents.forEach((d) => { d.fileData = d.keptFile; delete d.keptFile; }); emitFixture()`);
+      await waitFor(`document.getElementById('meterFiles').style.width === '100%'`);
+      assert.notEqual(await evaluate(`getComputedStyle(document.getElementById('meterFiles')).boxShadow`), 'none', 'a filled meter glows');
       // pressing the top bar's เพิ่มเอกสาร shows the sunk shadow, not the hover glow
       const button = await evaluate(`(() => { const r = document.querySelector('.topbar .btn-primary').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
       await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...button });
@@ -304,10 +373,10 @@ async function main() {
         ['หนังสือส่ง', 'เลขที่หนังสือ', ['ทดสอบ/2', 'ทดสอบ/4', 'ทดสอบ/6', 'ทดสอบ/8', 'ทดสอบ/10', 'ทดสอบ/12']],
         ['คำสั่ง', null, []], ['บันทึกข้อความ', null, []], ['คำร้อง', null, []],
       ]);
-      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#recentTable tbody tr')].map((tr) => tr.cells[0].textContent)`),
-        ['ทดสอบ/1', 'ทดสอบ/2', 'ทดสอบ/3', 'ทดสอบ/4', 'ทดสอบ/5']);
+      // the dashboard's latest list: the five saved last, newest first, each with its number and agency
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#recentList .recent-meta')].map((el) => el.textContent)`),
+        ['ทดสอบ/1 · หน่วยงานทดสอบ', 'ทดสอบ/2 · หน่วยงานทดสอบ', 'ทดสอบ/3 · หน่วยงานทดสอบ', 'ทดสอบ/4 · หน่วยงานทดสอบ', 'ทดสอบ/5 · หน่วยงานทดสอบ']);
       assert.equal(await evaluate(`document.querySelectorAll('.col-entry').length`), 0);
-      assert.equal(await evaluate(`document.querySelector('#recentTable thead th').textContent.trim()`), 'เลขที่หนังสือ');
       await screenshot('documents-boxes.png');
       // a 1280px laptop fits even the widest box (หนังสือรับ: เลขที่รับ plus the file icons) without sideways scrolling
       await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -322,20 +391,20 @@ async function main() {
         allDocuments = [{ ...allDocuments[0], id }];
         allTrash = [{ ...allDocuments[0], deleted: true }];
         allCategories = [{ ...allCategories[0], id }];
-        renderDocsTable(); renderRecentTable(); renderTrash(); renderCategories();
-        const actions = ['preview', 'download', 'edit', 'delete', 'restore', 'purge', 'del-cat', 'open-cat', 'add-to', 'group', 'view-file'];
+        renderDocsTable(); renderRecentList(); renderCategoryBreakdown(); renderTrash(); renderCategories();
+        const actions = ['preview', 'download', 'edit', 'delete', 'restore', 'purge', 'del-cat', 'open-cat', 'add-to', 'group', 'view-file', 'show-cat'];
         return {
           values: actions.map(action => document.querySelector('[data-' + action + ']').getAttribute('data-' + action)),
           injected: document.querySelectorAll('[data-id-marker]').length,
         };
       })()`);
-      assert.deepEqual(ids.values, Array(11).fill(id));
+      assert.deepEqual(ids.values, Array(12).fill(id));
       assert.equal(ids.injected, 0, 'Record IDs must not create HTML attributes');
       await reloadApp();
       await click('[data-view="documents"]');
     });
     await check('A document saved without a PDF or title shows "-" and offers no preview or download', async () => {
-      await evaluate(`allDocuments = [{ id: 'no-file', title: '', docNumber: 'NOFILE/1', status: 'pending', deleted: false }]; renderDocsTable()`);
+      await evaluate(`allDocuments = [{ id: 'no-file', title: '', docNumber: 'NOFILE/1', deleted: false }]; renderDocsTable()`);
       assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docGroups [data-preview], #docGroups [data-download]')].map((b) => [b.disabled, b.title])`),
         [[true, 'ดูตัวอย่าง (ไม่มีไฟล์ PDF)'], [true, 'ดาวน์โหลด (ไม่มีไฟล์ PDF)']]);
       assert.equal(await evaluate(`document.querySelector('#docGroups .doc-title-cell').textContent`), '-');
@@ -400,13 +469,15 @@ async function main() {
       await screenshot('documents.png');
       await click('#addDocBtn');
       assert.equal(await evaluate(`document.getElementById('docUrgency').value`), '', 'a new document starts as ปกติ');
-      assert.equal(await evaluate(`document.getElementById('docStatus').value`), '', 'a new document starts with no status chosen');
+      // statuses are gone: the form has no status field, and the documents page has no status filter or column
+      assert.deepEqual(await evaluate(`[!!document.getElementById('docStatus'), !!document.getElementById('filterStatus'),
+        [...document.querySelectorAll('#docModalOverlay label, #view-documents th, #view-documents label')].some((el) => el.textContent.trim().startsWith('สถานะ'))]`),
+        [false, false, false]);
       await screenshot('document-form.png');
       await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
     });
     const documentLabels = ['ชื่อเอกสาร', 'เลขที่หนังสือ', 'วันที่ออกเอกสาร', 'หน่วยงาน'];
     const orderLabels = ['ชื่อคำสั่ง', 'เลขที่คำสั่ง', 'วันที่ออกคำสั่ง', 'ผู้สั่ง'];
-    const orderStatuses = ['', 'รอดำเนินการ', 'กำลังดำเนินการ', 'เสร็จสิ้น', 'ยกเลิก']; // starts blank
     const closeDocForm = async () => {
       await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
       await waitFor(`document.getElementById('docModalOverlay').hidden`);
@@ -419,8 +490,6 @@ async function main() {
         labels: ['docTitleLabel', 'docNumberLabel', 'docDateLabel', 'docAgencyLabel'].map((id) => document.getElementById(id).textContent),
         category: [category.value, category.selectedOptions[0]?.textContent, category.disabled],
         urgencyShown: document.getElementById('docUrgency').getClientRects().length > 0,
-        statuses: [...document.getElementById('docStatus').options].map((o) => o.textContent),
-        status: document.getElementById('docStatus').value,
         save: document.getElementById('docSaveBtn').textContent,
       };
     })()`);
@@ -435,8 +504,8 @@ async function main() {
       assert.deepEqual((await docForm()).labels, documentLabels);
       await chooseOrder('docCategory');
       const form = await docForm();
-      assert.deepEqual([form.title, form.labels, form.urgencyShown, form.statuses, form.save],
-        ['เพิ่มคำสั่งใหม่', orderLabels, false, orderStatuses, 'บันทึกคำสั่ง']);
+      assert.deepEqual([form.title, form.labels, form.urgencyShown, form.save],
+        ['เพิ่มคำสั่งใหม่', orderLabels, false, 'บันทึกคำสั่ง']);
       assert.equal(form.category[2], false, 'a category chosen in the document form can still be changed');
       assert.deepEqual(await evaluate(`['docNumber', 'docAgency'].map((id) => document.getElementById(id).placeholder)`), ['เช่น 123/2569', 'เช่น นายก อบต.']);
       await screenshot('document-form-order.png');
@@ -461,9 +530,9 @@ async function main() {
         s.value = [...s.options].find((o) => o.textContent === ${JSON.stringify(name)}).value;
         s.dispatchEvent(new Event('change'));
       })()`);
-      // the agency column is the fifth from the end, before date, size, status and the actions
+      // the agency column sits just before the date column
       const agencyColumns = () => evaluate(`Object.fromEntries([...document.querySelectorAll('#docGroups .doc-group')].filter((box) => box.querySelector('thead'))
-        .map((box) => [box.querySelector('h3').textContent, [...box.querySelectorAll('thead th')].at(-5).textContent]))`);
+        .map((box) => { const heads = [...box.querySelectorAll('thead th')].map((th) => th.textContent); return [box.querySelector('h3').textContent, heads[heads.findIndex((h) => h.startsWith('วันที่')) - 1]]; }))`);
       await click('#addDocBtn');
       await choose('docCategory', 'หนังสือส่ง');
       assert.deepEqual((await docForm()).labels, [...documentLabels.slice(0, 3), 'ถึง']);
@@ -557,13 +626,86 @@ async function main() {
       await evaluate(`fixtureStore.documents = fixtureStore.documents.filter((d) => d.title !== 'หนังสือรับทดสอบ'); delete fixtureStore.documents.find((d) => d.id === 'seed-2').receiveNumber; emitFixture()`);
       await waitFor('allDocuments.length === 13');
     });
-    await check('เพิ่มคำสั่ง in the คำสั่ง box opens the order form locked to คำสั่ง; orders save, show their status and edit there', async () => {
+    await check('งานที่รับผิดชอบ: one choice by mouse or keyboard, pressed again to clear, saved, then in the column, the filter and the dashboard; orders have none', async () => {
+      const picks = () => evaluate(`[...document.querySelectorAll('#docSectionPicks .section-pick')].map((p) => [p.textContent, p.querySelector('input').checked])`);
+      const chosen = async () => (await picks()).filter(([, checked]) => checked).map(([name]) => name);
+      const pill = (name) => `#docSectionPicks input[value="${name}"] + span`;
+      const key = async (key, code, keyCode, text) => {
+        await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode, ...(text ? { text } : {}) });
+        await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode });
+      };
+      await click('#addDocBtn');
+      await waitFor(`!document.getElementById('docModalOverlay').hidden`);
+      assert.deepEqual((await picks()).map(([name]) => name), ['สำนักปลัด', 'กองคลัง', 'กองช่าง', 'กองการศึกษาฯ', 'กองสาธารณสุขฯ',
+        'จพง.ธุรการฯ', 'จพง.ป้องกันฯ', 'นักจัดการงานทั่วไปฯ', 'นักทรัพยากรบุคคลฯ', 'นักวิเคราะห์นโยบายและแผนฯ']);
+      assert.deepEqual(await chosen(), []);
+      // it sits right below ชั้นความเร็ว and above คำอธิบาย, across the whole form
+      assert.equal(await evaluate(`(() => {
+        const field = document.getElementById('docSectionField').getBoundingClientRect(), urgency = document.getElementById('docUrgencyField').getBoundingClientRect();
+        const note = document.getElementById('docDescription').getBoundingClientRect(), form = document.querySelector('#docForm .form-grid').getBoundingClientRect();
+        return field.top >= urgency.bottom && field.bottom <= note.top && Math.abs(field.left - form.left) < 1 && Math.abs(field.right - form.right) < 1;
+      })()`), true);
+      await click(pill('finance'));
+      assert.deepEqual(await chosen(), ['กองคลัง']);
+      await click(pill('finance'));
+      assert.deepEqual(await chosen(), [], 'pressing the chosen one again clears it');
+      await click(pill('palat'));
+      // the arrow keys move the choice; Space on the chosen one clears it (Chrome sends that no click, the app does it),
+      // and once more chooses it again
+      await evaluate(`document.querySelector('#docSectionPicks input[value="palat"]').focus()`);
+      await key('ArrowRight', 'ArrowRight', 39);
+      assert.deepEqual(await chosen(), ['กองคลัง']);
+      await key(' ', 'Space', 32, ' ');
+      assert.deepEqual(await chosen(), []);
+      await key(' ', 'Space', 32, ' ');
+      assert.deepEqual(await chosen(), ['กองคลัง']);
+      assert.ok(await evaluate(`getComputedStyle(document.querySelector('#docSectionPicks input[value="finance"] + span')).outlineStyle !== 'none'`), 'the focused choice shows a focus ring');
+
+      await click(pill('policy-planning'));
+      await evaluate(`(() => { document.getElementById('docTitle').value = 'งานทดสอบเบราว์เซอร์'; const s = document.getElementById('docCategory'); s.value = 'cat-b'; s.dispatchEvent(new Event('change')); })()`);
+      await screenshot('document-form-section.png');
+      await click('#docSaveBtn');
+      await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.some((d) => d.title === 'งานทดสอบเบราว์เซอร์')`);
+      assert.equal(await evaluate(`fixtureStore.documents.find((d) => d.title === 'งานทดสอบเบราว์เซอร์').section`), 'policy-planning');
+      const row = () => evaluate(`(() => {
+        const tr = [...document.querySelectorAll('[data-group="cat-b"] tbody tr')].find((r) => r.textContent.includes('งานทดสอบเบราว์เซอร์'));
+        const heads = [...tr.closest('table').querySelectorAll('thead th')].map((th) => th.textContent.trim());
+        return [heads.at(-2), tr.cells[heads.length - 2].textContent];
+      })()`);
+      assert.deepEqual(await row(), ['งานที่รับผิดชอบ', 'นักวิเคราะห์นโยบายและแผนฯ']);
+      // the filter leaves just that record
+      await evaluate(`(() => { const s = document.getElementById('filterSection'); s.value = 'policy-planning'; s.dispatchEvent(new Event('change')); })()`);
+      assert.deepEqual(await evaluate(`[document.getElementById('resultCount').textContent, [...document.querySelectorAll('#docGroups tbody tr')].length]`), ['พบ 1 จาก 14 รายการ', 1]);
+      await click('#clearFilters');
+      // the dashboard counts it, and its row opens the same list
+      await click('[data-view="dashboard"]');
+      assert.equal(await evaluate(`document.querySelector('#sectionBreakdown [data-show-section="policy-planning"] .bd-val b').textContent`), '1');
+      await click('#sectionBreakdown [data-show-section="policy-planning"]');
+      assert.deepEqual(await evaluate(`[document.getElementById('pageTitle').textContent, document.getElementById('filterSection').value, document.getElementById('resultCount').textContent]`),
+        ['เอกสารทั้งหมด', 'policy-planning', 'พบ 1 จาก 14 รายการ']);
+      // editing shows the choice; pressing it again and saving clears it
+      await click('[data-edit]');
+      await waitFor(`!document.getElementById('docModalOverlay').hidden`);
+      assert.deepEqual(await chosen(), ['นักวิเคราะห์นโยบายและแผนฯ']);
+      await click(pill('policy-planning'));
+      await click('#docSaveBtn');
+      await waitFor(`document.getElementById('docModalOverlay').hidden && fixtureStore.documents.find((d) => d.title === 'งานทดสอบเบราว์เซอร์').section === ''`);
+      await click('#clearFilters');
+      // the order form has no งานที่รับผิดชอบ
+      const orderId = await evaluate(`allCategories.find((c) => c.name === 'คำสั่ง').id`);
+      await click(`[data-add-to="${orderId}"]`);
+      await waitFor(`!document.getElementById('docModalOverlay').hidden`);
+      assert.equal(await evaluate(`document.getElementById('docSectionField').getClientRects().length`), 0);
+      await closeDocForm();
+      await evaluate(`fixtureStore.documents = fixtureStore.documents.filter((d) => d.title !== 'งานทดสอบเบราว์เซอร์'); emitFixture()`);
+      await waitFor('allDocuments.length === 13');
+    });
+    await check('เพิ่มคำสั่ง in the คำสั่ง box opens the order form locked to คำสั่ง; orders save without a status and edit there', async () => {
       const orderId = await evaluate(`allCategories.find((c) => c.name === 'คำสั่ง').id`);
       await click(`[data-add-to="${orderId}"]`);
       await waitFor(`!document.getElementById('docModalOverlay').hidden`);
       assert.deepEqual(await docForm(), {
-        title: 'เพิ่มคำสั่งใหม่', labels: orderLabels, category: [orderId, 'คำสั่ง', true], urgencyShown: false,
-        statuses: orderStatuses, status: '', save: 'บันทึกคำสั่ง',
+        title: 'เพิ่มคำสั่งใหม่', labels: orderLabels, category: [orderId, 'คำสั่ง', true], urgencyShown: false, save: 'บันทึกคำสั่ง',
       });
       await screenshot('order-form.png');
       // the พ.ศ. year beside the date starts at this year; picking an earlier one backdates the order, keeping day and month
@@ -578,25 +720,30 @@ async function main() {
         year.value = '2565'; year.dispatchEvent(new Event('change'));
       })()`);
       assert.equal(await evaluate(`document.getElementById('docDate').value`), '2022-03-15');
-      await evaluate(`document.getElementById('docTitle').value='คำสั่งทดสอบเบราว์เซอร์'; document.getElementById('docNumber').value='ทดสอบ/คำสั่ง'; document.getElementById('docAgency').value='นายก อบต.'; document.getElementById('docStatus').value='in-progress'`);
+      await evaluate(`document.getElementById('docTitle').value='คำสั่งทดสอบเบราว์เซอร์'; document.getElementById('docNumber').value='ทดสอบ/คำสั่ง'; document.getElementById('docAgency').value='นายก อบต.'`);
       await click('#docSaveBtn');
       await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.some((d) => d.title === 'คำสั่งทดสอบเบราว์เซอร์')`);
       const saved = await evaluate(`(() => { const d = fixtureStore.documents.find((x) => x.title === 'คำสั่งทดสอบเบราว์เซอร์'); return { category: d.category, status: d.status, agency: d.agency, date: d.date, hasUrgency: 'urgency' in d }; })()`);
-      assert.deepEqual(saved, { category: orderId, status: 'in-progress', agency: 'นายก อบต.', date: '2022-03-15', hasUrgency: false });
+      // the blank status is what firestore.rules on the server still requires of a new record
+      assert.deepEqual(saved, { category: orderId, status: '', agency: 'นายก อบต.', date: '2022-03-15', hasUrgency: false });
       // the คำสั่ง box names its columns like the order form
       assert.deepEqual(await evaluate(`[...document.querySelectorAll('[data-group="${orderId}"] thead th')].map((th) => th.textContent)`),
-        ['เลขที่คำสั่ง', 'ชื่อคำสั่ง', 'ผู้สั่ง', 'วันที่ออกคำสั่ง', 'ขนาดไฟล์', 'สถานะ', 'การดำเนินการ']);
-      // the status filter finds it, and its row carries the order status and the พ.ศ. year
-      await evaluate(`document.getElementById('filterStatus').value='in-progress'; document.getElementById('filterStatus').dispatchEvent(new Event('change'))`);
-      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docGroups tbody tr')].map((tr) => [tr.closest('[data-group]').dataset.group, tr.cells[0].textContent, tr.cells[3].textContent, tr.querySelector('.stamp').textContent])`),
-        [[orderId, 'ทดสอบ/คำสั่ง', '15 มี.ค. 2565', 'กำลังดำเนินการ']]);
+        ['เลขที่คำสั่ง', 'ชื่อคำสั่ง', 'ผู้สั่ง', 'วันที่ออกคำสั่ง', 'ขนาดไฟล์', 'การดำเนินการ']);
+      // the search finds it, and its row carries the พ.ศ. year
+      await evaluate(`document.getElementById('globalSearch').value='ทดสอบ/คำสั่ง'; document.getElementById('globalSearch').dispatchEvent(new Event('input'))`);
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docGroups tbody tr')].map((tr) => [tr.closest('[data-group]').dataset.group, tr.cells[0].textContent, tr.cells[3].textContent, tr.cells.length])`),
+        [[orderId, 'ทดสอบ/คำสั่ง', '15 มี.ค. 2565', 6]]);
+      // an order saved back when statuses existed keeps its status when edited, though nothing shows it
+      await evaluate(`fixtureStore.documents.find((d) => d.title === 'คำสั่งทดสอบเบราว์เซอร์').status = 'in-progress'; emitFixture()`);
       await click('[data-edit]');
       await waitFor(`!document.getElementById('docModalOverlay').hidden`);
       const editing = await docForm();
-      assert.deepEqual([editing.title, editing.category, editing.status, editing.save], ['แก้ไขคำสั่ง', [orderId, 'คำสั่ง', true], 'in-progress', 'บันทึกคำสั่ง']);
-      await evaluate(`document.getElementById('docStatus').value='completed'`);
+      assert.deepEqual([editing.title, editing.category, editing.save], ['แก้ไขคำสั่ง', [orderId, 'คำสั่ง', true], 'บันทึกคำสั่ง']);
+      await evaluate(`document.getElementById('docTitle').value='คำสั่งทดสอบเบราว์เซอร์ แก้ไข'`);
       await click('#docSaveBtn');
-      await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.some((d) => d.title === 'คำสั่งทดสอบเบราว์เซอร์' && d.status === 'completed')`);
+      await waitFor(`document.getElementById('docModalOverlay').hidden && allDocuments.some((d) => d.title === 'คำสั่งทดสอบเบราว์เซอร์ แก้ไข')`);
+      assert.equal(await evaluate(`fixtureStore.documents.find((d) => d.title === 'คำสั่งทดสอบเบราว์เซอร์ แก้ไข').status`), 'in-progress');
+      await evaluate(`fixtureStore.documents.find((d) => d.title === 'คำสั่งทดสอบเบราว์เซอร์ แก้ไข').title = 'คำสั่งทดสอบเบราว์เซอร์'; emitFixture()`);
       await click('#clearFilters');
       // later checks count the seed documents, so the test order goes away again
       await evaluate(`fixtureStore.documents = fixtureStore.documents.filter((d) => d.title !== 'คำสั่งทดสอบเบราว์เซอร์'); emitFixture()`);
@@ -798,8 +945,8 @@ async function main() {
       await click('#clearFilters');
       // the dashboard's latest documents open the same way
       await click('[data-view="dashboard"]');
-      assert.equal(await evaluate(`document.querySelectorAll('#recentTable button.doc-open .doc-ico.is-pdf').length`), 5);
-      await openPreview(() => click('#recentTable .doc-open'));
+      assert.equal(await evaluate(`document.querySelectorAll('#recentList button.recent-item[data-view-file]').length`), 5);
+      await openPreview(() => click('#recentList .recent-item'));
       await click('[data-view="documents"]');
     });
     await check('Trash, restore, and permanent deletion update the interface', async () => {
@@ -829,36 +976,65 @@ async function main() {
       await click('[data-view="categories"]');
       const count = await evaluate('allCategories.length');
       await click('#addCategoryBtn');
-      await evaluate(`document.getElementById('categoryName').value='หมวดหมู่ทดสอบเบราว์เซอร์'`);
+      await evaluate(`document.getElementById('categoryName').value='หมวดหมู่ทดสอบเบราว์เซอร์'; document.getElementById('categoryDescription').value='คำอธิบายทดสอบ'`);
+      // a colour and an icon are picked by clicking them, and only one of each stays picked
+      await click('#categoryColorPicks [data-pick-color="#0E9AA7"]');
+      await click('#categoryIconPicks [data-pick-icon="tag"]');
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#categoryModalOverlay [aria-pressed="true"]')].map((b) => b.dataset.pickColor || b.dataset.pickIcon)`), ['#0E9AA7', 'tag']);
       await click('#categoryForm button[type="submit"]');
       await waitFor(`document.getElementById('categoryModalOverlay').hidden && allCategories.length===${count + 1}`);
       const id = await evaluate(`allCategories.find(c=>c.name==='หมวดหมู่ทดสอบเบราว์เซอร์').id`);
+      assert.deepEqual(await evaluate(`(() => { const c = fixtureStore.categories.find((x) => x.id === '${id}'); const card = document.querySelector('[data-open-cat="${id}"]');
+        return [c.description, c.color, c.icon, card.style.getPropertyValue('--c'), card.querySelector('.cat-desc').textContent, getComputedStyle(card.querySelector('.cat-ico')).backgroundColor]; })()`),
+        ['คำอธิบายทดสอบ', '#0E9AA7', 'tag', '#0E9AA7', 'คำอธิบายทดสอบ', 'rgb(14, 154, 167)']);
+      // a category you added can be renamed from its pencil; it keeps its id
+      await click(`[data-edit-cat="${id}"]`);
+      await waitFor(`!document.getElementById('categoryModalOverlay').hidden && document.getElementById('categoryName').value==='หมวดหมู่ทดสอบเบราว์เซอร์'`);
+      assert.equal(await evaluate(`document.getElementById('view-categories').classList.contains('is-active')`), true, 'the pencil does not open the folder');
+      await evaluate(`document.getElementById('categoryName').value='หมวดหมู่ทดสอบเปลี่ยนชื่อ'`);
+      await click('#categoryForm button[type="submit"]');
+      await waitFor(`document.getElementById('categoryModalOverlay').hidden && allCategories.some(c=>c.id==='${id}' && c.name==='หมวดหมู่ทดสอบเปลี่ยนชื่อ')`);
       await click(`[data-del-cat="${id}"]`);
       await click('#confirmActionBtn');
       await waitFor(`allCategories.length===${count}`);
       assert.equal(await evaluate('allDocuments.length'), 12);
-      // built-in categories are recreated on every load, so their delete button is switched off
+      // built-in categories are recreated on every load, so their delete button is switched off; the pencil still works
       const builtIn = await evaluate(`[...document.querySelectorAll('.category-card')]
         .filter((card) => ['คำสั่ง', 'บันทึกข้อความ', 'คำร้อง'].includes(card.querySelector('.cat-name').textContent))
-        .map((card) => card.querySelector('.cat-actions button').disabled)`);
-      assert.deepEqual(builtIn, [true, true, true]);
+        .map((card) => [card.querySelector('.cat-del').disabled, card.querySelector('.cat-edit').disabled])`);
+      assert.deepEqual(builtIn, [[true, false], [true, false], [true, false]]);
+
+      // หนังสือรับ: the name is locked, but its colour can change, and the dashboard follows
+      await click('[data-edit-cat="cat-a"]');
+      await waitFor(`!document.getElementById('categoryModalOverlay').hidden`);
+      assert.deepEqual(await evaluate(`[document.getElementById('categoryName').readOnly, document.getElementById('categoryNameHint').hidden,
+        document.querySelector('#categoryColorPicks [aria-pressed="true"]').dataset.pickColor, document.querySelector('#categoryIconPicks [aria-pressed="true"]').dataset.pickIcon]`),
+        [true, false, '#2A78D6', 'inbox']);
+      await click('#categoryColorPicks [data-pick-color="#5E6A85"]');
+      await click('#categoryForm button[type="submit"]');
+      await waitFor(`document.getElementById('categoryModalOverlay').hidden && fixtureStore.categories.find((c) => c.id === 'cat-a').color === '#5E6A85'`);
+      assert.deepEqual(await evaluate(`(({ id, ...c }) => c)(fixtureStore.categories.find((c) => c.id === 'cat-a'))`), { name: 'หนังสือรับ', color: '#5E6A85' });
+      assert.equal(await evaluate(`document.querySelector('#categoryBreakdown [data-show-cat="cat-a"] .bd-dot').style.getPropertyValue('--c')`), '#5E6A85');
+      await evaluate(`delete fixtureStore.categories.find((c) => c.id === 'cat-a').color; emitFixture()`);
     });
     await check('Clicking a category folder opens its documents, but its trash button does not', async () => {
       const viewActive = (view) => evaluate(`document.getElementById('view-${view}').classList.contains('is-active')`);
-      const filters = () => evaluate(`['globalSearch', 'filterCategory', 'filterStatus', 'filterDate'].map((id) => document.getElementById(id).value)`);
+      const filters = () => evaluate(`['globalSearch', 'filterCategory', 'filterDate'].map((id) => document.getElementById(id).value)`);
       await click('[data-view="categories"]');
       // leftover filters would hide documents that the folder counts
-      await evaluate(`document.getElementById('globalSearch').value='ทดสอบ/1'; document.getElementById('filterStatus').value='approved'; document.getElementById('filterDate').value='2020-01-01'`);
-      // the paper sheets above the cover are part of the folder too
+      await evaluate(`document.getElementById('globalSearch').value='ทดสอบ/1'; document.getElementById('filterDate').value='2020-01-01'`);
+      // the empty space beside the icon is part of the card too
       const paper = await evaluate(`(() => { const el=document.querySelector('[data-open-cat="cat-b"]'); el.scrollIntoView({block:'center'}); const r=el.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+40}; })()`);
       await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...paper, button: 'left', clickCount: 1 });
       await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...paper, button: 'left', clickCount: 1 });
       await waitFor(`document.getElementById('view-documents').classList.contains('is-active')`);
-      assert.deepEqual(await filters(), ['', 'cat-b', '', '']);
+      assert.deepEqual(await filters(), ['', 'cat-b', '']);
       assert.equal(await evaluate(`document.getElementById('resultCount').textContent`), 'พบ 6 จาก 12 รายการ');
       // only that folder's box is left, with its agency column called ถึง
-      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docGroups .doc-group')].map((box) => [box.querySelector('h3').textContent, box.querySelectorAll('tbody tr').length, [...box.querySelectorAll('thead th')].at(-5).textContent])`),
-        [['หนังสือส่ง', 6, 'ถึง']]);
+      assert.deepEqual(await evaluate(`[...document.querySelectorAll('#docGroups .doc-group')].map((box) => {
+        const heads = [...box.querySelectorAll('thead th')].map((th) => th.textContent);
+        return [box.querySelector('h3').textContent, box.querySelectorAll('tbody tr').length, heads[heads.indexOf('วันที่ออกเอกสาร') - 1]];
+      })`), [['หนังสือส่ง', 6, 'ถึง']]);
 
       await click('[data-view="categories"]');
       await click('[data-del-cat="cat-a"]');
@@ -866,7 +1042,7 @@ async function main() {
       await click('#confirmModalOverlay [data-close-modal]');
       assert.equal(await viewActive('categories'), true, 'the trash button only asks to delete');
       const orderId = await evaluate(`allCategories.find((c) => c.name === 'คำสั่ง').id`);
-      await click(`[data-open-cat="${orderId}"] .cat-actions button`);
+      await click(`[data-open-cat="${orderId}"] .cat-del`);
       await pause(100);
       assert.equal(await viewActive('categories'), true, 'a built-in folder\'s disabled trash button does nothing');
       assert.equal(await evaluate(`document.getElementById('confirmModalOverlay').hidden`), true);
@@ -876,7 +1052,7 @@ async function main() {
       await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
       await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
       await waitFor(`document.getElementById('view-documents').classList.contains('is-active')`);
-      assert.deepEqual(await filters(), ['', 'cat-a', '', '']);
+      assert.deepEqual(await filters(), ['', 'cat-a', '']);
       await click('#clearFilters');
     });
     await check('The sunflower wilts without water, the can revives it, it dies at 25 minutes and replants as a seed, and the switch pauses it', async () => {
@@ -1036,52 +1212,72 @@ async function main() {
       assert.deepEqual([back.shown, back.sw.bottom <= back.bag.top], [true, true]);
       await setGame(0, 99);
     });
-    await check('Flies drawn on a canvas buzz the sunflower and dry it faster; a click or tap swats one without pressing what is under it', async () => {
+    await check('Butterflies drawn with three.js flutter around the sunflower and dry it faster; a click or tap scares one off without pressing what is under it', async () => {
       const saved = () => evaluate(`JSON.parse(localStorage.getItem('govdocs-sunflower'))`);
-      // the page keeps its fly swarm on the canvas, so the test can call one in instead of waiting for a random one
+      // the page keeps its butterflies on the canvas, so the test can call one in instead of waiting for a random one
       const bugs = (code) => evaluate(`(() => { const b = document.querySelector('.sunflower-bugs').sunflowerBugs; return ${code}; })()`);
       const press = async ({ x, y }) => {
         await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
         await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
       };
+      // three.js loads once the page has loaded and the plant is in view with the game on
+      const ready = () => waitFor(`document.querySelector('.sunflower-bugs').sunflowerBugs.ready()`);
       const fresh = async () => {
         await evaluate(`localStorage.setItem('govdocs-sunflower', JSON.stringify({ on: true, plantedAt: Date.now() - 99 * 60000, wateredAt: Date.now(), fertilizedAt: null, bitten: 0, pausedAt: null })); true`);
         await reloadApp();
+        await ready();
       };
       await fresh();
 
-      // the first fly comes 20 seconds after the page opens, the second 25 after that, the third 30 after that
+      // the first butterfly comes 20 seconds after three.js is ready, the second 25 after that, the third 30 after that
       // (the page also ticks once a second on its own, hence 3 seconds to spare before each)
       for (const [gap, count] of [[20, 1], [25, 2], [30, 3]]) {
         assert.equal(await bugs(`(b.tick(${(gap - 3) * 1000}), b.count())`), count - 1, `not yet ${count}`);
-        assert.equal(await bugs('(b.tick(3000), b.count())'), count, `fly ${count} after ${gap} seconds`);
+        assert.equal(await bugs('(b.tick(3000), b.count())'), count, `butterfly ${count} after ${gap} seconds`);
       }
       assert.equal(await bugs('(b.tick(60000), b.count())'), 3, 'no more than three at once');
       await fresh();
 
-      // a fly comes in from the side, finds the plant, and is actually drawn
+      // a butterfly comes in from the side, finds the plant, and is actually drawn by three.js (WebGL, not a 2D canvas)
       await bugs('(b.spawn(), true)');
-      await waitFor(`document.querySelector('.sunflower-bugs').sunflowerBugs.flies().some((f) => f.state === 'buzz')`);
+      await waitFor(`document.querySelector('.sunflower-bugs').sunflowerBugs.butterflies().some((f) => f.state === 'flutter' || f.state === 'perch')`);
       assert.ok(await evaluate(`(() => {
-        const c = document.querySelector('.sunflower-bugs'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        const c = document.querySelector('.sunflower-bugs');
+        if (!c.getContext('webgl2')) return false;
+        const copy = document.createElement('canvas');
+        copy.width = c.width; copy.height = c.height;
+        const x = copy.getContext('2d');
+        x.drawImage(c, 0, 0);
+        const d = x.getImageData(0, 0, c.width, c.height).data;
         let painted = 0;
         for (let i = 3; i < d.length; i += 4) if (d[i]) painted++;
         return painted > 30;
-      })()`), 'the fly is painted on the canvas');
+      })()`), 'the butterfly is painted on the WebGL canvas');
       assert.ok(await evaluate(`(() => { const s = document.querySelector('.sidebar'); return s.scrollWidth <= s.clientWidth; })()`), 'the canvas does not make the sidebar scroll sideways');
 
-      // while it buzzes, the plant dries 9 seconds extra per second; the watering time shown stays true
+      // while it flutters around or sits on the plant, the plant dries 9 seconds extra per second; the watering time shown stays true
       const before = (await saved()).bitten;
       await pause(2300);
       assert.ok((await saved()).bitten - before >= 9000, 'the bites are saved');
-      assert.equal(await evaluate(`document.getElementById('sunflowerCan').title`), 'รดน้ำ · สดชื่น · เพิ่งรดน้ำ · แมลงตอม 1 ตัว');
+      assert.equal(await evaluate(`document.getElementById('sunflowerCan').title`), 'รดน้ำ · สดชื่น · เพิ่งรดน้ำ · ผีเสื้อตอม 1 ตัว');
 
-      // a mouse click on it swats it: it tumbles down and is gone
-      await press((await bugs('b.flies()'))[0]);
-      assert.equal((await bugs('b.flies()'))[0].state, 'swatted');
-      await waitFor(`document.querySelector('.sunflower-bugs').sunflowerBugs.flies().length === 0`);
+      // a mouse click on it scares it: it flies off and is gone
+      await press((await bugs('b.butterflies()'))[0]);
+      assert.equal((await bugs('b.butterflies()'))[0].state, 'scared');
+      assert.equal(await bugs('b.count()'), 0, 'a scared butterfly no longer counts');
+      await waitFor(`document.querySelector('.sunflower-bugs').sunflowerBugs.butterflies().length === 0`);
 
-      // a fly over the watering can: tapping it swats the fly and does not water
+      // pressed just above it, it still flies up and away, not down into the name card where the canvas ends
+      const perch = await evaluate(`(() => { const r = document.querySelector('.sunflower-bloom').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height * 0.6 }; })()`);
+      await bugs(`(b.spawn(${JSON.stringify(perch)}), true)`);
+      await pause(400);
+      await press({ x: perch.x, y: perch.y - 14 });
+      await pause(250);
+      const fled = (await bugs('b.butterflies()'))[0];
+      assert.ok(fled?.state === 'scared' && fled.y < perch.y - 20, `flies up (${fled?.state} at ${fled?.y}, perched at ${perch.y})`);
+      await waitFor(`document.querySelector('.sunflower-bugs').sunflowerBugs.butterflies().length === 0`);
+
+      // a butterfly over the watering can: tapping it scares the butterfly and does not water
       const canCentre = await evaluate(`(() => { const r = document.getElementById('sunflowerCan').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
       await bugs(`(b.spawn(${JSON.stringify(canCentre)}), true)`);
       await pause(500);
@@ -1089,24 +1285,24 @@ async function main() {
       await cdp('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [canCentre] });
       await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       await pause(200);
-      assert.deepEqual([(await bugs('b.flies()'))[0]?.state, (await saved()).wateredAt, await evaluate(`document.querySelector('.officer-banner').classList.contains('is-watering')`)],
-        ['swatted', wateredAt, false]);
+      assert.deepEqual([(await bugs('b.butterflies()'))[0]?.state, (await saved()).wateredAt, await evaluate(`document.querySelector('.officer-banner').classList.contains('is-watering')`)],
+        ['scared', wateredAt, false]);
 
-      // watering takes away the dryness the flies caused
+      // watering takes away the dryness the butterflies caused
       assert.ok(bitten > 0);
       await pause(900);
       await click('#sunflowerCan');
       assert.equal((await saved()).bitten, 0);
       await waitFor(`!document.querySelector('.officer-banner').classList.contains('is-watering')`);
 
-      // switched off, the flies fly away
+      // switched off, the butterflies fly away
       await bugs('(b.spawn(), b.spawn(), true)');
       await pause(300);
       await click('#sunflowerSwitch');
-      await waitFor(`document.querySelector('.sunflower-bugs').sunflowerBugs.flies().length === 0`);
+      await waitFor(`document.querySelector('.sunflower-bugs').sunflowerBugs.butterflies().length === 0`);
       await click('#sunflowerSwitch');
 
-      // on a phone with the menu closed nobody can see the plant: a fly there does not bite
+      // on a phone with the menu closed nobody can see the plant: a butterfly there does not bite
       await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
       await pause(400);
       await bugs('(b.spawn(), true)');
@@ -1115,10 +1311,11 @@ async function main() {
       assert.equal((await saved()).bitten, hidden);
       await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 
-      // one fly is enough to wilt it ten times as fast, and the plant is redrawn as it happens, not once a second:
-      // 4.6 minutes dry needs 24 more seconds to start drooping, which one fly does in under 3
+      // one butterfly is enough to wilt it ten times as fast, and the plant is redrawn as it happens, not once a second:
+      // 4.6 minutes dry needs 24 more seconds to start drooping, which one butterfly does in under 3
       await evaluate(`localStorage.setItem('govdocs-sunflower', JSON.stringify({ on: true, plantedAt: Date.now() - 99 * 60000, wateredAt: Date.now() - 4.6 * 60000, fertilizedAt: null, bitten: 0, pausedAt: null })); true`);
       await reloadApp();
+      await ready();
       const head = await evaluate(`(() => { const r = document.querySelector('.sunflower-bloom').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
       await bugs(`(b.spawn(${JSON.stringify(head)}), true)`);
       const start = Date.now();
@@ -1130,7 +1327,7 @@ async function main() {
         await new Promise((resolve) => setTimeout(resolve, 2100));
         return read() - first;
       })()`);
-      assert.ok(bites > 12000 && bites < 26000, `one fly bites 9 seconds a second, not twice that (${bites} ms in about 2 s)`);
+      assert.ok(bites > 12000 && bites < 26000, `one butterfly bites 9 seconds a second, not twice that (${bites} ms in about 2 s)`);
       await evaluate(`localStorage.setItem('govdocs-sunflower', JSON.stringify({ on: true, plantedAt: Date.now() - 99 * 60000, wateredAt: Date.now(), fertilizedAt: null, bitten: 0, pausedAt: null })); true`);
       await reloadApp();
     });

@@ -63,7 +63,7 @@ service cloud.firestore {
     function validDocument(data) {
       return data.keys().hasOnly([
           'title', 'docNumber', 'receiveNumber', 'date', 'agency', 'category', 'status', 'urgency',
-          'description', 'deleted', 'deletedAt', 'createdAt', 'createdAtMs',
+          'section', 'description', 'deleted', 'deletedAt', 'createdAt', 'createdAtMs',
           'updatedAt', 'fileName', 'fileSize', 'fileData',
           'storageKey', 'mimeType', 'createdBy'
         ])
@@ -75,12 +75,16 @@ service cloud.firestore {
         && data.date is string && data.date.size() <= 10
         && data.agency is string && data.agency.size() <= 300
         && data.category is string && data.category.size() <= 200
-        // สถานะ, optional: '' when none is chosen in the form. Documents use
-        // pending/approved/rejected; orders (หมวดคำสั่ง) use pending/in-progress/completed/cancelled.
+        // สถานะ: the web app no longer offers one. It writes '' on new records, and older
+        // records keep the value they were saved with, so every former value stays allowed.
         && data.status in ['', 'approved', 'pending', 'rejected', 'in-progress', 'completed', 'cancelled']
         // ชั้นความเร็ว, optional: the web app writes it only for an urgent document,
         // or '' when one is set back to ปกติ. A record without it is ปกติ.
         && (!('urgency' in data) || data.urgency in ['', 'urgent', 'very-urgent', 'most-urgent'])
+        // งานที่รับผิดชอบ, optional, documents only (orders have none): written only when
+        // one is chosen, or '' when one is cleared. Must match SECTION_LABEL in script.js.
+        && (!('section' in data) || data.section in ['', 'palat', 'finance', 'engineering', 'education',
+          'health', 'clerk', 'disaster', 'general-affairs', 'human-resources', 'policy-planning'])
         && data.description is string && data.description.size() <= 5000
         && data.deleted is bool
         && (!('fileName' in data) || (data.fileName is string && data.fileName.size() <= 260))
@@ -124,23 +128,28 @@ service cloud.firestore {
       allow delete: if signedIn() && resource.data.deleted == true;
     }
 
+    // คำอธิบาย สี และไอคอนของหมวดหมู่ ล้วนไม่บังคับ: หมวดที่ไม่มีใช้ค่าตั้งต้นของหน้าเว็บ
+    // สีและไอคอนต้องอยู่ในชุดที่ป๊อบอัปให้เลือก (CATEGORY_COLORS และ CATEGORY_ICONS ใน script.js)
+    function validCategory(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && (!('description' in data) || (data.description is string && data.description.size() <= 200))
+        && (!('color' in data) || data.color in ['#2A78D6', '#EB6834', '#1BAF7A', '#E09A00', '#6B5BD2', '#D55181', '#0E9AA7', '#5E6A85'])
+        && (!('icon' in data) || data.icon in ['chat', 'inbox', 'clipboard', 'stamp', 'send', 'folder', 'building', 'tag', 'archive', 'copy']);
+    }
+
     match /categories/{categoryId} {
       allow read: if signedIn();
 
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['name', 'createdAt'])
-        && request.resource.data.name is string
-        && request.resource.data.name.size() > 0
-        && request.resource.data.name.size() <= 100
+        && request.resource.data.keys().hasOnly(['name', 'createdAt', 'description', 'color', 'icon'])
+        && validCategory(request.resource.data)
         && request.resource.data.createdAt is number;
 
-      // The only edit the app makes is renaming a built-in category
-      // (RENAMED_CATEGORIES in script.js), which keeps its id so documents stay linked.
+      // Edits keep the id, so documents stay linked: the ✏️ popup (name, description,
+      // colour, icon) and renaming a built-in category (RENAMED_CATEGORIES in script.js).
       allow update: if signedIn()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
-        && request.resource.data.name is string
-        && request.resource.data.name.size() > 0
-        && request.resource.data.name.size() <= 100;
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'description', 'color', 'icon'])
+        && validCategory(request.resource.data);
       allow delete: if signedIn();
     }
 

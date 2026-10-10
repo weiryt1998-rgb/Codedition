@@ -16,16 +16,17 @@ if (!Array.prototype.at) {
 const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB — ต้องตรงกับ worker/src/index.js และ firestore.rules
 const PDF_MIME = "application/pdf";
 const PAGE_SIZE = 8;
-const STATUS_LABEL = {
-  approved: "อนุมัติแล้ว", pending: "รอดำเนินการ", rejected: "ไม่อนุมัติ",
-  "in-progress": "กำลังดำเนินการ", completed: "เสร็จสิ้น", cancelled: "ยกเลิก",
-};
-// ตัวเลือกสถานะของแต่ละฟอร์ม ต้องตรงกับ firestore.rules
-// ทั้งสองแบบไม่บังคับเลือก ("" = ยังไม่ระบุ) คำสั่งมี 4 ขั้น ใช้ "รอดำเนินการ" ร่วมกับเอกสาร
-const DOC_STATUSES = ["", "pending", "approved", "rejected"];
-const ORDER_STATUSES = ["", "pending", "in-progress", "completed", "cancelled"];
 // ชั้นความเร็วของหนังสือ — ค่าว่าง (หรือเอกสารเดิมที่ไม่มีช่องนี้) คือปกติ ต้องตรงกับ firestore.rules
 const URGENCY_LABEL = { urgent: "ด่วน", "very-urgent": "ด่วนมาก", "most-urgent": "ด่วนที่สุด" };
+// งานที่รับผิดชอบของเอกสาร เรียงตามที่แสดงในฟอร์ม — ค่าว่าง (หรือเอกสารเดิมที่ไม่มีช่องนี้) คือยังไม่ระบุงาน
+// คำสั่งไม่มีช่องนี้ ต้องตรงกับตัวเลือกในฟอร์มและตัวกรองใน index.html และรายการใน firestore.rules
+const SECTION_LABEL = {
+  palat: "สำนักปลัด", finance: "กองคลัง", engineering: "กองช่าง", education: "กองการศึกษาฯ", health: "กองสาธารณสุขฯ",
+  clerk: "จพง.ธุรการฯ", disaster: "จพง.ป้องกันฯ", "general-affairs": "นักจัดการงานทั่วไปฯ",
+  "human-resources": "นักทรัพยากรบุคคลฯ", "policy-planning": "นักวิเคราะห์นโยบายและแผนฯ",
+};
+const SECTION_KEYS = Object.keys(SECTION_LABEL);
+const NO_SECTION = "none"; // ค่าของตัวกรองและแถวในแดชบอร์ด: เอกสารที่ยังไม่ระบุงาน
 
 /* =========================================================
    STATE
@@ -680,7 +681,9 @@ function ensureDefaultCategories(snap) {
 function renderAll() {
   renderStats();
   renderCharts();
-  renderRecentTable();
+  renderRecentList();
+  renderCategoryBreakdown();
+  renderSectionBreakdown();
   renderDocsTable();
   renderCategories();
   // คำสั่งที่เพิ่งเพิ่มหรือแก้ (รวมจากเครื่องอื่น) ขึ้นในผลค้นหาของฟอร์มคำสั่งที่เปิดอยู่ทันที
@@ -688,7 +691,7 @@ function renderAll() {
 }
 
 /* =========================================================
-   DASHBOARD: STATS + CHARTS
+   DASHBOARD: การ์ดสรุป กราฟรายเดือน เอกสารล่าสุด และแยกตามหมวดหมู่
    ========================================================= */
 /* Animates a number from its current value to `target` */
 function countTo(el, target) {
@@ -705,26 +708,60 @@ function countTo(el, target) {
   el.countAnimation = requestAnimationFrame(step);
 }
 
+const ARROW_ICON = {
+  up: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7M9 7h8v8"/></svg>`,
+  down: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 9v8H9"/></svg>`,
+};
+/* วันแรกของเดือน ห่างจากเดือนนี้ offset เดือน (ติดลบคือย้อนหลัง) ตามเวลาเครื่อง */
+function monthStart(offset = 0, now = new Date()) {
+  return new Date(now.getFullYear(), now.getMonth() + offset, 1);
+}
+/* จำนวนเอกสารที่เพิ่มเข้าระบบตั้งแต่ from ถึงก่อน until (มิลลิวินาที) */
+function countAdded(from, until = Infinity) {
+  return allDocuments.filter((d) => createdAtMillis(d) >= from && createdAtMillis(d) < until).length;
+}
+/* ร้อยละที่ไม่ปัดจนเข้าใจผิด: ยังขาดอยู่ฉบับเดียวก็ไม่ขึ้น 100% และมีอยู่ฉบับเดียวก็ไม่ขึ้น 0% */
+function sharePercent(part, total) {
+  if (!total || !part) return 0;
+  if (part >= total) return 100;
+  return Math.min(99, Math.max(1, Math.round((part / total) * 100)));
+}
+
 function renderStats() {
   const total = allDocuments.length;
-  const counts = {
-    Total: total,
-    Approved: allDocuments.filter((d) => d.status === "approved").length,
-    Pending: allDocuments.filter((d) => d.status === "pending").length,
-    Rejected: allDocuments.filter((d) => d.status === "rejected").length,
-  };
+  countTo(document.getElementById("statTotal"), total);
+  document.getElementById("statTotalNote").textContent = `ใน ${allCategories.length} หมวดหมู่`;
 
-  Object.entries(counts).forEach(([key, value]) => {
-    countTo(document.getElementById(`stat${key}`), value);
-    const pct = total ? Math.round((value / total) * 100) : 0;
-    const meter = document.getElementById(`meter${key}`);
-    if (meter && key !== "Total") {
-      meter.style.width = `${pct}%`;
-      meter.classList.toggle("is-empty", pct === 0); // แถบว่างไม่ต้องมีแสงเรือง
-    }
-    const chip = document.getElementById(`chip${key}`);
-    if (chip && key !== "Total") chip.textContent = `${pct}%`;
-  });
+  // เดือนนี้นับถึงวันนี้ เทียบกับวันเดียวกันของเดือนก่อน ไม่ใช่ทั้งเดือน ต้นเดือนจะได้ไม่ดูลดลงทุกครั้ง
+  const now = new Date();
+  const lastMonth = monthStart(-1, now);
+  const lastDays = Math.min(now.getDate(), new Date(now.getFullYear(), now.getMonth(), 0).getDate());
+  const added = countAdded(monthStart(0, now).getTime());
+  const before = countAdded(lastMonth.getTime(), new Date(lastMonth.getFullYear(), lastMonth.getMonth(), lastDays + 1).getTime());
+  countTo(document.getElementById("statMonth"), added);
+  const since = `วันที่ ${lastDays === 1 ? "1" : `1–${lastDays}`} ${lastMonth.toLocaleDateString("th-TH", { month: "short" })}`;
+  const diff = added - before;
+  document.getElementById("statMonthNote").innerHTML = diff
+    ? `<span class="delta">${ARROW_ICON[diff > 0 ? "up" : "down"]}${diff > 0 ? "+" : "−"}${Math.abs(diff)}</span><span>เทียบ${since}</span>`
+    : `<span>เท่ากับ${since}</span>`;
+
+  // ด่วน ด่วนมาก ด่วนที่สุด บนแถบเดียว สียิ่งเข้มยิ่งด่วน ตัวเลขของแต่ละชั้นอยู่ในคำอธิบายใต้แถบ
+  const urgent = Object.keys(URGENCY_LABEL).map((level) => ({ level, count: allDocuments.filter((d) => d.urgency === level).length }));
+  const urgentTotal = urgent.reduce((sum, u) => sum + u.count, 0);
+  countTo(document.getElementById("statUrgent"), urgentTotal);
+  document.getElementById("statUrgentNote").innerHTML = urgentTotal
+    ? `<span class="urg-bar" role="img" aria-label="${urgent.map((u) => `${URGENCY_LABEL[u.level]} ${u.count} ฉบับ`).join(", ")}">${
+      urgent.filter((u) => u.count).map((u) => `<i class="urg-key-${u.level}" style="flex-grow:${u.count}"></i>`).join("")}</span>
+      <span class="urg-legend">${urgent.map((u) => `<span><i class="urg-key-${u.level}"></i>${URGENCY_LABEL[u.level]} <b class="mono">${u.count}</b></span>`).join("")}</span>`
+    : `<span>ไม่มีเอกสารด่วน</span>`;
+
+  const withFile = allDocuments.filter(hasAttachment).length;
+  const filePercent = sharePercent(withFile, total);
+  countTo(document.getElementById("statFiles"), filePercent);
+  const meter = document.getElementById("meterFiles");
+  meter.style.width = `${filePercent}%`;
+  meter.classList.toggle("is-empty", filePercent === 0); // แถบว่างไม่ต้องมีแสงเรือง
+  document.getElementById("statFilesNote").textContent = `${withFile} จาก ${total} ฉบับ`;
 
   // sidebar badges
   document.getElementById("navCountDocs").textContent = total;
@@ -737,6 +774,11 @@ function renderTrashBadge() {
   badge.textContent = allTrash.length;
   badge.classList.toggle("is-alert", allTrash.length > 0);
 }
+/* การ์ดเอกสารทั้งหมดเปิดรายการครบทุกฉบับ ตรงกับตัวเลขบนการ์ด จึงล้างตัวกรองที่ค้างไว้ก่อน */
+document.getElementById("statTotalCard").addEventListener("click", () => {
+  resetDocFilters();
+  switchView("documents");
+});
 
 /* การ์ดสถิติสามมิติ: บนคอมพิวเตอร์ การ์ดเอียงเข้าหาเมาส์และมีแสงสะท้อนตามจุดที่ชี้
    ส่งมุมและตำแหน่งให้ CSS ทาง --rx --ry --mx --my มือถือ (แตะ ไม่มีการชี้ค้าง) และเครื่องที่ตั้งให้ลดการเคลื่อนไหว การ์ดอยู่นิ่ง */
@@ -774,19 +816,12 @@ function chartColors() {
   const primaryRgb = v("--primary-rgb", dark ? "188, 154, 224" : "120, 81, 169");
   return {
     text: v("--text-muted", dark ? "#B7A1C8" : "#77618A"),
+    ink: v("--text", dark ? "#F3EBFA" : "#30203F"),
     grid: v("--border", dark ? "#4B355E" : "#E4D6EF"),
-    fill: `rgba(${primaryRgb}, ${dark ? 0.18 : 0.12})`,
+    primary,
     primaryRgb,
     tooltipBg: dark ? v("--surface-2", "#2C1E3B") : v("--text", "#30203F"),
     tooltipText: dark ? v("--text", "#F3EBFA") : "#FFFFFF",
-    palette: [
-      primary,
-      v("--accent", dark ? "#DFD1F1" : "#D9C9EE"),
-      v("--success", "#17805A"),
-      v("--danger", "#BE3535"),
-      v("--primary-400", primary),
-      v("--warning", "#B5771A"),
-    ],
   };
 }
 
@@ -805,14 +840,14 @@ function chartTooltip(c) {
 }
 
 /* =========================================================
-   3D CHARTS
+   3D CHART
    Chart.js ไม่มีกราฟ 3 มิติในตัว จึงวาดหน้าตาเองตามตำแหน่งที่ Chart.js คำนวณไว้
-   แท่ง = กล่องมีด้านบน/ด้านข้าง, เส้น = พื้นที่ทึบมีความหนา, โดนัท = วงแหวนเอียงมีความหนา
+   เส้น = พื้นที่ทึบมีความหนา จุดข้อมูลเป็นทรงกลม และมีตัวเลขเหนือจุดที่เลือกไว้
    hover, tooltip และแอนิเมชันยังเป็นของ Chart.js ทั้งหมด
    ========================================================= */
 const TAU = Math.PI * 2;
 const DEPTH_SLOPE = 0.62; // ความลึกชี้ไปทางขวาบน: ขึ้น 0.62px ต่อการเลื่อนขวา 1px
-const DOUGHNUT_TILT = 0.56; // มองโดนัทจากมุมเฉียง: ความสูงเหลือ 56% ของความกว้าง
+const LINE_DEPTH = 10; // ระยะที่ผิวบนของเส้นยื่นไปทางขวา (px)
 
 let colorProbe;
 /* แปลงสีรูปแบบใดก็ได้ที่ canvas รู้จัก (hex, rgb, ชื่อสี) เป็น [r, g, b] */
@@ -841,71 +876,6 @@ function fillPolygon(ctx, points, fill) {
   ctx.fill();
 }
 
-/* เงานุ่ม ๆ รูปวงรีที่ตกบนพื้นใต้รูปทรง; hollow = สัดส่วนรูตรงกลางที่ไม่มีเงา (ใช้กับโดนัท) */
-function floorShadow(ctx, x, y, rx, ry, strength, hollow = 0) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(1, ry / rx);
-  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
-  g.addColorStop(hollow, `rgba(42, 20, 66, ${hollow ? 0 : strength})`);
-  g.addColorStop(hollow ? (hollow + 1) / 2 : 0.35, `rgba(42, 20, 66, ${strength})`);
-  g.addColorStop(1, "rgba(42, 20, 66, 0)");
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.arc(0, 0, rx, 0, TAU);
-  ctx.fill();
-  ctx.restore();
-}
-
-function barDepth(width) { return Math.min(14, Math.max(6, width * 0.36)); }
-
-function drawBarFloor(chart, opts) {
-  const bar = chart.getDatasetMeta(0).data[0];
-  if (!bar || !chart.scales.y) return;
-  const { ctx, chartArea: a } = chart;
-  const dx = barDepth(bar.width), dy = dx * DEPTH_SLOPE;
-  const base = chart.scales.y.getPixelForValue(0);
-  ctx.save();
-  fillPolygon(ctx, [[a.left, base], [a.right, base], [a.right + dx, base - dy], [a.left + dx, base - dy]], opts.floor);
-  ctx.beginPath();
-  ctx.moveTo(a.left + dx, base - dy);
-  ctx.lineTo(a.right + dx, base - dy);
-  ctx.strokeStyle = opts.edge;
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawBars3d(chart, meta) {
-  const { ctx } = chart;
-  meta.data.forEach((el) => {
-    const { x, y, base, width } = el;
-    const top = Math.min(y, base), bottom = Math.max(y, base);
-    if (!(width > 0) || bottom - top < 0.5) return;
-    const color = el.options.backgroundColor;
-    const dx = barDepth(width), dy = dx * DEPTH_SLOPE;
-    const left = x - width / 2, right = x + width / 2;
-
-    floorShadow(ctx, x + dx / 2, bottom - dy / 2, width * 0.95, width * 0.3, 0.28);
-
-    const side = ctx.createLinearGradient(0, top, 0, bottom);
-    side.addColorStop(0, shade(color, -0.22));
-    side.addColorStop(1, shade(color, -0.45));
-    fillPolygon(ctx, [[right, top], [right + dx, top - dy], [right + dx, bottom - dy], [right, bottom]], side);
-    fillPolygon(ctx, [[left, top], [left + dx, top - dy], [right + dx, top - dy], [right, top]], shade(color, 0.38));
-
-    const front = ctx.createLinearGradient(left, 0, right, 0);
-    front.addColorStop(0, shade(color, 0.2));
-    front.addColorStop(0.5, shade(color, 0));
-    front.addColorStop(1, shade(color, -0.1));
-    ctx.fillStyle = front;
-    ctx.fillRect(left, top, width, bottom - top);
-    // สันขอบบนสว่าง ทำให้กล่องดูคม
-    ctx.fillStyle = "rgba(255, 255, 255, .45)";
-    ctx.fillRect(left, top, width, 1);
-  });
-}
-
 /* ไล่สีพื้นที่ใต้เส้น (หน้าตัดด้านหน้าของก้อน 3 มิติ) */
 function areaGradient(chart, rgb) {
   const a = chart.chartArea;
@@ -926,7 +896,7 @@ function drawLineDepth(chart, meta) {
   meta.dataset.updateControlPoints(a); // ไม่ทำอะไรถ้าเฟรมนี้คำนวณไว้แล้ว
   const line = meta.dataset.options;
   const color = line.borderColor;
-  const dx = 10, dy = dx * DEPTH_SLOPE;
+  const dx = LINE_DEPTH, dy = dx * DEPTH_SLOPE;
   const base = Math.min(a.bottom, chart.scales.y.getPixelForValue(0));
   // จุดควบคุมเส้นโค้งที่ Chart.js คำนวณไว้ ถ้าไม่มี (tension 0) ใช้ตัวจุดเอง
   const cp = (p, name) => p[name] ?? p[name.slice(-1)];
@@ -1003,180 +973,137 @@ function drawLineSpheres(chart, meta) {
   });
 }
 
-/* โดนัทเอียง: วาดชิ้นส่วนเดิมของ Chart.js ผ่านการย่อแนวตั้ง แล้วซ้อนสำเนาที่เข้มกว่าลงด้านล่างเป็นความหนา
-   การชี้เมาส์/ตำแหน่ง tooltip ถูกแปลงพิกัดกลับให้ตรงกับรูปที่เอียง */
-function drawDoughnut3d(chart, meta) {
-  const { ctx, chartArea: a } = chart;
-  const arcs = meta.data.filter((el) => el.circumference > 0.0001);
-  if (!arcs.length || !(arcs[0].outerRadius > 0)) { chart.$tilt = null; return; }
-  const { x: cx, y: cy, outerRadius: R } = arcs[0];
-  const depth = Math.max(8, Math.min(18, R * 0.16));
-  const sx = Math.max(0.2, Math.min((a.width - 16) / (2 * R), (a.height - depth - 10) / (2 * R * DOUGHNUT_TILT)));
-  const t = chart.$tilt = { cx, cy, sx, sy: sx * DOUGHNUT_TILT, oy: -depth / 2 };
-  const tilt = (down = 0) => {
-    ctx.translate(cx, cy + t.oy + down);
-    ctx.scale(t.sx, t.sy);
-    ctx.translate(-cx, -cy);
-  };
-  // วาดชิ้นด้วยสีอื่นโดยไม่แตะ options จริงของ Chart.js
-  const paint = (el, fill) => {
-    const face = Object.create(el);
-    face.options = { ...el.options, backgroundColor: fill, borderWidth: 0 };
-    face.draw(ctx);
-  };
-
-  meta.data.forEach((el) => {
-    if (el.$tilted) return;
-    const proto = Object.getPrototypeOf(el);
-    const toScreen = (p) => {
-      const s = chart.$tilt;
-      return s ? { x: s.cx + (p.x - s.cx) * s.sx, y: s.cy + s.oy + (p.y - s.cy) * s.sy } : p;
-    };
-    el.inRange = (mx, my, useFinal) => {
-      const s = chart.$tilt;
-      return s
-        ? proto.inRange.call(el, s.cx + (mx - s.cx) / s.sx, s.cy + (my - s.cy - s.oy) / s.sy, useFinal)
-        : proto.inRange.call(el, mx, my, useFinal);
-    };
-    el.tooltipPosition = (useFinal) => toScreen(proto.tooltipPosition.call(el, useFinal));
-    el.getCenterPoint = (useFinal) => toScreen(proto.getCenterPoint.call(el, useFinal));
-    el.$tilted = true;
-  });
-
-  floorShadow(ctx, cx, cy + t.oy + depth + 4, R * t.sx * 1.06, R * t.sy * 1.06, 0.24, arcs[0].innerRadius / R);
-
-  // ผนังด้านข้าง: ชิ้นที่อยู่ด้านหลังวาดก่อน ชิ้นด้านหน้าวาดทีหลัง
-  const backToFront = [...arcs].sort((p, q) =>
-    Math.sin((p.startAngle + p.endAngle) / 2) - Math.sin((q.startAngle + q.endAngle) / 2));
-  backToFront.forEach((el) => {
-    const color = el.options.backgroundColor;
-    for (let k = Math.ceil(depth); k >= 1; k--) {
-      ctx.save();
-      tilt(k);
-      paint(el, shade(color, -0.2 - 0.25 * (k / depth)));
-      ctx.restore();
-    }
-  });
-
-  arcs.forEach((el) => {
-    const color = el.options.backgroundColor;
-    ctx.save();
-    tilt();
-    const top = ctx.createLinearGradient(cx, cy - R, cx, cy + R);
-    top.addColorStop(0, shade(color, 0.3));
-    top.addColorStop(1, shade(color, -0.06));
-    paint(el, top);
-    ctx.restore();
+/* ตัวเลขเหนือจุดของเดือนที่เลือกไว้ (opts.labels เป็นลำดับเดือน) ยกขึ้นพ้นผิวบนของเส้นที่ยื่นไปทางขวาบน */
+function drawPointLabels(chart, meta, opts) {
+  const { ctx } = chart;
+  const values = chart.data.datasets[meta.index].data;
+  ctx.font = `600 12.5px ${Chart.defaults.font.family}`;
+  ctx.fillStyle = opts.color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  (opts.labels || []).forEach((i) => {
+    const p = meta.data[i];
+    if (!p || p.skip) return;
+    ctx.fillText(String(values[i]), p.x + LINE_DEPTH / 2, p.y - LINE_DEPTH * DEPTH_SLOPE - p.options.radius - 3);
   });
 }
 
 const chart3d = {
   id: "chart3d",
-  beforeDatasetsDraw(chart, _args, opts) {
-    if (chart.config.type === "bar") drawBarFloor(chart, opts);
-  },
   beforeDatasetDraw(chart, { meta }) {
-    const type = chart.config.type;
-    const draw = { bar: drawBars3d, line: drawLineDepth, doughnut: drawDoughnut3d }[type];
-    if (!draw) return;
+    if (chart.config.type !== "line") return;
     chart.ctx.save();
-    draw(chart, meta);
+    drawLineDepth(chart, meta);
     chart.ctx.restore();
-    if (type !== "line") return false; // แท่งและโดนัทวาดเองทั้งหมด ไม่ให้ Chart.js วาดแบบ 2 มิติซ้ำ
   },
-  afterDatasetDraw(chart, { meta }) {
+  afterDatasetDraw(chart, { meta }, opts) {
     if (chart.config.type !== "line") return;
     chart.ctx.save();
     drawLineSpheres(chart, meta);
+    drawPointLabels(chart, meta, opts);
     chart.ctx.restore();
   },
 };
 
+const MONTH_LABEL_SPACE = 50; // ที่ที่ชื่อเดือนแบบย่อ (เช่น พ.ย. 68) ต้องใช้รวมช่องไฟ (px)
+/* 12 เดือนล่าสุด เดือนเก่าสุดก่อน นับตามวันที่เพิ่มเข้าระบบ (createdAt) เดือนนี้จึงนับถึงวันนี้ */
+function trendMonths(now = new Date()) {
+  return Array.from({ length: 12 }, (_, i) => {
+    const from = monthStart(i - 11, now);
+    return {
+      label: from.toLocaleDateString("th-TH", { month: "short", year: "2-digit" }),
+      long: from.toLocaleDateString("th-TH", { month: "long", year: "numeric" }),
+      count: countAdded(from.getTime(), monthStart(i - 10, now).getTime()),
+    };
+  });
+}
+
 function renderCharts() {
+  const months = trendMonths();
+  renderTrendTable(months);
   if (typeof Chart === "undefined") return;
   const c = chartColors();
-  Chart.defaults.font.family = "Sarabun";
+  // ถ้าฟอนต์ Sarabun ยังโหลดไม่เสร็จหรือโหลดไม่ได้ ตัวหนังสือบนกราฟใช้ฟอนต์ไม่มีเชิงของเครื่องแทนฟอนต์มีเชิง
+  Chart.defaults.font.family = "Sarabun, system-ui, sans-serif";
   Chart.defaults.font.size = 12;
   Chart.defaults.color = c.text;
 
-  // --- by category ---
-  const catCounts = Object.create(null);
-  allDocuments.forEach((d) => {
-    const name = categoryName(d.category) || "ไม่ระบุหมวดหมู่";
-    catCounts[name] = (catCounts[name] || 0) + 1;
-  });
-  paintChart("chartCategory", "bar", {
-    labels: Object.keys(catCounts),
-    datasets: [{
-      data: Object.values(catCounts),
-      backgroundColor: Object.keys(catCounts).map((_, i) => c.palette[i % c.palette.length]),
-      maxBarThickness: 52,
-    }],
-  }, {
-    // เว้นขอบบน/ขวาให้ด้านบนและด้านข้างของกล่อง 3 มิติ
-    layout: { padding: { top: 10, right: 16 } },
-    plugins: { legend: { display: false }, tooltip: chartTooltip(c), chart3d: { floor: c.fill, edge: c.grid } },
-    scales: {
-      x: { grid: { display: false }, border: { display: false } },
-      y: { grid: { color: c.grid }, border: { display: false }, beginAtZero: true, grace: "12%", ticks: { precision: 0 } },
-    },
-  });
-
-  // --- by status ---
-  const statusCounts = { approved: 0, pending: 0, rejected: 0 };
-  allDocuments.forEach((d) => { if (statusCounts[d.status] !== undefined) statusCounts[d.status]++; });
-  paintChart("chartStatus", "doughnut", {
-    labels: [STATUS_LABEL.approved, STATUS_LABEL.pending, STATUS_LABEL.rejected],
-    datasets: [{
-      data: [statusCounts.approved, statusCounts.pending, statusCounts.rejected],
-      backgroundColor: [c.palette[2], c.palette[5], c.palette[3]],
-      borderWidth: 0, spacing: 2, hoverOffset: 10,
-    }],
-  }, {
-    // วงหนาขึ้นให้เห็นความเป็นก้อน 3 มิติ; คำอธิบายไว้ด้านขวา โดนัทเอียงจึงกว้างได้เต็มที่
-    cutout: "58%",
-    plugins: {
-      tooltip: chartTooltip(c),
-      legend: { position: "right", labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: "circle", padding: 16 } },
-    },
-  });
-
-  // --- monthly trend (last 6 months) ---
-  const months = [];
-  const now = new Date();
-  for (let i = 5; i >= 0; i--) {
-    const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    months.push({ key: `${dt.getFullYear()}-${dt.getMonth()}`, label: dt.toLocaleDateString("th-TH", { month: "short", year: "2-digit" }) });
-  }
-  const trendData = months.map((m) => allDocuments.filter((d) => {
-    const dt = new Date(createdAtMillis(d));
-    return `${dt.getFullYear()}-${dt.getMonth()}` === m.key;
-  }).length);
+  // ตัวเลขเหนือจุดเฉพาะเดือนล่าสุด กับเดือนที่มากที่สุดถ้าเป็นคนละเดือน ช่วงที่ยังไม่มีเอกสารเลยไม่ต้องมีตัวเลข
+  const counts = months.map((m) => m.count);
+  const peak = Math.max(...counts);
+  const labels = peak ? [...new Set([counts.indexOf(peak), counts.length - 1])] : [];
   paintChart("chartTrend", "line", {
     labels: months.map((m) => m.label),
     datasets: [{
-      data: trendData,
-      borderColor: c.palette[0],
+      data: counts,
+      borderColor: c.primary,
       backgroundColor: (context) => areaGradient(context.chart, c.primaryRgb),
       borderWidth: 2.5,
       fill: true,
-      tension: 0.4,
+      // เส้นโค้งที่ไม่เลยจุดข้อมูล จึงไม่จมใต้ศูนย์ระหว่างเดือนที่ไม่มีเอกสาร และไม่โด่งเกินเดือนที่มากที่สุด
+      cubicInterpolationMode: "monotone",
       pointRadius: 5,
       pointHoverRadius: 8,
       pointHitRadius: 12,
       pointBorderWidth: 0,
-      pointBackgroundColor: c.palette[0],
+      pointBackgroundColor: c.primary,
     }],
   }, {
-    layout: { padding: { top: 10, right: 14 } },
-    plugins: { legend: { display: false }, tooltip: chartTooltip(c) },
+    // เว้นขอบบนให้ตัวเลขเหนือจุด และขอบขวาให้ผิวบนของเส้นที่ยื่นออกไป
+    layout: { padding: { top: 22, right: 14 } },
+    plugins: {
+      legend: { display: false },
+      tooltip: { ...chartTooltip(c), callbacks: { title: (items) => months[items[0].dataIndex].long, label: (item) => ` ${item.raw} ฉบับ` } },
+      chart3d: { labels, color: c.ink },
+    },
     interaction: { mode: "index", intersect: false },
     scales: {
-      x: { grid: { display: false }, border: { display: false } },
+      x: {
+        grid: { display: false }, border: { display: false },
+        // ชื่อเดือนไม่เอียง จอแคบจึงเว้นบางเดือน โดยนับถอยจากเดือนล่าสุด เดือนนี้จึงมีชื่อเสมอ
+        ticks: {
+          maxRotation: 0, autoSkip: false,
+          callback(value, index) {
+            const every = Math.max(1, Math.ceil(MONTH_LABEL_SPACE / (this.width / (months.length - 1))));
+            return (months.length - 1 - index) % every ? "" : months[index].label;
+          },
+        },
+      },
       y: { grid: { color: c.grid }, border: { display: false }, beginAtZero: true, grace: "12%", ticks: { precision: 0 } },
     },
   });
 }
+
+/* ตารางของกราฟรายเดือน อ่านตัวเลขทุกเดือนได้ตรง ๆ และโปรแกรมอ่านหน้าจออ่านได้ (ปุ่มดูแบบตาราง) */
+function renderTrendTable(months) {
+  const total = months.reduce((sum, m) => sum + m.count, 0);
+  document.getElementById("trendTable").innerHTML = `
+    <table class="doc-table trend-table">
+      <thead><tr><th scope="col">เดือน</th><th scope="col" class="num">จำนวน (ฉบับ)</th></tr></thead>
+      <tbody>${months.map((m) => `<tr><td>${m.long}</td><td class="mono num">${m.count}</td></tr>`).join("")}</tbody>
+      <tfoot><tr><td>รวม 12 เดือน</td><td class="mono num">${total}</td></tr></tfoot>
+    </table>`;
+}
+/* ข้อความบนปุ่มบอกสิ่งที่จะได้เห็นเมื่อกด */
+const TREND_TOGGLE = {
+  chart: { label: "ดูแบบตาราง", icon: `<path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM3 10h18M3 14.5h18M9 10v9"/>` },
+  table: { label: "ดูแบบกราฟ", icon: `<path d="M3 3v18h18M7 15l4-4 3 3 5-6"/>` },
+};
+function showTrendAsTable(asTable) {
+  document.getElementById("trendChartBox").hidden = asTable;
+  document.getElementById("trendTable").hidden = !asTable;
+  const toggle = TREND_TOGGLE[asTable ? "table" : "chart"];
+  const button = document.getElementById("trendViewToggle");
+  button.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${toggle.icon}</svg><span>${toggle.label}</span>`;
+  // บนมือถือปุ่มเหลือแค่ไอคอน ชื่อปุ่มจึงอยู่ใน aria-label และ title ด้วย
+  button.setAttribute("aria-label", toggle.label);
+  button.title = toggle.label;
+  // กราฟที่ถูกซ่อนอยู่วัดขนาดกล่องไม่ได้ จึงให้วัดใหม่ตอนกลับมาแสดง
+  if (!asTable) charts.chartTrend?.resize();
+}
+document.getElementById("trendViewToggle").addEventListener("click", () => {
+  showTrendAsTable(document.getElementById("trendTable").hidden);
+});
 
 function paintChart(canvasId, type, data, extraOptions) {
   const ctx = document.getElementById(canvasId);
@@ -1188,19 +1115,129 @@ function paintChart(canvasId, type, data, extraOptions) {
   });
 }
 
-function renderRecentTable() {
-  const tbody = document.querySelector("#recentTable tbody");
-  const recent = [...allDocuments].sort((a, b) => byEntry(b, a)).slice(0, 5);
-  tbody.innerHTML = recent.map((d) => `
-    <tr>
-      <td class="mono">${escapeHtml(d.docNumber || "-")}</td>
-      <td class="doc-title-cell">${docTitle(d)}</td>
-      <td>${escapeHtml(categoryName(d.category) || "-")}</td>
-      <td class="mono">${formatDate(d.date)}</td>
-      <td>${statusStamp(d.status)}</td>
-    </tr>`).join("") || `<tr><td colspan="5" class="doc-sub">ยังไม่มีเอกสาร</td></tr>`;
-  bindRowActions(tbody); // ชื่อเอกสารที่แนบ PDF กดเปิดดูได้จากแดชบอร์ดเหมือนในหน้าเอกสาร
+/* สีและไอคอนที่ป๊อบอัปหมวดหมู่ให้เลือก เรียงตามในป๊อบอัป (firestore.rules ต้องมีรายการเดียวกัน) */
+const CATEGORY_COLORS = ["#2A78D6", "#EB6834", "#1BAF7A", "#E09A00", "#6B5BD2", "#D55181", "#0E9AA7", "#5E6A85"];
+const CATEGORY_ICONS = {
+  chat: `<path d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-9l-5 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/>`,
+  inbox: `<path d="M3 13h5l1.5 3h5l1.5-3h5M5.5 5h13L21 13v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6z"/>`,
+  clipboard: `<path d="M9 3h6v3H9zM15 4.5h3a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1h3M9 11h6M9 15h4"/>`,
+  stamp: `<path d="M12 3a3 3 0 0 0-3 3c0 1.3.8 2 1.3 3L10 13H6a2 2 0 0 0-2 2v2h16v-2a2 2 0 0 0-2-2h-4l-.3-4c.5-1 1.3-1.7 1.3-3a3 3 0 0 0-3-3zM5 21h14"/>`,
+  send: `<path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/>`,
+  folder: `<path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/>`,
+  building: `<path d="M4 21V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v17M14 9h5a1 1 0 0 1 1 1v11M2 21h20M7.5 7.5h3M7.5 11.5h3M7.5 15.5h3M16.5 13h1M16.5 17h1"/>`,
+  tag: `<path d="M3 4a1 1 0 0 1 1-1h7.6a1 1 0 0 1 .7.3l8.4 8.4a1 1 0 0 1 0 1.4l-7.6 7.6a1 1 0 0 1-1.4 0l-8.4-8.4a1 1 0 0 1-.3-.7z"/><circle cx="7.5" cy="7.5" r="1.5"/>`,
+  archive: `<path d="M3 4h18v4H3zM5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/>`,
+  copy: `<path d="M9 7h8l3 3v10a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1zM16 7V4a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h3"/>`,
+};
+/* สีและไอคอนตั้งต้นของหมวดหลัก (จุดสีในกล่องแยกตามหมวดหมู่ ไอคอนในรายการเอกสารล่าสุดและการ์ดหน้าหมวดหมู่) เทียบชื่อด้วย categoryKey
+   หมวดที่สร้างเพิ่มเองได้สีถัดไปตามลำดับกับไอคอนแฟ้ม เอกสารที่ไม่มีหมวดเป็นสีเทา (CSS)
+   desc คือคำอธิบายใต้ชื่อบนการ์ด สี ไอคอน และคำอธิบายที่บันทึกไว้จากป๊อบอัปหมวดหมู่จะใช้แทนค่าเหล่านี้ */
+const CATEGORY_LOOK = {
+  "หนังสือรับ": { color: "#2A78D6", desc: "หนังสือราชการที่รับเข้าจากหน่วยงานภายนอก", icon: "inbox" },
+  "หนังสือส่ง": { color: "#1BAF7A", desc: "หนังสือราชการที่ส่งออกไปยังหน่วยงานอื่น", icon: "send" },
+  "หนังสือเวียน": { color: "#0E9AA7", desc: "หนังสือที่แจ้งเวียนให้บุคลากรรับทราบ", icon: "copy" },
+  "คำสั่ง": { color: "#E09A00", desc: "คำสั่งองค์การบริหารส่วนตำบลวังใหญ่", icon: "stamp" },
+  "บันทึกข้อความ": { color: "#6B5BD2", desc: "บันทึกข้อความและหนังสือภายในสำนักงาน", icon: "clipboard" },
+  "คำร้อง": { color: "#EB6834", desc: "คำร้องทั่วไปจากประชาชนและหน่วยงานในพื้นที่", icon: "chat" },
+};
+const EXTRA_CATEGORY_COLORS = ["#D55181", "#5E6A85"];
+const CUSTOM_CATEGORY_DESC = "หมวดหมู่ที่เพิ่มเอง";
+const PAGE_ICON = `<path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>`;
+const lookName = (name) => Object.keys(CATEGORY_LOOK).find((n) => categoryKey(n) === categoryKey(name));
+/* หน้าตาของหมวด: { color, iconKey, icon (path ของ svg), desc } */
+function categoryLook(id) {
+  const category = allCategories.find((c) => c.id === id);
+  if (!category) return { color: "", icon: PAGE_ICON };
+  const known = lookName(category.name);
+  const extra = allCategories.filter((c) => !lookName(c.name)).indexOf(category);
+  const base = known ? CATEGORY_LOOK[known]
+    : { color: EXTRA_CATEGORY_COLORS[extra % EXTRA_CATEGORY_COLORS.length], desc: CUSTOM_CATEGORY_DESC, icon: "folder" };
+  const iconKey = Object.hasOwn(CATEGORY_ICONS, category.icon) ? category.icon : base.icon;
+  return {
+    color: CATEGORY_COLORS.includes(category.color) ? category.color : base.color,
+    iconKey, icon: CATEGORY_ICONS[iconKey],
+    desc: typeof category.description === "string" && category.description.trim() ? category.description.trim() : base.desc,
+  };
 }
+const lookStyle = (look) => (look.color ? ` style="--c:${look.color}"` : "");
+
+/* เอกสาร 5 ฉบับที่เพิ่มเข้าระบบล่าสุด: ไอคอนบอกหมวด ชื่อ เลขที่ · หน่วยงาน และวันที่ของเอกสาร
+   ฉบับที่แนบ PDF กดได้ทั้งแถวเพื่อเปิดดูไฟล์ เหมือนกดชื่อเอกสารในหน้าเอกสาร */
+function renderRecentList() {
+  const list = document.getElementById("recentList");
+  const recent = [...allDocuments].sort((a, b) => byEntry(b, a)).slice(0, 5);
+  list.innerHTML = recent.map((d) => {
+    const look = categoryLook(d.category);
+    const category = categoryName(d.category) || "ไม่ระบุหมวดหมู่";
+    const meta = [d.docNumber, d.agency].map((v) => String(v ?? "").trim()).filter(Boolean).join(" · ");
+    const inner = `
+      <span class="recent-ico"${lookStyle(look)} role="img" aria-label="${escapeHtml(category)}" title="${escapeHtml(category)}"><svg viewBox="0 0 24 24">${look.icon}</svg></span>
+      <span class="recent-main">
+        <span class="recent-title">${urgencyBadge(d.urgency)}${escapeHtml(d.title || "-")}</span>
+        <span class="recent-meta">${escapeHtml(meta || "-")}</span>
+      </span>
+      <span class="recent-date">${formatDate(d.date)}</span>`;
+    return `<li>${hasAttachment(d)
+      ? `<button type="button" class="recent-item" data-view-file="${escapeHtml(d.id)}">${inner}</button>`
+      : `<div class="recent-item">${inner}</div>`}</li>`;
+  }).join("") || `<li class="dash-empty">ยังไม่มีเอกสาร</li>`;
+  bindRowActions(list);
+}
+
+/* แถวของกล่องแยกตามหมวดหมู่และแยกตามงาน: ชื่อ (มีจุดสีถ้ามี dot) แท่งยาวเทียบกับแถวที่มากที่สุด จำนวน และร้อยละของ total
+   แถวที่มี attrs เป็นปุ่มเปิดหน้าเอกสารที่กรองไว้ตรงกับแถวนั้น แถว none (ยังไม่ระบุ) เป็นสีเทาปิดท้าย */
+function breakdownRows(rows, total) {
+  const max = Math.max(0, ...rows.map((r) => r.count));
+  return rows.map((r) => {
+    const percent = sharePercent(r.count, total);
+    const inner = `
+      <span class="bd-name">${r.dot === undefined ? "" : `<i class="bd-dot"${r.dot}></i>`}<span>${escapeHtml(r.name)}</span></span>
+      <span class="bd-track"><span class="bd-fill" style="width:${max ? (r.count / max) * 100 : 0}%"></span></span>
+      <span class="bd-val"><b class="mono">${r.count}</b><small class="mono">${percent}%</small></span>`;
+    const cls = `bd-row${r.none ? " is-none" : ""}`;
+    return r.attrs
+      ? `<li><button type="button" class="${cls}" ${r.attrs} aria-label="${escapeHtml(r.name)} ${r.count} ฉบับ (${percent}%) กดเพื่อดูเอกสาร">${inner}</button></li>`
+      : `<li><div class="${cls}">${inner}</div></li>`;
+  }).join("");
+}
+
+/* แยกตามหมวดหมู่: เรียงแบบเดียวกับกล่องในหน้าเอกสาร ร้อยละเทียบกับเอกสารทั้งหมด
+   กดแถวแล้วเปิดหน้าเอกสารที่กรองเหลือหมวดนั้น จำนวนในหน้านั้นจึงตรงกับตัวเลขในแถว */
+function renderCategoryBreakdown() {
+  const known = new Set(allCategories.map((c) => c.id));
+  const rows = [...allCategories].sort((a, b) => categoryRank(a.name) - categoryRank(b.name)).map((c) => ({
+    name: c.name, count: allDocuments.filter((d) => d.category === c.id).length,
+    dot: lookStyle(categoryLook(c.id)), attrs: `data-show-cat="${escapeHtml(c.id)}"`,
+  }));
+  // เอกสารที่ไม่มีหมวด (หรือหมวดถูกลบไปแล้ว) ปิดท้ายเป็นสีเทา ตัวกรองหมวดหมู่เลือกกลุ่มนี้ไม่ได้ จึงไม่เป็นปุ่ม
+  const none = allDocuments.filter((d) => !known.has(d.category)).length;
+  if (none) rows.push({ name: "ไม่ระบุหมวดหมู่", count: none, dot: "", none: true });
+  document.getElementById("categoryBreakdown").innerHTML = breakdownRows(rows, allDocuments.length)
+    || `<li class="dash-empty">ยังไม่มีหมวดหมู่</li>`;
+}
+document.getElementById("categoryBreakdown").addEventListener("click", (e) => {
+  const row = e.target.closest("[data-show-cat]");
+  if (!row) return;
+  resetDocFilters(row.dataset.showCat);
+  switchView("documents");
+});
+
+/* แยกตามงานที่รับผิดชอบ: ทุกงานตามลำดับในฟอร์ม แล้วยังไม่ระบุงาน ไม่นับคำสั่งเพราะคำสั่งไม่มีช่องงาน
+   ร้อยละจึงเทียบกับเอกสารที่ไม่ใช่คำสั่ง กดแถวแล้วเปิดหน้าเอกสารที่กรองเหลืองานนั้น (รวมแถวยังไม่ระบุงาน) */
+function renderSectionBreakdown() {
+  const sections = allDocuments.map(sectionOf).filter((section) => section !== null);
+  const rows = [...SECTION_KEYS, ""].map((key) => ({
+    name: SECTION_LABEL[key] || "ยังไม่ระบุงาน", count: sections.filter((section) => section === key).length,
+    attrs: `data-show-section="${key || NO_SECTION}"`, none: !key,
+  }));
+  document.getElementById("sectionBreakdown").innerHTML = breakdownRows(rows, sections.length);
+}
+document.getElementById("sectionBreakdown").addEventListener("click", (e) => {
+  const row = e.target.closest("[data-show-section]");
+  if (!row) return;
+  resetDocFilters("", row.dataset.showSection);
+  switchView("documents");
+});
 
 /* =========================================================
    CATEGORIES
@@ -1233,6 +1270,11 @@ function isReceiveCategory(id) {
 function isOrderCategory(id) {
   return !!id && categoryKey(categoryName(id)) === categoryKey(ORDER_CATEGORY);
 }
+/* งานที่รับผิดชอบของรายการ: "" คือยังไม่ระบุงาน (รวมค่าที่ไม่รู้จัก) และ null คือคำสั่ง ซึ่งไม่มีช่องนี้ */
+function sectionOf(d) {
+  if (isOrderCategory(d?.category)) return null;
+  return Object.hasOwn(SECTION_LABEL, d?.section) ? d.section : "";
+}
 function orderCategoryId() {
   return allCategories.find((c) => categoryKey(c.name) === categoryKey(ORDER_CATEGORY))?.id || "";
 }
@@ -1240,18 +1282,6 @@ function orderCategoryId() {
 function docFormIsOrder() {
   const category = document.getElementById("docCategory");
   return "locked" in category.dataset || isOrderCategory(category.value);
-}
-/* รายการสถานะของฟอร์ม ตัวเลือกว่างของเอกสารเขียนว่าไม่ระบุสถานะ ของคำสั่งเว้นว่างไว้เลย
-   สถานะเดิมที่ฟอร์มนี้ไม่มีให้เลือก (เช่น คำสั่งเก่าที่บันทึกไว้ว่าอนุมัติแล้ว) ใส่ไว้เป็นตัวเลือกแรก
-   แก้ช่องอื่นแล้วบันทึก สถานะจึงไม่เปลี่ยนไปเอง */
-function renderStatusOptions(order, value) {
-  const select = document.getElementById("docStatus");
-  const choices = order ? ORDER_STATUSES : DOC_STATUSES;
-  const blank = order ? "" : "ไม่ระบุสถานะ";
-  select.innerHTML = (choices.includes(value) ? choices : [value, ...choices])
-    .map((s) => `<option value="${s}">${s ? STATUS_LABEL[s] : blank}</option>`).join("");
-  select.value = value;
-  select.dataset.mode = order ? "order" : "document";
 }
 function syncOrderFields() {
   const category = document.getElementById("docCategory");
@@ -1273,18 +1303,14 @@ function syncOrderFields() {
   document.getElementById("docAgencyLabel").textContent = order ? labels.agency : documentAgencyLabel(category.value);
   document.getElementById("docAgency").placeholder = order ? "เช่น นายก อบต." : "เช่น กรมการปกครอง";
   document.getElementById("docDescription").placeholder = `รายละเอียดเพิ่มเติมของ${order ? "คำสั่ง" : "เอกสาร"}`;
-  // คำสั่งไม่มีชั้นความเร็ว แต่มีตัวเลือกปี พ.ศ. ไว้ลงคำสั่งย้อนหลัง และกล่องค้นหาคำสั่งที่บันทึกไว้แล้ว
+  // คำสั่งไม่มีชั้นความเร็วและงานที่รับผิดชอบ แต่มีตัวเลือกปี พ.ศ. ไว้ลงคำสั่งย้อนหลัง และกล่องค้นหาคำสั่งที่บันทึกไว้แล้ว
   document.getElementById("docUrgencyField").hidden = order;
+  document.getElementById("docSectionField").hidden = order;
   document.getElementById("docYear").hidden = !order;
   document.getElementById("orderLookup").hidden = !order;
   if (order) renderOrderLookup();
   // ช่องเลขที่รับที่ซ่อนไว้ยังเก็บค่าที่พิมพ์ไว้ เลือกหนังสือรับกลับมาก่อนบันทึกจึงไม่ต้องพิมพ์ใหม่
   document.getElementById("docReceiveField").hidden = !isReceiveCategory(category.value);
-  // เปลี่ยนรายการสถานะเฉพาะตอนสลับระหว่างเอกสารกับคำสั่ง ค่าที่มีในทั้งสองแบบ (ว่าง, รอดำเนินการ) คงไว้
-  const status = document.getElementById("docStatus");
-  if (status.dataset.mode !== (order ? "order" : "document")) {
-    renderStatusOptions(order, (order ? ORDER_STATUSES : DOC_STATUSES).includes(status.value) ? status.value : "");
-  }
   if (document.getElementById("docModalOverlay").getAttribute("aria-busy") !== "true") {
     document.getElementById("docSaveBtn").textContent = order ? "บันทึกคำสั่ง" : "บันทึกเอกสาร";
   }
@@ -1359,7 +1385,7 @@ function renderOrderLookup() {
   note.textContent = hits.length ? `พบ ${hits.length} คำสั่ง${inYear}` : `ไม่พบคำสั่งที่ตรงกัน${inYear}`;
   results.hidden = !hits.length;
   results.innerHTML = hits.map((d) => {
-    const details = [d.agency, Object.hasOwn(STATUS_LABEL, d.status) ? STATUS_LABEL[d.status] : ""].filter(Boolean).join(" · ");
+    const details = String(d.agency ?? "").trim();
     return `
     <li class="order-hit">
       <span class="order-hit-number mono">${escapeHtml(d.docNumber || "-")}</span>
@@ -1397,46 +1423,76 @@ function renderCategoryOptions() {
   // ชื่อหมวดหมู่อาจเปลี่ยนระหว่างที่ฟอร์มเปิดอยู่ (เช่น หนังสือคำสั่ง → คำสั่ง)
   syncOrderFields();
 }
+/* หมวดที่ระบบอ้างถึงด้วยชื่อ (หน้าตาตั้งต้น ช่องเฉพาะของหนังสือรับ คำสั่ง ฯลฯ) เปลี่ยนชื่อแล้วจะหลุดจากสิ่งเหล่านั้น
+   จึงเปลี่ยนได้แค่คำอธิบาย สี และไอคอน */
+const isSystemCategory = (name) => !!lookName(name);
+
+/* การ์ดหมวดหมู่: ไอคอนสีประจำหมวด ปุ่มแก้ไข/ลบ ชื่อ คำอธิบาย จำนวนเอกสาร และวันที่มีเอกสารเพิ่มหรือแก้ไขล่าสุด */
+function categoryCard(c) {
+  const docs = allDocuments.filter((d) => d.category === c.id);
+  const look = categoryLook(c.id);
+  const last = Math.max(0, ...docs.map((d) => Math.max(timeMillis(d.updatedAt), createdAtMillis(d))));
+  const status = !docs.length ? "ยังไม่มีเอกสาร" : last ? `อัปเดต ${formatDate(new Date(last).toISOString())}` : "";
+  const name = escapeHtml(c.name);
+  const editAttrs = `data-edit-cat="${escapeHtml(c.id)}" title="แก้ไขหมวดหมู่" aria-label="แก้ไขหมวดหมู่ ${name}"`;
+  // หมวดหมู่หลักลบไม่ได้: ensureDefaultCategories จะสร้างกลับมาเป็น id ใหม่ เอกสารเดิมจึงหลุดหมวดหมู่
+  const deleteAttrs = isDefaultCategory(c.name)
+    ? `disabled title="หมวดหมู่หลักของระบบ ลบไม่ได้" aria-label="หมวดหมู่หลักของระบบ ${name} ลบไม่ได้"`
+    : `data-del-cat="${escapeHtml(c.id)}" title="ลบหมวดหมู่" aria-label="ลบหมวดหมู่ ${name}"`;
+  return `
+    <div class="category-card" data-open-cat="${escapeHtml(c.id)}"${lookStyle(look)}>
+      <div class="cat-top">
+        <span class="cat-ico" aria-hidden="true"><svg viewBox="0 0 24 24">${look.icon}</svg></span>
+        <div class="cat-actions">
+          <button type="button" class="cat-tool cat-edit" ${editAttrs}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+          </button>
+          <button type="button" class="cat-tool cat-del" ${deleteAttrs}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7"/></svg>
+          </button>
+        </div>
+      </div>
+      <button type="button" class="cat-name" aria-label="ดูเอกสารในหมวดหมู่ ${name}">${name}</button>
+      <p class="cat-desc">${escapeHtml(look.desc || "")}</p>
+      <p class="cat-count"><b>${docs.length}</b> เอกสาร</p>
+      <div class="cat-foot">
+        <span>${status}</span>
+        <span class="cat-open" aria-hidden="true">ดูเอกสาร <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      </div>
+    </div>`;
+}
+
+/* หน้าหมวดหมู่: การ์ดเรียงเป็นสามคอลัมน์ไล่ลงทีละคอลัมน์ตามลำดับชื่อ คอลัมน์กลางเริ่มด้วยกล่องสรุป
+   และปิดท้ายด้วยการ์ดเพิ่มหมวดหมู่ใหม่ (สองกล่องนี้สูงรวมกันราวการ์ดหนึ่งใบ จึงได้หมวดน้อยกว่าหนึ่งใบ)
+   จอแคบคอลัมน์หายไป (display: contents) การ์ดไหลต่อกันตามลำดับเดิม โดยกล่องสรุปขึ้นก่อนและการ์ดเพิ่มอยู่ท้าย */
 function renderCategories() {
   const grid = document.getElementById("categoryGrid");
-  if (!allCategories.length) {
-    grid.innerHTML = `
-      <div class="empty-state cat-empty">
-        <span class="empty-art"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg></span>
-        <p>ยังไม่มีหมวดหมู่</p>
-        <span class="doc-sub">กดปุ่ม “เพิ่มหมวดหมู่” เพื่อเริ่มจัดกลุ่มเอกสาร</span>
-      </div>`;
-    return;
-  }
-  const max = Math.max(1, ...allCategories.map((c) => allDocuments.filter((d) => d.category === c.id).length));
-  grid.innerHTML = allCategories.map((c) => {
-    const count = allDocuments.filter((d) => d.category === c.id).length;
-    const share = allDocuments.length ? Math.round((count / allDocuments.length) * 100) : 0;
-    // หมวดหมู่หลักลบไม่ได้: ensureDefaultCategories จะสร้างกลับมาเป็น id ใหม่ เอกสารเดิมจึงหลุดหมวดหมู่
-    const deleteAttrs = isDefaultCategory(c.name)
-      ? `disabled title="หมวดหมู่หลักของระบบ ลบไม่ได้" aria-label="หมวดหมู่หลักของระบบ ${escapeHtml(c.name)} ลบไม่ได้"`
-      : `data-del-cat="${escapeHtml(c.id)}" title="ลบหมวดหมู่" aria-label="ลบหมวดหมู่ ${escapeHtml(c.name)}"`;
-    return `
-      <div class="category-card" data-open-cat="${escapeHtml(c.id)}">
-        <span class="cat-back" aria-hidden="true"></span>
-        <span class="cat-paper" aria-hidden="true"></span>
-        <span class="cat-paper cat-paper-front" aria-hidden="true"></span>
-        <div class="cat-front">
-          <div class="cat-top">
-            <span class="cat-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6V3zM14 3v5h4M9 12h6M9 16h4"/></svg></span>
-            <span class="stat-chip mono" title="สัดส่วนของเอกสารทั้งหมด">${share}%</span>
-          </div>
-          <button type="button" class="cat-name" aria-label="ดูเอกสารในหมวดหมู่ ${escapeHtml(c.name)}">${escapeHtml(c.name)}</button>
-          <span class="cat-count">${count} เอกสาร</span>
-          <div class="meter" aria-hidden="true"><span style="width:${(count / max) * 100}%"></span></div>
-          <div class="cat-actions">
-            <button class="icon-btn" ${deleteAttrs}>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7"/></svg>
-            </button>
-          </div>
-        </div>
-      </div>`;
-  }).join("");
+  const n = allCategories.length;
+  const left = Math.min(n, Math.ceil((n + 1) / 3));
+  const right = Math.min(n - left, Math.ceil((n + 1 - left) / 2));
+  const cards = allCategories.map(categoryCard);
+  const summary = `
+    <div class="cat-summary">
+      <div class="cat-summary-nums">
+        <span><b>${n}</b><small>หมวดหมู่</small></span>
+        <span><b>${allDocuments.length}</b><small>เอกสาร</small></span>
+      </div>
+      <p>คลิกที่การ์ดเพื่อดูเอกสารในหมวดหมู่</p>
+    </div>`;
+  const addCard = `
+    <button type="button" class="cat-add" data-add-cat>
+      <span class="cat-add-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
+      เพิ่มหมวดหมู่ใหม่
+    </button>`;
+  grid.innerHTML = [
+    cards.slice(0, left).join(""),
+    summary + cards.slice(left, n - right).join("") + addCard,
+    cards.slice(n - right).join(""),
+  ].map((col) => `<div class="cat-col">${col}</div>`).join("");
+  grid.querySelector("[data-add-cat]").addEventListener("click", openAddCategory);
+  grid.querySelectorAll("[data-edit-cat]").forEach((btn) => {
+    btn.addEventListener("click", () => openEditCategory(btn.dataset.editCat));
+  });
   grid.querySelectorAll("[data-del-cat]").forEach((btn) => {
     btn.addEventListener("click", () => {
       askConfirm("ลบหมวดหมู่นี้? เอกสารที่เกี่ยวข้องจะไม่ถูกลบ แต่จะไม่มีหมวดหมู่", async () => {
@@ -1447,7 +1503,7 @@ function renderCategories() {
       });
     });
   });
-  // กดตรงไหนของแฟ้มก็เปิดดูเอกสารในหมวดนั้น ยกเว้นปุ่มลบ (ชื่อหมวดหมู่เป็นปุ่ม จึงเปิดจากคีย์บอร์ดได้ด้วย)
+  // กดตรงไหนของการ์ดก็เปิดดูเอกสารในหมวดนั้น ยกเว้นปุ่มแก้ไข/ลบ (ชื่อหมวดหมู่เป็นปุ่ม จึงเปิดจากคีย์บอร์ดได้ด้วย)
   grid.querySelectorAll("[data-open-cat]").forEach((card) => {
     card.addEventListener("click", (e) => {
       if (e.target.closest(".cat-actions button")) return;
@@ -1457,27 +1513,111 @@ function renderCategories() {
   });
 }
 
-document.getElementById("addCategoryBtn").addEventListener("click", () => {
-  document.getElementById("categoryForm").reset();
-  openModal("categoryModalOverlay");
+/* ป๊อบอัปหมวดหมู่ใช้ทั้งเพิ่มและแก้ไข: editingCategoryId ว่างคือเพิ่มใหม่
+   ปุ่มสีและไอคอนสร้างครั้งเดียว แล้วสลับ aria-pressed ตาม categoryPick (ไม่วาดใหม่ โฟกัสจากคีย์บอร์ดจึงไม่หลุด) */
+const CATEGORY_COLOR_NAMES = ["น้ำเงิน", "ส้ม", "เขียว", "เหลืองทอง", "ม่วง", "ชมพู", "เขียวน้ำทะเล", "เทา"];
+const CATEGORY_ICON_NAMES = {
+  chat: "ข้อความ", inbox: "ถาดรับเข้า", clipboard: "คลิปบอร์ด", stamp: "ตราประทับ", send: "ส่งออก",
+  folder: "แฟ้ม", building: "อาคาร", tag: "ป้าย", archive: "กล่องเก็บเอกสาร", copy: "สำเนา",
+};
+let editingCategoryId = "";
+const categoryPick = { color: "", icon: "" };
+document.getElementById("categoryColorPicks").innerHTML = CATEGORY_COLORS.map((color, i) => `
+  <button type="button" class="color-pick" data-pick-color="${color}" style="--c:${color}" aria-pressed="false" aria-label="สี${CATEGORY_COLOR_NAMES[i]}" title="สี${CATEGORY_COLOR_NAMES[i]}">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+  </button>`).join("");
+document.getElementById("categoryIconPicks").innerHTML = Object.entries(CATEGORY_ICONS).map(([key, path]) => `
+  <button type="button" class="icon-pick" data-pick-icon="${key}" aria-pressed="false" aria-label="ไอคอน${CATEGORY_ICON_NAMES[key]}" title="${CATEGORY_ICON_NAMES[key]}">
+    <svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg>
+  </button>`).join("");
+function pickCategoryLook(change) {
+  Object.assign(categoryPick, change);
+  document.querySelectorAll("#categoryColorPicks [data-pick-color]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", String(btn.dataset.pickColor === categoryPick.color));
+  });
+  document.querySelectorAll("#categoryIconPicks [data-pick-icon]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", String(btn.dataset.pickIcon === categoryPick.icon));
+  });
+}
+document.getElementById("categoryColorPicks").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-pick-color]");
+  if (btn) pickCategoryLook({ color: btn.dataset.pickColor });
 });
+document.getElementById("categoryIconPicks").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-pick-icon]");
+  if (btn) pickCategoryLook({ icon: btn.dataset.pickIcon });
+});
+/* หมวดใหม่เริ่มที่สีแรกที่ยังไม่มีหมวดไหนใช้ (หมวดหลักครบห้าหมวดจะได้สีชมพู) กับไอคอนแฟ้ม */
+function nextCategoryColor() {
+  const used = allCategories.map((c) => categoryLook(c.id).color);
+  return CATEGORY_COLORS.find((color) => !used.includes(color)) || CATEGORY_COLORS[allCategories.length % CATEGORY_COLORS.length];
+}
+function openCategoryModal(category) {
+  editingCategoryId = category ? category.id : "";
+  const look = category ? categoryLook(category.id) : { color: nextCategoryColor(), iconKey: "folder", desc: "" };
+  const locked = !!category && isSystemCategory(category.name);
+  const nameInput = document.getElementById("categoryName");
+  document.getElementById("categoryForm").reset();
+  nameInput.value = category ? category.name : "";
+  nameInput.readOnly = locked;
+  document.getElementById("categoryNameHint").hidden = !locked;
+  document.getElementById("categoryDescription").value = look.desc || "";
+  document.getElementById("categoryModalTitle").textContent = category ? "แก้ไขหมวดหมู่" : "เพิ่มหมวดหมู่";
+  pickCategoryLook({ color: look.color, icon: look.iconKey });
+  openModal("categoryModalOverlay");
+}
+const openAddCategory = () => openCategoryModal(null);
+function openEditCategory(id) {
+  const category = allCategories.find((c) => c.id === id);
+  if (category) openCategoryModal(category);
+}
+document.getElementById("addCategoryBtn").addEventListener("click", openAddCategory);
 document.getElementById("categoryForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = document.getElementById("categoryName").value.trim();
+  const description = document.getElementById("categoryDescription").value.trim();
+  const { color, icon } = categoryPick;
   if (document.getElementById("categoryModalOverlay").getAttribute("aria-busy") === "true") return;
   // ช่องว่างล้วนผ่าน required ของเบราว์เซอร์ได้ จึงต้องบอกเอง ไม่ใช่กดแล้วเงียบ
   if (!name) {
     showToast("กรุณากรอกชื่อหมวดหมู่", "error");
     return;
   }
-  if (allCategories.some((c) => categoryKey(c.name) === categoryKey(name))) {
+  const editing = editingCategoryId && allCategories.find((c) => c.id === editingCategoryId);
+  if (editingCategoryId && !editing) {
+    showToast("ไม่พบหมวดหมู่นี้แล้ว อาจถูกลบไปก่อน", "error");
+    closeModal("categoryModalOverlay");
+    return;
+  }
+  if (allCategories.some((c) => c !== editing && categoryKey(c.name) === categoryKey(name))) {
     showToast("มีหมวดหมู่นี้แล้ว กรุณาใช้ชื่ออื่น", "error");
     return;
   }
+  // แก้ไข: เขียนเฉพาะช่องที่ต่างจากที่แสดงอยู่ ช่องที่ยังเป็นค่าตั้งต้นจึงตามค่าตั้งต้นต่อไป
+  // คำอธิบายที่ลบจนว่างจะกลับไปใช้คำอธิบายตั้งต้น ชื่อหมวดที่ระบบใช้เปลี่ยนไม่ได้
+  let changes = null;
+  if (editing) {
+    const look = categoryLook(editing.id);
+    changes = {};
+    if (name !== editing.name && !isSystemCategory(editing.name)) changes.name = name;
+    if (description !== look.desc) changes.description = description;
+    if (color !== look.color) changes.color = color;
+    if (icon !== look.iconKey) changes.icon = icon;
+    if (!Object.keys(changes).length) {
+      closeModal("categoryModalOverlay");
+      return;
+    }
+  }
   setModalBusy("categoryModalOverlay", true);
   try {
-    await db.collection("categories").add({ name, createdAt: Date.now() });
-    showToast("เพิ่มหมวดหมู่แล้ว", "success");
+    if (editing) {
+      // id เดิมไม่เปลี่ยน เอกสารที่อ้างถึงจึงไม่หลุด
+      await db.collection("categories").doc(editing.id).update(changes);
+      showToast("บันทึกหมวดหมู่แล้ว", "success");
+    } else {
+      await db.collection("categories").add({ name, ...(description && { description }), color, icon, createdAt: Date.now() });
+      showToast("เพิ่มหมวดหมู่แล้ว", "success");
+    }
     setModalBusy("categoryModalOverlay", false);
     closeModal("categoryModalOverlay");
   } catch (err) { showToast(friendlyError(err), "error"); }
@@ -1675,6 +1815,42 @@ async function handleFile(file) {
 document.getElementById("addDocBtn").addEventListener("click", () => openDocModal());
 document.querySelectorAll("[data-open='addDocBtn']").forEach((b) => b.addEventListener("click", () => openDocModal()));
 
+/* ช่องงานที่รับผิดชอบ: ปุ่มเลือกได้อันเดียว กดอันที่เลือกอยู่ซ้ำเพื่อยกเลิก ค่าที่บันทึกคือปุ่มที่ถูกเลือกอยู่
+   sectionChoice จำงานที่เลือกไว้ก่อนกด เพราะตอน click มาถึง เบราว์เซอร์เลือกปุ่มที่ถูกกดไปแล้ว */
+let sectionChoice = "";
+const sectionPicks = () => [...document.querySelectorAll('#docSectionPicks input[name="docSection"]')];
+function setSectionChoice(value) {
+  sectionChoice = Object.hasOwn(SECTION_LABEL, value) ? value : "";
+  sectionPicks().forEach((input) => { input.checked = input.value === sectionChoice; });
+}
+function chosenSection() {
+  return sectionPicks().find((input) => input.checked)?.value || "";
+}
+// กดที่ตัวหนังสือของปุ่ม เบราว์เซอร์ส่ง click ต่อให้ตัวเลือกข้างในอีกครั้ง จึงทำงานเฉพาะ click ของตัวเลือก
+document.getElementById("docSectionPicks").addEventListener("click", (e) => {
+  if (e.target.name !== "docSection") return;
+  if (e.target.value === sectionChoice) setSectionChoice("");
+  else sectionChoice = e.target.value;
+});
+// ปุ่มลูกศรบนคีย์บอร์ดเปลี่ยนงานที่เลือกได้โดยไม่ผ่าน click
+document.getElementById("docSectionPicks").addEventListener("change", (e) => {
+  if (e.target.name === "docSection" && e.target.checked) sectionChoice = e.target.value;
+});
+// เว้นวรรคบนงานที่เลือกอยู่: Chrome ไม่ส่ง click ให้ตัวเลือกที่เลือกอยู่แล้ว จึงยกเลิกเองตั้งแต่ตอนกดลง
+// และกันตอนปล่อยไว้ด้วย ไม่ให้เบราว์เซอร์ที่คลิกตอนปล่อยปุ่มเลือกงานเดิมกลับมา
+let sectionClearedByKey = null;
+document.getElementById("docSectionPicks").addEventListener("keydown", (e) => {
+  if (e.key !== " " || e.target.name !== "docSection" || !e.target.checked) return;
+  e.preventDefault();
+  sectionClearedByKey = e.target;
+  setSectionChoice("");
+});
+document.getElementById("docSectionPicks").addEventListener("keyup", (e) => {
+  if (e.key !== " " || e.target !== sectionClearedByKey) return;
+  e.preventDefault();
+  sectionClearedByKey = null;
+});
+
 /* ฟอร์มเดียวใช้ทั้งเอกสารและคำสั่ง ปุ่มเพิ่มคำสั่งในกล่องคำสั่ง ({ order: true }) และการแก้ไขรายการในหมวดคำสั่ง
    เปิดเป็นฟอร์มคำสั่งที่ล็อกหมวดหมู่ไว้ที่คำสั่ง ปุ่มเพิ่มในกล่องหมวด ({ categoryId }) เลือกหมวดนั้นไว้ให้ แต่ยังเปลี่ยนได้ */
 function openDocModal(doc = null, { order = false, categoryId = "" } = {}) {
@@ -1713,9 +1889,8 @@ function openDocModal(doc = null, { order = false, categoryId = "" } = {}) {
     category.value = allCategories.some((c) => c.id === categoryId) ? categoryId : "";
     document.getElementById("docDate").value = localIsoDate();
   }
+  setSectionChoice(doc?.section);
   renderYearOptions();
-  // ฟอร์มที่ไม่ล็อกเปิดขึ้นมาเป็นเอกสารเสมอ จึงใช้ locked บอกชนิดของฟอร์มได้ รายการใหม่เริ่มแบบยังไม่ระบุสถานะ
-  renderStatusOptions(locked, doc && Object.hasOwn(STATUS_LABEL, doc.status) ? doc.status : "");
   syncOrderFields();
   openModal("docModalOverlay");
 }
@@ -1745,7 +1920,6 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
     date: document.getElementById("docDate").value,
     agency: document.getElementById("docAgency").value.trim(),
     category,
-    status: document.getElementById("docStatus").value,
     description: document.getElementById("docDescription").value.trim(),
     deleted: false,
     updatedAt: Date.now(),
@@ -1753,6 +1927,9 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
   // ทุกช่องเป็นตัวเลือก — ไม่บังคับกรอกครบหรือแนบไฟล์ PDF (firestore.rules ต้องยอมรับแบบเดียวกัน)
   const upload = pendingFileData;
   const existing = id ? findDoc(id) : null;
+  // สถานะเลิกใช้แล้ว แต่ firestore.rules บนเซิร์ฟเวอร์ยังบังคับให้ทุกฉบับมีช่อง status
+  // ฉบับใหม่ (และฉบับเก่าที่ไม่มีช่องนี้) จึงเขียนค่าว่างไว้ ฉบับที่มีอยู่แล้วไม่แตะ ค่าที่เคยเลือกไว้จึงไม่หาย
+  if (typeof existing?.status !== "string") payload.status = "";
   // เขียนชั้นความเร็วเฉพาะเมื่อเลือกไว้ หรือเมื่อต้องล้างค่าเดิมกลับเป็นปกติ
   // เอกสารปกติจึงยังบันทึกได้ แม้ firestore.rules บนเซิร์ฟเวอร์ยังเป็นรุ่นที่ไม่รู้จักช่องนี้
   // คำสั่งไม่มีชั้นความเร็ว จึงนับเป็นปกติ
@@ -1761,6 +1938,9 @@ document.getElementById("docForm").addEventListener("submit", async (e) => {
   // เลขที่รับก็เขียนแบบเดียวกัน: เฉพาะหนังสือรับที่กรอกไว้ หรือเมื่อต้องล้างค่าเดิม (เช่น ย้ายไปหมวดอื่น)
   const receiveNumber = isReceiveCategory(category) ? document.getElementById("docReceiveNumber").value.trim() : "";
   if (receiveNumber || existing?.receiveNumber) payload.receiveNumber = receiveNumber;
+  // งานที่รับผิดชอบก็เขียนแบบเดียวกัน: เฉพาะเมื่อเลือกไว้ หรือเมื่อต้องล้างค่าเดิม คำสั่งไม่มีงาน (เช่น ย้ายเอกสารไปหมวดคำสั่ง)
+  const section = order ? "" : chosenSection();
+  if (section || existing?.section) payload.section = section;
 
   const saveBtn = document.getElementById("docSaveBtn");
   setModalBusy("docModalOverlay", true);
@@ -2024,38 +2204,39 @@ document.getElementById("globalSearch").addEventListener("input", () => {
   renderDocsTable();
 });
 document.getElementById("filterCategory").addEventListener("change", () => { resetGroupPages(); renderDocsTable(); });
-document.getElementById("filterStatus").addEventListener("change", () => { resetGroupPages(); renderDocsTable(); });
+document.getElementById("filterSection").addEventListener("change", () => { resetGroupPages(); renderDocsTable(); });
 document.getElementById("filterDate").addEventListener("change", () => { resetGroupPages(); renderDocsTable(); });
-/* ล้างตัวกรองทั้งหมด หรือเหลือไว้แค่หมวดหมู่เดียวตอนเปิดแฟ้ม (ตารางจึงมีเอกสารครบตามจำนวนบนแฟ้ม) */
-function resetDocFilters(category = "") {
+/* ล้างตัวกรองทั้งหมด หรือเหลือไว้แค่หมวดหมู่หรืองานเดียว ตอนเปิดแฟ้มหรือกดแถวในแดชบอร์ด
+   (ตารางจึงมีเอกสารครบตามจำนวนบนแฟ้มหรือในแถวนั้น) */
+function resetDocFilters(category = "", section = "") {
   document.getElementById("globalSearch").value = "";
   document.getElementById("filterCategory").value = category;
-  document.getElementById("filterStatus").value = "";
+  document.getElementById("filterSection").value = section;
   document.getElementById("filterDate").value = "";
   resetGroupPages();
   renderDocsTable();
 }
 document.getElementById("clearFilters").addEventListener("click", () => resetDocFilters());
 
-/* คำค้น (พิมพ์เล็กแล้ว) ตรงกับชื่อ เลขที่ เลขที่รับ หน่วยงาน หมวดหมู่ หรือชั้นความเร็ว
+/* คำค้น (พิมพ์เล็กแล้ว) ตรงกับชื่อ เลขที่ เลขที่รับ หน่วยงาน หมวดหมู่ ชั้นความเร็ว หรืองานที่รับผิดชอบ
    ใช้ทั้งช่องค้นหาด้านบนและช่องค้นหาในฟอร์มคำสั่ง */
 function matchesSearch(d, q) {
-  return !q || [d.title, d.docNumber, d.receiveNumber, d.agency, categoryName(d.category), URGENCY_LABEL[d.urgency]]
+  return !q || [d.title, d.docNumber, d.receiveNumber, d.agency, categoryName(d.category), URGENCY_LABEL[d.urgency], SECTION_LABEL[sectionOf(d)]]
     .some((f) => String(f ?? "").toLowerCase().includes(q));
 }
 function getFilteredDocs() {
   const q = document.getElementById("globalSearch").value.trim().toLowerCase();
   const catFilter = document.getElementById("filterCategory").value;
-  const statusFilter = document.getElementById("filterStatus").value;
+  const sectionFilter = document.getElementById("filterSection").value;
   const dateFilter = document.getElementById("filterDate").value;
 
   return allDocuments.filter((d) => {
     const matchesQuery = matchesSearch(d, q);
     const matchesCat = !catFilter || d.category === catFilter;
-    const matchesStatus = !statusFilter
-      || (statusFilter === "none" ? !Object.hasOwn(STATUS_LABEL, d.status) : d.status === statusFilter);
+    // คำสั่งไม่มีงาน จึงไม่อยู่ทั้งในงานใดและในยังไม่ระบุงาน
+    const matchesSection = !sectionFilter || sectionOf(d) === (sectionFilter === NO_SECTION ? "" : sectionFilter);
     const matchesDate = !dateFilter || d.date === dateFilter;
-    return matchesQuery && matchesCat && matchesStatus && matchesDate;
+    return matchesQuery && matchesCat && matchesSection && matchesDate;
   });
 }
 
@@ -2083,6 +2264,8 @@ function sortDocs(list, { sortKey, sortDir }) {
     if (sortKey !== "entry") {
       let av = a[sortKey] ?? "", bv = b[sortKey] ?? "";
       if (sortKey === "size") { av = a.fileSize || 0; bv = b.fileSize || 0; }
+      // งานเรียงตามลำดับในฟอร์ม ยังไม่ระบุงานมาก่อน เหมือนช่องว่างของคอลัมน์อื่น
+      if (sortKey === "section") { av = SECTION_KEYS.indexOf(sectionOf(a)); bv = SECTION_KEYS.indexOf(sectionOf(b)); }
       const order = typeof av === "string" && typeof bv === "string" ? av.localeCompare(bv, "th", { numeric: true }) : (av > bv) - (av < bv);
       if (order) return order * dir;
     }
@@ -2093,7 +2276,7 @@ function sortDocs(list, { sortKey, sortDir }) {
 
 /* คอลัมน์ของกล่องหมวด ไม่มีคอลัมน์หมวดหมู่เพราะหัวกล่องบอกอยู่แล้ว
    กล่องคำสั่งเรียกหัวคอลัมน์แบบคำสั่ง หมวดที่มีชื่อช่องหน่วยงานของตัวเอง (AGENCY_LABELS) ใช้ชื่อเดียวกับในฟอร์ม
-   และกล่องหนังสือรับมีเลขที่รับเป็นคอลัมน์แรก เหมือนสมุดทะเบียนรับ */
+   กล่องหนังสือรับมีเลขที่รับเป็นคอลัมน์แรก เหมือนสมุดทะเบียนรับ และทุกกล่องยกเว้นคำสั่งมีงานที่รับผิดชอบต่อท้าย */
 function groupColumns(id) {
   const order = isOrderCategory(id);
   const labels = FIELD_LABELS[order ? "order" : "document"];
@@ -2101,21 +2284,26 @@ function groupColumns(id) {
     ...(isReceiveCategory(id) ? [["receiveNumber", "เลขที่รับ"]] : []),
     ["docNumber", labels.docNumber], ["title", labels.title],
     ["agency", order ? labels.agency : documentAgencyLabel(id)],
-    ["date", labels.date], ["size", "ขนาดไฟล์"], ["status", "สถานะ"],
+    ["date", labels.date], ["size", "ขนาดไฟล์"],
+    ...(order ? [] : [["section", "งานที่รับผิดชอบ"]]),
   ];
 }
-function docRow(d, receive) {
+/* ช่องในแถวของแต่ละคอลัมน์ (คีย์เดียวกับ groupColumns) */
+const DOC_CELLS = {
+  receiveNumber: (d) => `<td class="mono">${escapeHtml(d.receiveNumber || "-")}</td>`,
+  docNumber: (d) => `<td class="mono">${escapeHtml(d.docNumber || "-")}</td>`,
+  title: (d) => `<td class="doc-title-cell">${docTitle(d)}</td>`,
+  agency: (d) => `<td>${escapeHtml(d.agency || "-")}</td>`,
+  date: (d) => `<td class="mono">${formatDate(d.date)}</td>`,
+  size: (d) => `<td class="mono">${d.fileSize ? formatFileSize(d.fileSize) : "-"}</td>`,
+  section: (d) => `<td class="col-section">${SECTION_LABEL[sectionOf(d)] || "-"}</td>`,
+};
+function docRow(d, columns) {
   // เอกสารที่บันทึกโดยไม่แนบ PDF ไม่มีอะไรให้ดูหรือดาวน์โหลด ปิดปุ่มไว้แทนการกดแล้วแจ้งว่าไฟล์เสีย
   const fileButton = (label) => hasAttachment(d) ? `title="${label}"` : `title="${label} (ไม่มีไฟล์ PDF)" disabled`;
   return `
     <tr>
-      ${receive ? `<td class="mono">${escapeHtml(d.receiveNumber || "-")}</td>` : ""}
-      <td class="mono">${escapeHtml(d.docNumber || "-")}</td>
-      <td class="doc-title-cell">${docTitle(d)}</td>
-      <td>${escapeHtml(d.agency || "-")}</td>
-      <td class="mono">${formatDate(d.date)}</td>
-      <td class="mono">${d.fileSize ? formatFileSize(d.fileSize) : "-"}</td>
-      <td>${statusStamp(d.status)}</td>
+      ${columns.map(([key]) => DOC_CELLS[key](d)).join("\n      ")}
       <td class="col-actions">
         <div class="row-actions">
           <button class="icon-btn" data-preview="${escapeHtml(d.id)}" ${fileButton("ดูตัวอย่าง")}><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
@@ -2150,7 +2338,7 @@ function renderDocGroup(group, docs, index, narrowed) {
       <div class="table-scroll">
         <table class="doc-table">
           <thead><tr>${heads}<th class="col-actions">การดำเนินการ</th></tr></thead>
-          <tbody>${rows.map((d) => docRow(d, columns[0][0] === "receiveNumber")).join("")}</tbody>
+          <tbody>${rows.map((d) => docRow(d, columns)).join("")}</tbody>
         </table>
       </div>
       ${totalPages > 1 ? `<nav class="pagination" aria-label="หน้าของ${name}">${paginationHtml(view.page, totalPages)}</nav>` : ""}`;
@@ -2172,9 +2360,9 @@ function renderDocGroup(group, docs, index, narrowed) {
 function renderDocsTable() {
   const list = getFilteredDocs();
   const filterCategory = document.getElementById("filterCategory").value;
-  // ค้นหา หรือกรองสถานะ/วันที่อยู่ แสดงเฉพาะหมวดที่มีเอกสารตรงกัน ไม่งั้นแสดงทุกหมวด แม้หมวดที่ยังไม่มีเอกสาร
+  // ค้นหา หรือกรองงานหรือวันที่อยู่ แสดงเฉพาะหมวดที่มีเอกสารตรงกัน ไม่งั้นแสดงทุกหมวด แม้หมวดที่ยังไม่มีเอกสาร
   const narrowed = Boolean(document.getElementById("globalSearch").value.trim()
-    || document.getElementById("filterStatus").value || document.getElementById("filterDate").value);
+    || document.getElementById("filterSection").value || document.getElementById("filterDate").value);
   // เอกสารของหมวดที่ถูกลบไปแล้วอยู่ในกล่องไม่ระบุหมวดหมู่ เหมือนที่ฟอร์มแก้ไขแสดง
   const known = new Set(allCategories.map((c) => c.id));
   const byGroup = new Map();
@@ -2308,11 +2496,6 @@ function renderTrash() {
 /* =========================================================
    HELPERS
    ========================================================= */
-/* สถานะไม่บังคับเลือก เอกสารที่ไม่ระบุสถานะแสดงเป็นขีดเหมือนช่องว่างอื่นในตาราง */
-function statusStamp(status) {
-  if (!Object.hasOwn(STATUS_LABEL, status)) return "-";
-  return `<span class="stamp stamp-${status}">${STATUS_LABEL[status]}</span>`;
-}
 /* ป้ายชั้นความเร็วหน้าชื่อเอกสาร เอกสารปกติไม่มีป้าย */
 function urgencyBadge(urgency) {
   if (!Object.hasOwn(URGENCY_LABEL, urgency)) return "";
@@ -2352,7 +2535,10 @@ function formatDate(iso) {
   return d.toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
 }
 function createdAtMillis(doc) {
-  const value = doc.createdAtMs ?? doc.createdAt;
+  return timeMillis(doc.createdAtMs ?? doc.createdAt);
+}
+/* เวลาที่เก็บไว้ได้หลายแบบ (Timestamp ของ Firestore, ตัวเลข ms, หรือ { seconds }) → ms, 0 ถ้าไม่รู้ */
+function timeMillis(value) {
   if (typeof value?.toMillis === "function") return value.toMillis();
   if (Number.isFinite(value)) return value;
   if (Number.isFinite(value?.seconds)) return value.seconds * 1000;

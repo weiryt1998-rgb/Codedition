@@ -245,7 +245,7 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 14V7.5M8 9C8 6 6 4.5 3 4.5C3 7.5 5 9 8 9ZM8 7.5C8 4.5 10 3 13 3C13 6 11 7.5 8 7.5Z"/></svg>
           ปลูกใหม่
         </button>
-        <!-- แมลงวันที่มาตอมต้น วาดด้วย sunflower.js -->
+        <!-- ผีเสื้อที่มาตอมต้น sunflower.js วาดด้วย three.js -->
         <canvas class="sunflower-bugs" aria-hidden="true"></canvas>
         <div class="officer-text">
           <strong>นางสาวจิรัฐฑิกาล จ่านาค</strong>
@@ -325,98 +325,98 @@
           </div>
         </div>
 
+        <!-- การ์ดสรุปสี่ใบ ตัวเลขและบรรทัดล่างของแต่ละใบเติมใน renderStats() -->
         <div class="stat-grid">
-          <article class="stat-card" data-tone="blue" data-tilt>
-            <div class="stat-top">
-              <span class="stat-icon">
-                <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/></svg>
-              </span>
-              <span class="stat-chip" id="chipTotal">ทั้งระบบ</span>
-            </div>
-            <span class="stat-value mono" id="statTotal">0</span>
-            <span class="stat-label">เอกสารทั้งหมด</span>
-            <div class="meter"><span id="meterTotal" style="width:100%"></span></div>
-          </article>
+          <button type="button" class="stat-card" data-tone="blue" data-tilt id="statTotalCard">
+            <span class="stat-top">
+              <span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M8 3h7l5 5v10a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM4 7v13a1 1 0 0 0 1 1h10"/></svg></span>
+              <span class="stat-label">เอกสารทั้งหมด</span>
+            </span>
+            <span class="stat-value"><b class="mono" id="statTotal">0</b><small>ฉบับ</small></span>
+            <span class="stat-foot">
+              <span id="statTotalNote">ใน 0 หมวดหมู่</span>
+              <span class="stat-go">ดูรายการ<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+            </span>
+          </button>
 
           <article class="stat-card" data-tone="green" data-tilt>
             <div class="stat-top">
-              <span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span>
-              <span class="stat-chip" id="chipApproved">0%</span>
+              <span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M5 5h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM8 3v4M16 3v4M4 10h16"/></svg></span>
+              <span class="stat-label">เพิ่มเข้าระบบเดือนนี้</span>
             </div>
-            <span class="stat-value mono" id="statApproved">0</span>
-            <span class="stat-label">อนุมัติแล้ว</span>
-            <div class="meter"><span id="meterApproved" style="width:0%"></span></div>
-          </article>
-
-          <article class="stat-card" data-tone="gold" data-tilt>
-            <div class="stat-top">
-              <span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 3M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/></svg></span>
-              <span class="stat-chip" id="chipPending">0%</span>
-            </div>
-            <span class="stat-value mono" id="statPending">0</span>
-            <span class="stat-label">รอดำเนินการ</span>
-            <div class="meter"><span id="meterPending" style="width:0%"></span></div>
+            <span class="stat-value"><b class="mono" id="statMonth">0</b><small>ฉบับ</small></span>
+            <div class="stat-foot" id="statMonthNote"></div>
           </article>
 
           <article class="stat-card" data-tone="red" data-tilt>
             <div class="stat-top">
-              <span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></span>
-              <span class="stat-chip" id="chipRejected">0%</span>
+              <span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg></span>
+              <span class="stat-label">เอกสารด่วน</span>
             </div>
-            <span class="stat-value mono" id="statRejected">0</span>
-            <span class="stat-label">ไม่อนุมัติ</span>
-            <div class="meter"><span id="meterRejected" style="width:0%"></span></div>
+            <span class="stat-value"><b class="mono" id="statUrgent">0</b><small>ฉบับ</small></span>
+            <div class="stat-foot" id="statUrgentNote"></div>
+          </article>
+
+          <article class="stat-card" data-tone="gold" data-tilt>
+            <div class="stat-top">
+              <span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M20.5 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg></span>
+              <span class="stat-label">มีไฟล์แนบ</span>
+            </div>
+            <span class="stat-value"><b class="mono"><span id="statFiles">0</span>%</b></span>
+            <div class="stat-foot">
+              <div class="meter"><span id="meterFiles" style="width:0%"></span></div>
+              <span id="statFilesNote">0 จาก 0 ฉบับ</span>
+            </div>
           </article>
         </div>
 
-        <div class="chart-grid">
-          <div class="panel">
+        <div class="dash-grid">
+          <div class="panel trend-panel">
             <div class="panel-head">
               <div class="panel-title">
-                <h3>แนวโน้มการนำเข้าเอกสาร</h3>
-                <p>ย้อนหลัง 6 เดือนล่าสุด</p>
+                <h3>เอกสารเพิ่มเข้าระบบรายเดือน</h3>
+                <p>12 เดือนล่าสุด นับตามวันที่เพิ่มเข้าระบบ (เดือนนี้นับถึงวันนี้)</p>
               </div>
-              <span class="panel-tag">รายเดือน</span>
+              <!-- สลับกราฟกับตาราง ข้อความบนปุ่มบอกสิ่งที่จะได้เห็นเมื่อกด (สลับใน showTrendAsTable) -->
+              <button type="button" class="view-toggle" id="trendViewToggle" aria-controls="trendChartBox trendTable" aria-label="ดูแบบตาราง" title="ดูแบบตาราง">
+                <svg viewBox="0 0 24 24"><path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM3 10h18M3 14.5h18M9 10v9"/></svg>
+                <span>ดูแบบตาราง</span>
+              </button>
             </div>
-            <div class="chart-box"><canvas id="chartTrend"></canvas></div>
+            <div class="chart-box" id="trendChartBox"><canvas id="chartTrend" role="img" aria-label="กราฟจำนวนเอกสารที่เพิ่มเข้าระบบ 12 เดือนล่าสุด"></canvas></div>
+            <div class="table-scroll" id="trendTable" hidden></div>
           </div>
 
           <div class="panel">
             <div class="panel-head">
               <div class="panel-title">
-                <h3>สถานะเอกสาร</h3>
-                <p>สัดส่วนตามสถานะการพิจารณา</p>
+                <h3>เอกสารล่าสุด</h3>
+                <p>เอกสารที่เพิ่มเข้าระบบล่าสุด</p>
               </div>
+              <button class="link-btn" data-view-link="documents">ดูทั้งหมด →</button>
             </div>
-            <div class="chart-box"><canvas id="chartStatus"></canvas></div>
-          </div>
-
-          <div class="panel panel-wide">
-            <div class="panel-head">
-              <div class="panel-title">
-                <h3>เอกสารตามหมวดหมู่</h3>
-                <p>จำนวนเอกสารที่จัดเก็บในแต่ละหมวด</p>
-              </div>
-            </div>
-            <div class="chart-box"><canvas id="chartCategory"></canvas></div>
+            <ul class="recent-list" id="recentList"></ul>
           </div>
         </div>
 
-        <div class="panel">
-          <div class="panel-head">
-            <div class="panel-title">
-              <h3>เอกสารล่าสุด</h3>
-              <p>5 รายการที่เพิ่มเข้าระบบล่าสุด</p>
+        <div class="dash-split">
+          <div class="panel">
+            <div class="panel-head">
+              <div class="panel-title">
+                <h3>แยกตามหมวดหมู่</h3>
+                <p>จำนวนและสัดส่วน · คลิกเพื่อดูเอกสาร</p>
+              </div>
             </div>
-            <button class="link-btn" data-view-link="documents">ดูทั้งหมด →</button>
+            <ul class="bd-list" id="categoryBreakdown"></ul>
           </div>
-          <div class="table-scroll">
-            <table class="doc-table" id="recentTable">
-              <thead>
-                <tr><th>เลขที่หนังสือ</th><th>ชื่อเอกสาร</th><th>หมวดหมู่</th><th>วันที่</th><th>สถานะ</th></tr>
-              </thead>
-              <tbody></tbody>
-            </table>
+          <div class="panel">
+            <div class="panel-head">
+              <div class="panel-title">
+                <h3>แยกตามงานที่รับผิดชอบ</h3>
+                <p>จำนวนและสัดส่วน ไม่นับคำสั่ง · คลิกเพื่อดูเอกสาร</p>
+              </div>
+            </div>
+            <ul class="bd-list" id="sectionBreakdown"></ul>
           </div>
         </div>
       </section>
@@ -441,17 +441,22 @@
             <label for="filterCategory">หมวดหมู่</label>
             <select id="filterCategory"><option value="">หมวดหมู่ทั้งหมด</option></select>
           </div>
+          <!-- งานที่รับผิดชอบ: ตัวเลือกชุดเดียวกับในฟอร์ม (SECTION_LABEL ใน script.js) ยังไม่ระบุงานไม่นับคำสั่ง -->
           <div class="field">
-            <label for="filterStatus">สถานะ</label>
-            <select id="filterStatus">
-              <option value="">สถานะทั้งหมด</option>
-              <option value="approved">อนุมัติแล้ว</option>
-              <option value="pending">รอดำเนินการ</option>
-              <option value="rejected">ไม่อนุมัติ</option>
-              <option value="in-progress">กำลังดำเนินการ</option>
-              <option value="completed">เสร็จสิ้น</option>
-              <option value="cancelled">ยกเลิก</option>
-              <option value="none">ไม่ระบุสถานะ</option>
+            <label for="filterSection">งานที่รับผิดชอบ</label>
+            <select id="filterSection">
+              <option value="">งานทั้งหมด</option>
+              <option value="palat">สำนักปลัด</option>
+              <option value="finance">กองคลัง</option>
+              <option value="engineering">กองช่าง</option>
+              <option value="education">กองการศึกษาฯ</option>
+              <option value="health">กองสาธารณสุขฯ</option>
+              <option value="clerk">จพง.ธุรการฯ</option>
+              <option value="disaster">จพง.ป้องกันฯ</option>
+              <option value="general-affairs">นักจัดการงานทั่วไปฯ</option>
+              <option value="human-resources">นักทรัพยากรบุคคลฯ</option>
+              <option value="policy-planning">นักวิเคราะห์นโยบายและแผนฯ</option>
+              <option value="none">ยังไม่ระบุงาน</option>
             </select>
           </div>
           <div class="field">
@@ -578,14 +583,24 @@
             <option value="most-urgent">ด่วนที่สุด</option>
           </select>
         </label>
-        <label>สถานะ
-          <select id="docStatus">
-            <option value="">ไม่ระบุสถานะ</option>
-            <option value="pending">รอดำเนินการ</option>
-            <option value="approved">อนุมัติแล้ว</option>
-            <option value="rejected">ไม่อนุมัติ</option>
-          </select>
-        </label>
+        <!-- งานที่รับผิดชอบ: เอกสารเท่านั้น ฟอร์มคำสั่งไม่มีช่องนี้ เลือกได้งานเดียวหรือไม่เลือกเลย กดงานที่เลือกอยู่ซ้ำเพื่อยกเลิก
+             ตัวเลือกต้องตรงกับ SECTION_LABEL ใน script.js และรายการใน firestore.rules -->
+        <fieldset class="span-2 section-field" id="docSectionField" aria-describedby="docSectionHint">
+          <legend>งานที่รับผิดชอบ</legend>
+          <div class="section-picks" id="docSectionPicks">
+            <label class="section-pick"><input type="radio" name="docSection" value="palat"><span>สำนักปลัด</span></label>
+            <label class="section-pick"><input type="radio" name="docSection" value="finance"><span>กองคลัง</span></label>
+            <label class="section-pick"><input type="radio" name="docSection" value="engineering"><span>กองช่าง</span></label>
+            <label class="section-pick"><input type="radio" name="docSection" value="education"><span>กองการศึกษาฯ</span></label>
+            <label class="section-pick"><input type="radio" name="docSection" value="health"><span>กองสาธารณสุขฯ</span></label>
+            <label class="section-pick"><input type="radio" name="docSection" value="clerk"><span>จพง.ธุรการฯ</span></label>
+            <label class="section-pick"><input type="radio" name="docSection" value="disaster"><span>จพง.ป้องกันฯ</span></label>
+            <label class="section-pick"><input type="radio" name="docSection" value="general-affairs"><span>นักจัดการงานทั่วไปฯ</span></label>
+            <label class="section-pick"><input type="radio" name="docSection" value="human-resources"><span>นักทรัพยากรบุคคลฯ</span></label>
+            <label class="section-pick"><input type="radio" name="docSection" value="policy-planning"><span>นักวิเคราะห์นโยบายและแผนฯ</span></label>
+          </div>
+          <p class="field-hint" id="docSectionHint">ไม่บังคับเลือก — กดตัวเลือกเดิมซ้ำเพื่อยกเลิกการเลือก</p>
+        </fieldset>
         <label class="span-2">คำอธิบาย / หมายเหตุ
           <textarea id="docDescription" rows="3" maxlength="5000" placeholder="รายละเอียดเพิ่มเติมของเอกสาร"></textarea>
         </label>
@@ -646,22 +661,41 @@
 
 <!-- Category Modal -->
 <div class="modal-overlay" id="categoryModalOverlay" hidden>
-  <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="categoryModalTitle" tabindex="-1">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="categoryModalTitle" tabindex="-1">
     <div class="modal-head">
       <span class="modal-icon"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg></span>
       <div class="modal-heading">
-        <h3 id="categoryModalTitle">เพิ่มหมวดหมู่ใหม่</h3>
-        <p>ใช้จัดกลุ่มเอกสารให้ค้นหาง่ายขึ้น</p>
+        <h3 id="categoryModalTitle">เพิ่มหมวดหมู่</h3>
+        <p>กำหนดชื่อ สี และไอคอนประจำหมวดหมู่</p>
       </div>
       <button class="icon-btn" data-close-modal aria-label="ปิด"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
-    <form id="categoryForm" class="modal-body">
-      <label class="field-block">ชื่อหมวดหมู่
-        <input type="text" id="categoryName" required maxlength="100" placeholder="เช่น หนังสือเวียน">
-      </label>
-      <div class="modal-actions">
+    <form id="categoryForm" class="cat-form">
+      <div class="modal-body cat-form-body">
+        <label class="cat-field">
+          <span>ชื่อหมวดหมู่ <b class="req" aria-hidden="true">*</b></span>
+          <input type="text" id="categoryName" required maxlength="100" placeholder="เช่น ประกาศ" aria-describedby="categoryNameHint">
+          <small class="field-hint" id="categoryNameHint" hidden>ชื่อนี้ระบบใช้อยู่ จึงเปลี่ยนไม่ได้ แต่เปลี่ยนคำอธิบาย สี และไอคอนได้</small>
+        </label>
+        <label class="cat-field">
+          <span>คำอธิบาย</span>
+          <input type="text" id="categoryDescription" maxlength="200" placeholder="อธิบายประเภทเอกสารในหมวดหมู่นี้">
+        </label>
+        <div class="cat-field">
+          <span id="categoryColorLabel">สีประจำหมวดหมู่</span>
+          <div class="color-picks" id="categoryColorPicks" role="group" aria-labelledby="categoryColorLabel"></div>
+        </div>
+        <div class="cat-field">
+          <span id="categoryIconLabel">ไอคอน</span>
+          <div class="icon-picks" id="categoryIconPicks" role="group" aria-labelledby="categoryIconLabel"></div>
+        </div>
+      </div>
+      <div class="modal-foot">
         <button type="button" class="btn btn-ghost" data-close-modal>ยกเลิก</button>
-        <button type="submit" class="btn btn-primary">บันทึก</button>
+        <button type="submit" class="btn btn-primary">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+          บันทึกหมวดหมู่
+        </button>
       </div>
     </form>
   </div>
